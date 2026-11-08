@@ -32,10 +32,19 @@ export function normalizeTask(ctx: TaskContext, task: TodoTask): NormalizedTask 
   };
 }
 
-/** 期限の日付（To Do の期限は日付だけ。時刻はタイムゾーンの 0 時なので、日付の部分だけ取る） */
-function dueDate(task: TodoTask): string | null {
-  const m = task.dueDateTime?.dateTime.match(/^(\d{4}-\d{2}-\d{2})/);
-  return m ? m[1]! : null;
+/**
+ * 期限の日付。To Do の期限は日付だけで、本人のタイムゾーンの 0 時として持つ。Graph は既定で UTC に直して返す
+ * （東京の 11/20 は 2026-11-19T15:00 UTC。2026-11-08 に実物で確認）。UTC なら一番近い 0 時に丸めて日付にする
+ * （UTC−12〜+12 のタイムゾーンで正しい）。ほかのタイムゾーンで返れば（Prefer: outlook.timezone）、日付の部分がそのまま期限
+ */
+export function dueDate(task: TodoTask): string | null {
+  const d = task.dueDateTime;
+  const m = d?.dateTime.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/);
+  if (!d || !m) return null;
+  const zone = (d.timeZone ?? 'UTC').trim().toUpperCase();
+  if (zone !== 'UTC' && zone !== 'ETC/UTC' && zone !== 'GMT') return m[1]!;
+  const at = Date.parse(`${m[1]}T${m[2]}Z`);
+  return Number.isNaN(at) ? m[1]! : new Date(at + 12 * 3_600_000).toISOString().slice(0, 10);
 }
 
 function mirror(ctx: TaskContext, taskId: string, fields: InboundMirror['fields'], sourceRef: string): InboundMirror {

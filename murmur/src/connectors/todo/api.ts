@@ -26,8 +26,6 @@ export const TODO_SUBSCRIPTION_MINUTES = 4_220;
 
 export class GatewayTodoApi implements TodoApi {
   private readonly graph: GatewayGraphApi;
-  /** 本人のメールボックスのタイムゾーン（未取得なら undefined、取れなければ null） */
-  private timeZone: string | null | undefined;
 
   constructor(private readonly upstream: UpstreamCall) {
     this.graph = new GatewayGraphApi(upstream);
@@ -50,28 +48,19 @@ export class GatewayTodoApi implements TodoApi {
   }
 
   /**
-   * 期限（dueDateTime）は既定では UTC に直して返る（東のタイムゾーンでは前の日の 15 時などになる）。
-   * 本人のタイムゾーン（メールボックスの設定）を Prefer: outlook.timezone で送り、その日付で受け取る
+   * 期限（dueDateTime）は UTC に直して返る。日付への直しは normalize.ts の dueDate（一番近い 0 時に丸める）。
+   * 本人のタイムゾーンを引くには MailboxSettings.Read が要るので引かない（2026-11-08、実物で 403）
    */
   async deltaStart(listId: string): Promise<DeltaPage> {
-    return DeltaPage.parse(await this.call('GET', `/v1.0/me/todo/lists/${encodeURIComponent(listId)}/tasks/delta`, await this.zonePrefer()));
+    return DeltaPage.parse(await this.call('GET', `/v1.0/me/todo/lists/${encodeURIComponent(listId)}/tasks/delta`));
   }
 
-  async deltaNext(link: string): Promise<DeltaPage> {
-    if (!link.startsWith(`${GRAPH_ORIGIN}/`)) throw new GraphError(400, 'unexpected delta link');
-    return DeltaPage.parse(await this.call('GET', link.slice(GRAPH_ORIGIN.length), await this.zonePrefer()));
-  }
-
-  private async zonePrefer(): Promise<string | undefined> {
-    if (this.timeZone === undefined) {
-      const r = (await this.call('GET', '/v1.0/me/mailboxSettings?$select=timeZone')) as { timeZone?: string };
-      this.timeZone = typeof r.timeZone === 'string' && r.timeZone.trim() ? r.timeZone.trim() : null;
-    }
-    return this.timeZone ? `outlook.timezone="${this.timeZone.replace(/"/g, '')}"` : undefined;
+  deltaNext(link: string): Promise<DeltaPage> {
+    return this.graph.deltaNext(link);
   }
 
   async createSubscription(input: { listId: string; notificationUrl: string; clientState: string; expiresAt: string }): Promise<CreatedSubscription> {
-    const r = (await this.call('POST', '/v1.0/subscriptions', undefined, {
+    const r = (await this.call('POST', '/v1.0/subscriptions', {
       changeType: 'created,updated,deleted',
       notificationUrl: input.notificationUrl,
       lifecycleNotificationUrl: input.notificationUrl,
@@ -90,8 +79,8 @@ export class GatewayTodoApi implements TodoApi {
     return this.graph.deleteSubscription(id);
   }
 
-  private call(method: 'GET' | 'POST', path: string, prefer?: string, body?: unknown): Promise<unknown> {
-    return graphRequest(this.upstream, method, path, body, prefer);
+  private call(method: 'GET' | 'POST', path: string, body?: unknown): Promise<unknown> {
+    return graphRequest(this.upstream, method, path, body);
   }
 }
 
