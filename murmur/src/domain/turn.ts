@@ -14,25 +14,28 @@ import { canReadDataSource, type Viewer } from './viewer';
 // - 名指し: 誰に読んでほしいか。シグナルの宛先から溜まり、明示的な操作（acknowledge）だけで外れる
 // マスタで決めるのは「このリストの読者のアドレスか」「リスト宛てか」だけ。相手の Contact は名前を出すためだけに使い、番の種類は変えない
 
-/** リストの種類。個人リストは読者が本人だけ（個人のメモ・個人の資格情報の箱）。ほかは共有リスト（0037） */
+/** リストの種類。個人リストは読者が本人 1 人（個人の資格情報の箱・タスクのリスト）。ほかは共有リスト（0037・0039） */
 export type ListKind = 'personal' | 'shared';
 
 export function listKindOf(dir: Directory, dataSourceId: string): ListKind {
   const ds = dir.dataSource(dataSourceId);
-  if (!ds || ds.kind === 'notes') return 'personal';
+  if (!ds) return 'personal';
   if (ds.shared) return 'shared';
   return dir.credentialRef(ds.credentialRefId)?.principal.kind === 'user' ? 'personal' : 'shared';
 }
 
-/** 状態を持つソース（課題のトラッカー・PR）。担当はソースの担当者で、Murmur では担当しない（0038 の決定 1） */
+/** 状態を持つソース（課題のトラッカー・PR・タスクのサービス）。担当はソースの担当者で、Murmur では担当しない（0038 の決定 1・0039 の決定 3） */
 export function isStatefulSource(ds: DataSource | undefined): boolean {
-  return ds?.kind === 'service' && (ds.channel === 'jira' || ds.channel === 'bitbucket');
+  return ds?.kind === 'service' && (ds.channel === 'jira' || ds.channel === 'bitbucket' || ds.channel === 'todo');
+}
+
+/** タスクのサービス（To Do・Google Tasks）。個人リストで、状態を持つソース。完了はソースで付ける（0039 の決定 3） */
+export function isTaskSource(ds: DataSource | undefined): boolean {
+  return ds?.kind === 'service' && ds.channel === 'todo';
 }
 
 /** そのアドレスがリストの読者のものなら、その User（読者がそのリストで名乗ったアドレス。0030 の決定 7・0038 の決定 4） */
 export function readerOfAddress(dir: Directory, dataSourceId: string, ref: AddressRef, at?: string): string | null {
-  const ds = dir.dataSource(dataSourceId);
-  if (ds?.kind === 'notes') return ref.channel === 'note' && ref.value === ds.ownerUserId ? ds.ownerUserId : null;
   const list = dir.listOfDataSource(dataSourceId);
   if (!list) return null;
   const contactId = dir.contactIdOfAddress(ref, at);
@@ -229,7 +232,7 @@ export function isAwaiting(dir: Directory, t: Thread): boolean {
 }
 
 /**
- * リンク先のスレッドから導出したボール（主に個人のメモのスレッドから見る。どのスレッドからでも同じ計算）。
+ * リンク先のスレッドから導出したボール（主にタスクのスレッドから見る。どのスレッドからでも同じ計算）。
  * 見えるリンク先だけを見る。片付けたリンク先は数えない
  * - my_turn: どれかが Viewer の番
  * - waiting: 全部が相手待ち
@@ -254,12 +257,12 @@ export function derivedBall(dir: Directory, viewer: Viewer, p: Projections, t: T
 }
 
 /**
- * 片付けた（閉じた）スレッドに結ばれた先で、片付けたあとにシグナルが来た（0014 の 4）。
- * Murmur は開き直さない。事実だけ返し、開き直すかはスタンドが判断する
+ * 閉じた（片付けた・ソースで完了した）スレッドに結ばれた先で、閉じたあとにシグナルが来た（0014 の 4）。
+ * Murmur は開き直さない。事実だけ返し、開き直すかはスタンドが本人と決める（タスクならソースで開き直す。0039）
  */
 export function linkedActiveSinceDismissed(viewer: Viewer, p: Projections, t: Thread): boolean {
-  if (!t.dismissed || !t.dismissedAt) return false;
-  const since = t.dismissedAt;
+  const since = (t.dismissed ? t.dismissedAt : null) ?? (t.closedAtSource ? t.closedAtSourceAt : null);
+  if (!since) return false;
   return visibleLinked(viewer, p, t).some((x) => x.signalIds.some((id) => p.signals[id]!.at > since));
 }
 

@@ -7,7 +7,6 @@ import {
   createContact,
   createPersonalDataSource,
   endAddress,
-  ensureNotes,
   ensureUser,
   mergeContacts,
   renameContact,
@@ -42,7 +41,6 @@ import {
   planMasterEdit,
   prepareInbound,
   reopenThread,
-  setAttribute,
   signalEvent,
   unlinkThreads,
   type CoreContext,
@@ -294,7 +292,6 @@ export class MurmurService {
     const { viewer, dir } = await this.viewer(userId);
     const ds = dir.dataSource(dir.list(listId)?.dataSourceId ?? '');
     if (!ds || !viewer.listIds.includes(listId)) throw new DomainError('not_found', `list ${listId} not found`);
-    if (ds.kind !== 'service') throw new DomainError('invalid', 'a notes list needs no identity');
     const { result } = await this.changeMaster(userId, `リスト ${listId} でのアイデンティティ`, (d, ctx) =>
       bindIdentity(d, userId, { channel: ds.channel, value: identity.trim() }, ctx),
     );
@@ -381,16 +378,11 @@ export class MurmurService {
     return view;
   }
 
-  /** 個人のメモ。thread_id がなければ新しいスレッド */
-  async addNote(userId: string, input: { threadId?: string; title?: string; body: string; author?: Author }) {
-    // 個人のメモは最初に書くときに作る（Contact がなくても使える。0030 の 4）
-    await this.changeMaster(userId, '個人のメモを使い始める', (d, ctx) => ensureNotes(d, userId, ctx));
+  /** メモ（経過の記録）を個人リストのスレッドに書く（0039 の決定 2）。返すのはそのスレッド */
+  async addNote(userId: string, input: { threadId: string; body: string; author?: Author }) {
     const { viewer } = await this.viewer(userId);
-    const threadId = await this.run((p, ctx) => {
-      const { events, threadId } = addNote(p, viewer, ctx, input);
-      return { events, result: threadId };
-    });
-    return this.getThread(userId, threadId);
+    await this.run((p, ctx) => ({ events: addNote(p, viewer, ctx, input).events, result: undefined }));
+    return this.getThread(userId, input.threadId);
   }
 
   async claimThread(userId: string, input: { threadId: string; userId: string | null; reason?: string }) {
@@ -442,21 +434,15 @@ export class MurmurService {
     return this.getThread(userId, threadId);
   }
 
-  async setAttribute(userId: string, input: { threadId: string; name: string; value: unknown }) {
-    const { viewer } = await this.viewer(userId);
-    await this.run((p, ctx) => ({ events: setAttribute(p, viewer, ctx.dir, input), result: undefined }));
-    return this.getThread(userId, input.threadId);
-  }
-
   async dismissThread(userId: string, input: { threadId: string; reason: string }) {
     const { viewer } = await this.viewer(userId);
-    await this.run((p) => ({ events: dismissThread(p, viewer, input), result: undefined }));
+    await this.run((p, ctx) => ({ events: dismissThread(p, viewer, ctx.dir, input), result: undefined }));
     return this.getThread(userId, input.threadId);
   }
 
   async reopenThread(userId: string, input: { threadId: string; reason?: string }) {
     const { viewer } = await this.viewer(userId);
-    await this.run((p) => ({ events: reopenThread(p, viewer, input), result: undefined }));
+    await this.run((p, ctx) => ({ events: reopenThread(p, viewer, ctx.dir, input), result: undefined }));
     return this.getThread(userId, input.threadId);
   }
 

@@ -1,4 +1,4 @@
-import type { AddressRef, Anchors, AttributeValue, Author, FileRef, LinkRoute, MirrorFields, ThreadedBy } from './events';
+import type { AddressRef, Anchors, Author, FileRef, LinkRoute, MirrorFields, ThreadedBy } from './events';
 import type { Channel } from './entities';
 
 /** スレッドのログの位置（時刻・seq の順。sortLog と同じ） */
@@ -49,9 +49,11 @@ export interface CommState {
   overdue: boolean;
   /** ソースの側で完了している（写しの closed）。片付けと同じく、どの見え方にも数えない */
   closedAtSource: boolean;
+  /** ソースの側で完了した時刻（完了の写しを受けた時刻）。開いていれば null */
+  closedAtSourceAt: string | null;
 }
 
-/** signal = データソースのシグナル、note = 個人のメモ（名指しを作らない）、mirrored = 状態の写し、acknowledged = 名指しを外した */
+/** signal = データソースのシグナル、note = メモ（ThreadNoted。名指しを作らない。0039）、mirrored = 状態の写し、acknowledged = 名指しを外した */
 export type ThreadLogKind =
   | 'signal'
   | 'note'
@@ -60,18 +62,17 @@ export type ThreadLogKind =
   | 'claimed'
   | 'linked'
   | 'unlinked'
-  | 'attribute'
   | 'mirrored'
   | 'overdue'
   | 'acknowledged';
 
-/** スレッドに綴じたもの（シグナル・メモと、人とスタンドの操作）。通信状態の導出とタイムラインの入力 */
+/** スレッドに綴じたもの（シグナルと、人とスタンドの操作。メモも操作の 1 つ）。通信状態の導出とタイムラインの入力 */
 export interface ThreadLogEntry {
   seq: number;
   at: string;
   kind: ThreadLogKind;
   signalId?: string;
-  /** signal / note: 送り主と宛先 */
+  /** signal: 送り主と宛先 */
   from?: AddressRef;
   to?: AddressRef[];
   /** signal（送信の記録）: 返事期待の期限 */
@@ -84,9 +85,10 @@ export interface ThreadLogEntry {
   /** linked / unlinked: 相手のスレッドと経路 */
   otherThreadId?: string;
   route?: LinkRoute;
-  /** attribute: 名前と値（null は外した） */
-  name?: string;
-  value?: AttributeValue | null;
+  /** note: メモの ID・本文・書き手（0039 の決定 2） */
+  noteId?: string;
+  body?: string;
+  author?: Author;
   /** mirrored: 変わった写しの項目 */
   fields?: MirrorFields;
   /** acknowledged: 外したアドレス・リスト宛てか・どのシグナルまでか */
@@ -119,13 +121,11 @@ export interface Thread extends CommState {
   id: string;
   dataSourceId: string;
   title: string;
-  /** 時刻順（メモを含む） */
+  /** 時刻順（データソースのシグナルだけ。メモは log に載る） */
   signalIds: string[];
   log: ThreadLogEntry[];
   /** 結んだスレッド（threadId 順） */
   links: ThreadLink[];
-  /** 本人が付ける属性（ThreadAttributeSet）。個人のメモのスレッドだけ（0031） */
-  attributes: Record<string, AttributeValue>;
   /** ソースの状態の写し（ThreadMirrored）。写しを受けたことがなければ null。完了は closedAtSource、件名は title に入る */
   source: SourceState | null;
   /** 写しのソースの区切り（課題キー）。写しでできたスレッドを課題キーで引くため */
@@ -145,8 +145,6 @@ export interface SignalRecord {
   anchors: Anchors;
   attachments: FileRef[];
   sourceRef: string;
-  /** 書き手（個人のメモだけ。0031 の 3） */
-  author?: Author;
   at: string;
   seq: number;
   /** 送信の記録（OutboundRecorded）。観測だけのシグナルは null */

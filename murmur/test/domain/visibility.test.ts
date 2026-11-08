@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { deriveViewer, getListView, getThreadView, listLists, listThreads, visibleSignals } from '../../src/domain';
 import { alice, answer, bob, dir, email, eve, EventLog, ingestPure, line, makeCtx, mallory } from '../helpers/world';
 
-// クエリ層の可視性（H3）: 見えるのはリストの読者だけ。個人のメールボックスや個人のメモは本人だけ。テナント外は 0 件
+// クエリ層の可視性（H3）: 見えるのはリストの読者だけ。個人のメールボックスやタスクのリストは本人だけ。テナント外は 0 件
 
 function world() {
   const log = new EventLog();
@@ -51,20 +51,19 @@ describe('可視性', () => {
     expect(visibleSignals(deriveViewer(dir, 'u_nobody'), p)).toHaveLength(0);
   });
 
-  it('H3 getListView は読者にだけ、データソースと読者と属性定義を返す', () => {
-    expect(getListView(dir, alice, 'l_notes_alice')).toMatchObject({
-      dataSource: { id: 'ds_notes_alice', kind: 'notes', channel: 'note' },
+  it('H3 getListView は読者にだけ、データソースと読者を返す', () => {
+    expect(getListView(dir, alice, 'l_tasks_alice')).toMatchObject({
+      dataSource: { id: 'ds_tasks_alice', kind: 'service', channel: 'todo' },
       readers: [{ contactId: 'p_alice', name: 'Alice' }],
-      attributeDefs: [{ name: 'due', type: 'date' }, { name: 'status' }],
     });
-    expect(getListView(dir, bob, 'l_notes_alice')).toBeNull();
+    expect(getListView(dir, bob, 'l_tasks_alice')).toBeNull();
     expect(getListView(dir, bob, 'l_line')?.dataSource.channel).toBe('line');
     expect(getListView(dir, alice, 'l_nope')).toBeNull();
   });
 
   it('H3 listLists は読者になっているリストだけを返す', () => {
-    expect(listLists(dir, alice).map((l) => l.id)).toContain('l_notes_alice');
-    expect(listLists(dir, bob).map((l) => l.id)).not.toContain('l_notes_alice');
+    expect(listLists(dir, alice).map((l) => l.id)).toContain('l_tasks_alice');
+    expect(listLists(dir, bob).map((l) => l.id)).not.toContain('l_tasks_alice');
     expect(listLists(dir, eve).map((l) => l.id)).toEqual(['l_slack']);
     expect(listLists(dir, mallory)).toEqual([]);
     expect(listLists(dir, deriveViewer(dir, 'u_nobody'))).toEqual([]);

@@ -3,9 +3,12 @@ import { z } from 'zod';
 // マスタ（イベントではない）。seed.json と DB のマスタテーブルが同じ形を持つ。
 // 1 デプロイ = 1 チームなので、テナントのキーは持たない（0020・0021）。
 
-/** note = 個人のメモ（0014）。それ以外は外のサービス */
-/** teams: Microsoft Teams のチャネル（0036）。アドレスの値は <tenantId>/<Entra のオブジェクト ID> */
-export const Channel = z.enum(['email', 'slack', 'line', 'jira', 'bitbucket', 'teams', 'note']);
+/**
+ * 外のサービスのチャネル。個人のメモ（note）は 0039 でなくした。
+ * - teams: Microsoft Teams のチャネル（0036）。アドレスの値は <tenantId>/<Entra のオブジェクト ID>
+ * - todo: タスクのサービス（To Do・Google Tasks。0039）。アドレスの値は本人のアカウント
+ */
+export const Channel = z.enum(['email', 'slack', 'line', 'jira', 'bitbucket', 'teams', 'todo']);
 export type Channel = z.infer<typeof Channel>;
 
 /** チャネルと値だけのアドレス（Contact に属さない。イベント・データソースの窓口・資格情報が持つ） */
@@ -95,16 +98,15 @@ export const SourceConnector = z.discriminatedUnion('kind', [
 export type SourceConnector = z.infer<typeof SourceConnector>;
 
 /**
- * データソース（0014）。リスト 1 つに対応する。
- * - service: 外のサービス（メールボックス、Slack のチャネルや DM、LINE 公式アカウント、Jira のプロジェクト）。
- *   資格情報で取り込み、selfAddresses（窓口のアドレス）と読者の Contact のアドレスが「こちら」（0030。クエリ層の sides.ts）
- * - notes: 個人のメモ。ユーザーごとに 1 つ、読者は本人だけ
+ * データソース（0014）。リスト 1 つに対応する。どれも外のサービス（メールボックス、Slack のチャネルや DM、LINE 公式アカウント、
+ * Jira のプロジェクト、タスクのサービスのリスト）で、資格情報で取り込み、selfAddresses（窓口のアドレス）と読者の Contact のアドレスが
+ * 「こちら」（0030。クエリ層の sides.ts）。個人のメモ（kind: notes）は 0039 でなくした。kind は 'service' だけが残る
  */
 export const DataSource = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('service'),
     id: z.string(),
-    channel: Channel.exclude(['note']),
+    channel: Channel,
     name: z.string(),
     description: z.string().default(''),
     credentialRefId: z.string(),
@@ -127,14 +129,6 @@ export const DataSource = z.discriminatedUnion('kind', [
       })
       .optional(),
   }),
-  z.object({
-    kind: z.literal('notes'),
-    id: z.string(),
-    name: z.string(),
-    description: z.string().default(''),
-    /** 持ち主の User（0030。読者は本人だけ。Contact がなくても使える） */
-    ownerUserId: z.string(),
-  }),
 ]);
 export type DataSource = z.infer<typeof DataSource>;
 export type ServiceDataSource = Extract<DataSource, { kind: 'service' }>;
@@ -147,19 +141,6 @@ export type List = z.infer<typeof List>;
 export const ListMember = z.object({ listId: z.string(), userId: z.string() });
 export type ListMember = z.infer<typeof ListMember>;
 
-export const AttributeType = z.enum(['string', 'number', 'boolean', 'date', 'enum', 'contact']);
-/** 本人が付ける属性の定義。個人のメモのデータソースだけに付く（0031。写しは決まった形で、定義を使わない） */
-export const AttributeDef = z.object({
-  dataSourceId: z.string(),
-  name: z.string(),
-  type: AttributeType,
-  /** enum の選択肢 */
-  options: z.array(z.string()).optional(),
-  /** AI が読む意味の記述（必須） */
-  description: z.string().min(1),
-});
-export type AttributeDef = z.infer<typeof AttributeDef>;
-
 export const Seed = z.object({
   users: z.array(User),
   contacts: z.array(Contact),
@@ -169,7 +150,6 @@ export const Seed = z.object({
   dataSources: z.array(DataSource).default([]),
   lists: z.array(List).default([]),
   listMembers: z.array(ListMember).default([]),
-  attributeDefs: z.array(AttributeDef).default([]),
 });
 export type Seed = z.infer<typeof Seed>;
 

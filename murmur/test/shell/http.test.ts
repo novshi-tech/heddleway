@@ -58,9 +58,9 @@ describe('HTTP API', () => {
     expect(created.status).toBe(200);
     expect(created.body).toMatchObject({ identity: { kind: 'bound', contactId: 'p_carol' }, readers: [{ userId: 'u_carol', contactId: 'p_carol' }] });
     expect((await call('GET', '/api/me', 'u_carol')).body).toMatchObject({ contact: { contactId: 'p_carol' }, lists: [{ kind: 'service' }] });
-    // メモは最初に書くときに作られる
-    expect((await call('POST', '/api/notes', 'u_carol', { body: 'メモ' })).status).toBe(200);
-    expect((await call('GET', '/api/me', 'u_carol')).body.lists).toHaveLength(2);
+    // メモは個人リストのスレッドに書く。thread_id のないメモ（個人のメモのデータソース）はもうない（0039）
+    expect((await call('POST', '/api/notes', 'u_carol', { body: 'メモ' })).status).toBe(400);
+    expect((await call('GET', '/api/me', 'u_carol')).body.lists).toHaveLength(1);
     // 別の User のアドレスは選べない
     expect((await call('POST', '/api/data-sources', 'u_carol', { channel: 'email', name: 'x', identity: 'alice@ubs.example', gateway_credential_id: 'g' })).status).toBe(409);
   });
@@ -127,12 +127,12 @@ describe('HTTP API', () => {
 
     expect((await call('GET', '/api/lists/l_support', 'u_alice')).body.dataSource.name).toBe('support@');
     const lists = (await call('GET', '/api/lists', 'u_alice')).body as { id: string }[];
-    expect(lists.map((l) => l.id)).toEqual(expect.arrayContaining(['l_support', 'l_alice', 'l_notes_alice']));
+    expect(lists.map((l) => l.id)).toEqual(expect.arrayContaining(['l_support', 'l_alice', 'l_tasks_alice']));
     expect(((await call('GET', '/api/lists', 'u_bob')).body as { id: string }[]).map((l) => l.id)).not.toContain('l_alice');
     expect((await call('GET', '/api/lists/l_alice', 'u_bob')).status).toBe(404);
   });
 
-  it('H8 メモ・担当・名指し・リンク・属性・自分の番・タイムラインの since の一通り', async () => {
+  it('H8 タスク・メモ・担当・名指し・リンク・自分の番・タイムラインの since の一通り', async () => {
     const { call, service, clock } = await app();
     const r1 = await service.ingest(email({ from: 'carol@example.com', sourceRef: 'r1', anchors: { messageId: '<m1>' } }));
     const threadId = r1.status === 'threaded' ? r1.threadId : '';
@@ -155,33 +155,39 @@ describe('HTTP API', () => {
     expect(handed.body.thread.assignee.userIds).toEqual(['u_bob']);
 
     clock.set('2026-10-16T10:00:00.000Z');
-    const note = await call('POST', '/api/notes', 'u_alice', { body: 'Carol さんの雨漏りの件\n電話で状況を聞いた' });
-    expect(note.body.thread).toMatchObject({ title: 'Carol さんの雨漏りの件', dataSourceId: 'ds_notes_alice', signalCount: 1 });
-    const noteId = note.body.thread.id as string;
+    // スタンドが To Do にタスクを作って記録する（宛先なし。タスクの ID が区切り。0039 の決定 3）
+    const created = await call('POST', '/api/sent', 'u_alice', { data_source: 'ds_tasks_alice', subject: 'Carol さんの雨漏りの件', body: '期限は今週', sent_ref: 'AAMk-1' });
+    expect(created.body.thread).toMatchObject({ title: 'Carol さんの雨漏りの件', dataSourceId: 'ds_tasks_alice', signalCount: 1 });
+    const noteId = created.body.thread.id as string;
+    const note = await call('POST', '/api/notes', 'u_alice', { thread_id: noteId, body: '電話で状況を聞いた' });
+    expect(note.status).toBe(200);
     expect((await call('POST', '/api/notes', 'u_bob', { thread_id: noteId, body: 'x' })).status).toBe(404);
+    // 共有リスト（support@）のスレッドにはメモを書けない
+    expect((await call('POST', '/api/notes', 'u_alice', { thread_id: threadId, body: 'x' })).status).toBe(400);
     const more = await call('POST', '/api/notes', 'u_alice', { thread_id: noteId, body: '見積を依頼する', author: { kind: 'agent', name: 'orchestrator' } });
-    expect(more.body.thread.signalCount).toBe(2);
-    expect(more.body.timeline.map((e: { signal?: { author?: unknown } }) => e.signal?.author)).toEqual([{ kind: 'user' }, { kind: 'agent', name: 'orchestrator' }]);
+    expect(more.body.timeline.filter((e: { kind: string }) => e.kind === 'note').map((e: { note: { author: unknown } }) => e.note.author)).toEqual([
+      { kind: 'user' },
+      { kind: 'agent', name: 'orchestrator' },
+    ]);
     expect((await call('POST', '/api/notes', 'u_alice', { thread_id: noteId, body: 'x', author: { kind: 'agent', name: '' } })).status).toBe(400);
     expect((await call('GET', '/api/threads?filter=mine', 'u_alice')).body.map((t: { id: string }) => t.id)).toEqual([noteId]);
 
     const linked = await call('POST', `/api/threads/${noteId}/links`, 'u_alice', { thread_id: threadId, reason: 'この件の問い合わせ' });
     expect(linked.body.thread.links).toMatchObject([{ threadId, route: 'manual' }]);
     expect(linked.body.timeline.map((e: { threadId: string }) => e.threadId)).toContain(threadId);
-    // Bob にはメモのスレッドが読めないので、辺も見えない（0033 の 3）
+    // Bob には Alice のタスクが読めないので、辺も見えない（0033 の 3）
     const bobView = await call('GET', `/api/threads/${threadId}`, 'u_bob');
     expect(bobView.body.linked).toEqual([]);
     expect(bobView.body.thread.links).toEqual([]);
     expect(JSON.stringify(bobView.body)).not.toContain(noteId);
     expect(JSON.stringify(bobView.body)).not.toContain('電話で状況');
 
-    const attr = await call('POST', `/api/threads/${noteId}/attributes`, 'u_alice', { name: 'status', value: 'todo' });
-    expect(attr.body.thread.attributes).toEqual({ status: 'todo' });
-    expect((await call('POST', `/api/threads/${noteId}/attributes`, 'u_alice', { name: 'status', value: 'later' })).status).toBe(400);
+    // 本人が付ける属性はなくした（0039 の決定 5）。期限はタスクの写し
+    expect((await call('POST', `/api/threads/${noteId}/attributes`, 'u_alice', { name: 'due', value: '2026-10-20' })).status).toBe(404);
     const since = await call('GET', `/api/threads/${noteId}?since=2026-10-16T09:30:00.000Z`, 'u_alice');
     expect(since.body.timeline.every((e: { at: string }) => e.at > '2026-10-16T09:30:00.000Z')).toBe(true);
 
-    // list_threads の since: メモのスレッドは、結んだ先が動けば差分に入る（オフセット付きの時刻も受ける）
+    // list_threads の since: タスクは、結んだ先が動けば差分に入る（オフセット付きの時刻も受ける）
     clock.set('2026-10-16T11:00:00.000Z');
     await service.ingest(email({ from: 'carol@example.com', sourceRef: 'r2', anchors: { inReplyTo: '<m1>' } }));
     const changed = await call('GET', '/api/threads?filter=mine&since=2026-10-16T19:30:00%2B09:00', 'u_alice');
@@ -261,8 +267,8 @@ describe('HTTP API', () => {
     const { http, service, call } = await app();
     const r1 = await service.ingest(email({ from: 'carol@example.com', sourceRef: 'r1', body: '<img src=x onerror=alert(1)>', anchors: { messageId: '<m1>' } }));
     const threadId = r1.status === 'threaded' ? r1.threadId : '';
-    const note = await call('POST', '/api/notes', 'u_alice', { body: 'Carol さんの件' });
-    await call('POST', `/api/threads/${note.body.thread.id}/links`, 'u_alice', { thread_id: threadId });
+    const note = await call('POST', '/api/sent', 'u_alice', { data_source: 'ds_tasks_alice', subject: 'Carol さんの件', body: 'タスク', sent_ref: 'AAMk-2', source_thread_id: threadId });
+    await call('POST', '/api/notes', 'u_alice', { thread_id: note.body.thread.id, body: '電話した' });
 
     for (const path of ['/admin', '/admin/lists/l_support', `/admin/threads/${threadId}`]) {
       expect((await http.request(path)).status).toBe(404);
@@ -283,8 +289,9 @@ describe('HTTP API', () => {
     expect(detail).not.toContain('<img src=x');
     expect(detail).toContain('Carol さんの件');
     const noteDetail = await (await http.request(`/admin/threads/${note.body.thread.id}?token=tok`)).text();
-    // メモのスレッドのタイムラインに、結んだ先の受信が並ぶ
+    // タスクのタイムラインに、結んだ先の受信とメモが並ぶ
     expect(noteDetail).toContain('&lt;img');
+    expect(noteDetail).toContain('電話した');
     expect((await http.request('/admin/threads/thr_nope?token=tok')).status).toBe(404);
   });
 });

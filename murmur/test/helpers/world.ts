@@ -7,6 +7,7 @@ import {
   finalizeIngest,
   fold,
   planIngest,
+  planMirror,
   prepareInbound,
   signalEvent,
   summarizeThread,
@@ -17,6 +18,7 @@ import {
   type InboundSignal,
   type IngestOutcome,
   type IngestRequest,
+  type MirrorFields,
   type Projections,
 } from '../../src/domain';
 
@@ -26,8 +28,8 @@ import {
  *   ds_support   support@（組織の資格情報、読者は Alice と Bob）
  *   ds_alice     Alice の個人のメールボックス（読者は Alice だけ）
  *   ds_line      LINE 公式アカウント（組織、読者は Bob だけ）
- *   ds_notes_*   個人のメモ（Alice と Bob）
- *   ds_slack     Slack の #general（グループ、組織の資格情報、読者は Eve だけ。Eve はメモを持たない）
+ *   ds_tasks_*   タスクのリスト（Alice と Bob の個人リスト。状態を持つソース。0039）
+ *   ds_slack     Slack の #general（グループ、組織の資格情報、読者は Eve だけ。Eve はタスクのリストを持たない）
  * u_mallory: ゲートウェイの User だが、このデプロイに Contact がない（チームの外）
  */
 /** 窓口のアドレス（Contact に属さない。0030） */
@@ -68,13 +70,22 @@ export const seed = Seed.parse({
     { id: 'c_alice', principal: { kind: 'user', userId: 'u_alice' }, address: { channel: 'email', value: 'alice@ubs.example' } },
     { id: 'c_oa', principal: { kind: 'team' }, address: OA },
     { id: 'c_slack', principal: { kind: 'team' }, address: SLACK },
+    { id: 'c_tasks_alice', principal: { kind: 'user', userId: 'u_alice' }, address: { channel: 'todo', value: 'alice@ubs.example' } },
+    { id: 'c_tasks_bob', principal: { kind: 'user', userId: 'u_bob' }, address: { channel: 'todo', value: 'bob@ubs.example' } },
   ],
   dataSources: [
     { kind: 'service', id: 'ds_support', channel: 'email', name: 'support@', credentialRefId: 'c_support', selfAddresses: [SUPPORT] },
     { kind: 'service', id: 'ds_alice', channel: 'email', name: 'Alice のメールボックス', credentialRefId: 'c_alice' },
     { kind: 'service', id: 'ds_line', channel: 'line', name: 'LINE 公式アカウント', credentialRefId: 'c_oa', selfAddresses: [OA] },
-    { kind: 'notes', id: 'ds_notes_alice', name: 'Alice のメモ', ownerUserId: 'u_alice' },
-    { kind: 'notes', id: 'ds_notes_bob', name: 'Bob のメモ', ownerUserId: 'u_bob' },
+    {
+      kind: 'service',
+      id: 'ds_tasks_alice',
+      channel: 'todo',
+      name: 'Alice のタスク',
+      credentialRefId: 'c_tasks_alice',
+      selfAddresses: [{ channel: 'todo', value: 'alice@ubs.example' }],
+    },
+    { kind: 'service', id: 'ds_tasks_bob', channel: 'todo', name: 'Bob のタスク', credentialRefId: 'c_tasks_bob', selfAddresses: [{ channel: 'todo', value: 'bob@ubs.example' }] },
     {
       kind: 'service',
       id: 'ds_slack',
@@ -89,8 +100,8 @@ export const seed = Seed.parse({
     { id: 'l_support', dataSourceId: 'ds_support' },
     { id: 'l_alice', dataSourceId: 'ds_alice' },
     { id: 'l_line', dataSourceId: 'ds_line' },
-    { id: 'l_notes_alice', dataSourceId: 'ds_notes_alice' },
-    { id: 'l_notes_bob', dataSourceId: 'ds_notes_bob' },
+    { id: 'l_tasks_alice', dataSourceId: 'ds_tasks_alice' },
+    { id: 'l_tasks_bob', dataSourceId: 'ds_tasks_bob' },
     { id: 'l_slack', dataSourceId: 'ds_slack' },
   ],
   listMembers: [
@@ -98,11 +109,10 @@ export const seed = Seed.parse({
     { listId: 'l_support', userId: 'u_bob' },
     { listId: 'l_alice', userId: 'u_alice' },
     { listId: 'l_line', userId: 'u_bob' },
-    { listId: 'l_notes_alice', userId: 'u_alice' },
-    { listId: 'l_notes_bob', userId: 'u_bob' },
+    { listId: 'l_tasks_alice', userId: 'u_alice' },
+    { listId: 'l_tasks_bob', userId: 'u_bob' },
     { listId: 'l_slack', userId: 'u_eve' },
   ],
-  attributeDefs: [{ dataSourceId: 'ds_notes_alice', name: 'status', type: 'enum', options: ['todo', 'done'], description: '作業の進み具合' }],
 });
 
 export const dir = new Directory(seed);
@@ -166,6 +176,36 @@ export function line(over: Omit<Partial<InboundSignal>, 'from' | 'to'> & { from:
     from: { channel: 'line', value: from },
     to: [{ channel: 'line', value: to ?? '@ubs' }],
   };
+}
+
+/**
+ * タスクのリストにタスクを 1 つ作る（タスクのサービスの写し。0039 の決定 3）。返すのはスレッドの ID。
+ * key はタスクの ID（省けば件名から作る）。fields で写しの項目を足せる
+ */
+export function task(
+  log: EventLog,
+  ctx: CoreContext,
+  title: string,
+  opts: { dataSourceId?: string; key?: string; fields?: Omit<MirrorFields, 'title'> } = {},
+): string {
+  const dataSourceId = opts.dataSourceId ?? 'ds_tasks_alice';
+  const plan = planMirror(log.state(), ctx, {
+    kind: 'mirror',
+    dataSourceId,
+    channel: 'todo',
+    threadKey: opts.key ?? `task:${title}`,
+    fields: { title, holders: [dataSourceId === 'ds_tasks_bob' ? 'bob@ubs.example' : 'alice@ubs.example'], ...(opts.fields ?? {}) },
+    sourceRef: `todo:${opts.key ?? title}:created`,
+  });
+  if (plan.kind !== 'mirrored') throw new Error(`task ${title} not created`);
+  log.push(plan.events, ctx.now);
+  return plan.threadId;
+}
+
+/** タスクの写しを更新する（完了・期限・件名など）。key は task の key（省けば task:<件名>） */
+export function updateTask(log: EventLog, ctx: CoreContext, key: string, fields: MirrorFields, dataSourceId = 'ds_tasks_alice'): void {
+  const plan = planMirror(log.state(), ctx, { kind: 'mirror', dataSourceId, channel: 'todo', threadKey: key, fields, sourceRef: `todo:${key}:${ctx.now}` });
+  if (plan.kind === 'mirrored') log.push(plan.events, ctx.now);
 }
 
 /** AI の代わりの答え（needs_response は 0038 から使わない） */

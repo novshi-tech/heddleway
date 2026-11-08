@@ -13,7 +13,7 @@ export interface SharedSpaceInput {
   userId: string;
   /** つなぐ人のゲートウェイの接続 */
   gatewayCredentialId: string;
-  channel: Exclude<Channel, 'note'>;
+  channel: Channel;
   spaceKey: string;
   name: string;
   description?: string;

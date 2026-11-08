@@ -44,7 +44,6 @@ describe('prepareInbound', () => {
     const ctx = makeCtx();
     const bad = (over: Partial<Parameters<typeof email>[0]>) => () => prepareInbound(p, ctx, email({ from: 'a@x', sourceRef: 'r', ...over }));
     expect(bad({ dataSourceId: 'ds_nope' })).toThrow(DomainError);
-    expect(bad({ dataSourceId: 'ds_notes_alice' })).toThrow(/not a service data source/);
     expect(bad({ dataSourceId: 'ds_slack' })).toThrow(/is slack, not email/);
   });
 });

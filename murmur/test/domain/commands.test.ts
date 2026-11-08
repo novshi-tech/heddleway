@@ -8,12 +8,11 @@ import {
   linkThreads,
   moveSignal,
   reopenThread,
-  setAttribute,
   unlinkThreads,
 } from '../../src/domain';
-import { alice, answer, bob, dir, email, eve, EventLog, ingestPure, makeCtx, view } from '../helpers/world';
+import { alice, answer, bob, dir, email, eve, EventLog, ingestPure, makeCtx, task, view } from '../helpers/world';
 
-// スタンドの操作（片付け・開き直し・シグナルの移し替え・メモ・持ち主・リンク・属性）。操作できるのはスレッドが見えている人だけ
+// スタンドの操作（片付け・開き直し・シグナルの移し替え・メモ・持ち主・リンク）。操作できるのはスレッドが見えている人だけ
 
 function world() {
   const log = new EventLog();
@@ -30,17 +29,17 @@ describe('片付けと開き直し', () => {
   it('H3 読者だけが片付けられる。理由は必須で、片付け済みなら何もしない', () => {
     const { log, threadId, privateThread } = world();
     const p = log.state();
-    expect(dismissThread(p, alice, { threadId, reason: '対応不要' })).toHaveLength(1);
-    expect(() => dismissThread(p, alice, { threadId, reason: ' ' })).toThrow(/reason/);
+    expect(dismissThread(p, alice, dir, { threadId, reason: '対応不要' })).toHaveLength(1);
+    expect(() => dismissThread(p, alice, dir, { threadId, reason: ' ' })).toThrow(/reason/);
     // Bob は support@ の読者なので片付けられるが、Alice の個人のメールボックスは見えない
-    expect(dismissThread(p, bob, { threadId, reason: 'x' })).toHaveLength(1);
-    expect(() => dismissThread(p, bob, { threadId: privateThread, reason: 'x' })).toThrow(DomainError);
-    expect(() => dismissThread(p, eve, { threadId, reason: 'x' })).toThrow(/not found/);
+    expect(dismissThread(p, bob, dir, { threadId, reason: 'x' })).toHaveLength(1);
+    expect(() => dismissThread(p, bob, dir, { threadId: privateThread, reason: 'x' })).toThrow(DomainError);
+    expect(() => dismissThread(p, eve, dir, { threadId, reason: 'x' })).toThrow(/not found/);
 
-    log.push(dismissThread(p, alice, { threadId, reason: '対応不要' }), '2026-10-16T10:00:00.000Z');
-    expect(dismissThread(log.state(), alice, { threadId, reason: '対応不要' })).toEqual([]);
-    expect(reopenThread(log.state(), bob, { threadId })).toHaveLength(1);
-    expect(reopenThread(p, bob, { threadId })).toEqual([]);
+    log.push(dismissThread(p, alice, dir, { threadId, reason: '対応不要' }), '2026-10-16T10:00:00.000Z');
+    expect(dismissThread(log.state(), alice, dir, { threadId, reason: '対応不要' })).toEqual([]);
+    expect(reopenThread(log.state(), bob, dir, { threadId })).toHaveLength(1);
+    expect(reopenThread(p, bob, dir, { threadId })).toEqual([]);
   });
 });
 
@@ -89,51 +88,41 @@ describe('シグナルの移し替え', () => {
   });
 });
 
-describe('個人のメモ（add_note）', () => {
-  it('H3 自分のメモのデータソースに書く。thread_id がなければ新しいスレッド、件名は最初の行', () => {
-    const { log, ctx, threadId: support } = world();
-    const first = addNote(log.state(), alice, ctx, { body: 'Carol さんの雨漏り\n電話で状況を聞いた' });
+describe('メモ（add_note。0039 の決定 2）', () => {
+  it('H3 個人リストのスレッド（タスク・本人の箱のメール）に書ける。共有リストのスレッドには書けない', () => {
+    const { log, ctx, threadId: support, privateThread } = world();
+    const t = task(log, ctx, 'Carol さんの雨漏り');
+    const first = addNote(log.state(), alice, ctx, { threadId: t, body: '電話で状況を聞いた' });
     log.push(first.events, '2026-10-16T10:00:00.000Z');
-    expect(log.state().threads[first.threadId]).toMatchObject({ dataSourceId: 'ds_notes_alice', title: 'Carol さんの雨漏り', attention: { named: [], broadcasts: [] } });
-    expect(log.state().signals[first.signalId]).toMatchObject({ channel: 'note', threadedBy: 'self', from: { channel: 'note', value: 'u_alice' } });
+    expect(first.events[0]!.type === 'ThreadNoted' && first.events[0]!.payload).toMatchObject({ noteId: first.noteId, threadId: t, author: { kind: 'user' }, actorUserId: 'u_alice' });
+    expect(log.state().threads[t]).toMatchObject({ dataSourceId: 'ds_tasks_alice', signalIds: [], attention: { named: [], broadcasts: [] } });
 
-    const second = addNote(log.state(), alice, ctx, { threadId: first.threadId, body: '見積を頼む' });
-    log.push(second.events, '2026-10-16T11:00:00.000Z');
-    expect(log.state().threads[first.threadId]!.signalIds).toEqual([first.signalId, second.signalId]);
+    // 本人の箱のメールのスレッドにも直接書ける
+    const onMail = addNote(log.state(), alice, ctx, { threadId: privateThread, body: '見積を頼む' });
+    log.push(onMail.events, '2026-10-16T11:00:00.000Z');
+    expect(log.state().threads[privateThread]!.log.filter((l) => l.kind === 'note').map((l) => l.body)).toEqual(['見積を頼む']);
 
-    // 他人のメモのスレッドには書けない（見えない）。外のソースのスレッドにも書けない
-    expect(() => addNote(log.state(), bob, ctx, { threadId: first.threadId, body: 'x' })).toThrow(/not found/);
-    expect(() => addNote(log.state(), alice, ctx, { threadId: support, body: 'x' })).toThrow(/not in your notes/);
-    expect(() => addNote(log.state(), alice, ctx, { body: ' ' })).toThrow(/body/);
-    expect(() => addNote(log.state(), alice, ctx, { threadId: first.threadId, title: 't', body: 'x' })).toThrow(/title/);
-    // メモのデータソースがなければ not_found
-    expect(() => addNote(log.state(), eve, ctx, { body: 'x' })).toThrow(/notes/);
+    // 共有リスト（support@）のスレッドには書けない。他人の個人リストは見えない
+    expect(() => addNote(log.state(), alice, ctx, { threadId: support, body: 'x' })).toThrow(/shared list/);
+    expect(() => addNote(log.state(), bob, ctx, { threadId: t, body: 'x' })).toThrow(/not found/);
+    expect(() => addNote(log.state(), alice, ctx, { threadId: t, body: ' ' })).toThrow(/body/);
   });
 
   it('H3 メモに書き手の印を付けられる。省略は本人。タイムラインに出るが、誰の番は変えない（0031 の 3・0032）', () => {
     const { log, ctx } = world();
-    const a = addNote(log.state(), alice, ctx, { title: 'PR のレビュー対応', body: '着手する' });
+    const t = task(log, ctx, 'PR のレビュー対応');
+    const a = addNote(log.state(), alice, ctx, { threadId: t, body: '着手する' });
     log.push(a.events, '2026-10-16T10:00:00.000Z');
-    const before = log.state().threads[a.threadId]!;
-    const b = addNote(log.state(), alice, ctx, { threadId: a.threadId, body: '指摘 3 件を直した。次はテスト', author: { kind: 'agent', name: 'orchestrator' } });
+    const before = log.state().threads[t]!;
+    const b = addNote(log.state(), alice, ctx, { threadId: t, body: '指摘 3 件を直した。次はテスト', author: { kind: 'agent', name: 'orchestrator' } });
     log.push(b.events, '2026-10-16T10:30:00.000Z');
     const p = log.state();
-    expect(p.signals[a.signalId]!.author).toEqual({ kind: 'user' });
-    expect(p.signals[b.signalId]!.author).toEqual({ kind: 'agent', name: 'orchestrator' });
-    expect(p.threads[a.threadId]).toMatchObject({ attention: before.attention, ownerUserId: before.ownerUserId });
-    const timeline = getThreadView(dir, alice, p, a.threadId)!.timeline;
-    expect(timeline.map((e) => e.signal?.author)).toEqual([{ kind: 'user' }, { kind: 'agent', name: 'orchestrator' }]);
-  });
-
-  it('H1 メモのシグナルも移し替えられる（同じ件のメモのスレッドを 1 つにまとめる）', () => {
-    const { log, ctx } = world();
-    const a = addNote(log.state(), alice, ctx, { title: 'A', body: '1' });
-    log.push(a.events, '2026-10-16T10:00:00.000Z');
-    const b = addNote(log.state(), alice, ctx, { title: 'B', body: '2' });
-    log.push(b.events, '2026-10-16T10:05:00.000Z');
-    const moved = moveSignal(log.state(), alice, ctx, { signalId: b.signalId, to: { kind: 'existing', threadId: a.threadId }, reason: '同じ件' });
-    log.push(moved.events, '2026-10-16T10:10:00.000Z');
-    expect(log.state().threads[a.threadId]!.signalIds).toEqual([a.signalId, b.signalId]);
+    expect(p.threads[t]).toMatchObject({ attention: before.attention, ownerUserId: before.ownerUserId });
+    const timeline = getThreadView(dir, alice, p, t)!.timeline.filter((e) => e.kind === 'note');
+    expect(timeline.map((e) => e.note)).toEqual([
+      { noteId: a.noteId, body: '着手する', author: { kind: 'user' } },
+      { noteId: b.noteId, body: '指摘 3 件を直した。次はテスト', author: { kind: 'agent', name: 'orchestrator' } },
+    ]);
   });
 });
 
@@ -152,19 +141,19 @@ describe('担当する（claim_thread）', () => {
     expect(() => claimThread(log.state(), bob, dir, { threadId: privateThread, userId: 'u_bob' })).toThrow(/not found/);
   });
 
-  it('H2 個人のメモのスレッドは担当を持たない', () => {
+  it('H2 タスクのスレッドは担当を持たない（担当はソースの写し）。片付け・開き直しもソースで付ける', () => {
     const { log, ctx } = world();
-    const n = addNote(log.state(), alice, ctx, { body: 'メモ' });
-    log.push(n.events, '2026-10-16T10:00:00.000Z');
-    expect(() => claimThread(log.state(), alice, dir, { threadId: n.threadId, userId: 'u_alice' })).toThrow(/no assignee/);
+    const t = task(log, ctx, 'メモ');
+    expect(() => claimThread(log.state(), alice, dir, { threadId: t, userId: 'u_alice' })).toThrow(/mirrored/);
+    expect(() => dismissThread(log.state(), alice, dir, { threadId: t, reason: '済んだ' })).toThrow(/at the source/);
+    expect(() => reopenThread(log.state(), alice, dir, { threadId: t })).toThrow(/at the source/);
   });
 });
 
 describe('リンク（link_threads / unlink_threads）', () => {
   it('H3 両端が見えていれば結べる。自分自身・見えない先は不可。結び済みなら何もしない。外すのも両端が見える人だけ（0033）', () => {
     const { log, ctx, threadId, privateThread } = world();
-    const n = addNote(log.state(), alice, ctx, { body: '件' });
-    log.push(n.events, '2026-10-16T10:00:00.000Z');
+    const n = { threadId: task(log, ctx, '件') };
     const link = linkThreads(log.state(), alice, { threadId: n.threadId, otherThreadId: threadId, reason: 'この件' });
     expect(link[0]!.type === 'ThreadLinked' && link[0]!.payload).toMatchObject({ a: n.threadId, b: threadId, op: 'link', route: 'manual' });
     log.push(link, '2026-10-16T10:01:00.000Z');
@@ -172,7 +161,7 @@ describe('リンク（link_threads / unlink_threads）', () => {
     expect(() => linkThreads(log.state(), alice, { threadId, otherThreadId: threadId })).toThrow(/itself/);
     expect(() => linkThreads(log.state(), bob, { threadId, otherThreadId: privateThread })).toThrow(/not found/);
 
-    // Bob にはメモのスレッドが読めないので、辺も見えず外せない（結んでいないのと同じ。0033 の 3）
+    // Bob には Alice のタスクが読めないので、辺も見えず外せない（結んでいないのと同じ。0033 の 3）
     expect(unlinkThreads(log.state(), bob, { threadId, otherThreadId: n.threadId })).toEqual([]);
     const off = unlinkThreads(log.state(), alice, { threadId, otherThreadId: n.threadId });
     expect(off[0]!.type === 'ThreadLinked' && off[0]!.payload).toMatchObject({ op: 'unlink', route: 'manual', actorUserId: 'u_alice' });
@@ -187,32 +176,5 @@ describe('リンク（link_threads / unlink_threads）', () => {
     const b = ingestPure(log, ctx, email({ from: 'info@dave.example', sourceRef: 'r2', anchors: { jiraKeys: ['UBS-7'] } }), () => answer({ thread: 'new' }));
     const link = linkThreads(log.state(), alice, { threadId: a.outcome!.threadId, otherThreadId: b.outcome!.threadId });
     expect(link[0]!.type === 'ThreadLinked' && link[0]!.payload.route).toBe('anchor');
-  });
-});
-
-describe('属性（set_attribute）', () => {
-  it('H2 データソースの属性定義に従って型を確かめる。null で外す。同じ値なら何もしない', () => {
-    const { log, ctx, threadId } = world();
-    const n = addNote(log.state(), alice, ctx, { body: '件' });
-    log.push(n.events, '2026-10-16T10:00:00.000Z');
-    const set = setAttribute(log.state(), alice, dir, { threadId: n.threadId, name: 'status', value: 'todo' });
-    expect(set).toHaveLength(1);
-    log.push(set, '2026-10-16T10:01:00.000Z');
-    expect(setAttribute(log.state(), alice, dir, { threadId: n.threadId, name: 'status', value: 'todo' })).toEqual([]);
-    expect(() => setAttribute(log.state(), alice, dir, { threadId: n.threadId, name: 'status', value: 'later' })).toThrow(/not one of/);
-    expect(() => setAttribute(log.state(), alice, dir, { threadId: n.threadId, name: 'nope', value: 'x' })).toThrow(/not defined/);
-    // 外のサービスのスレッドの属性はソースの写し（H9）。Murmur の側では書けない
-    expect(() => setAttribute(log.state(), alice, dir, { threadId, name: 'status', value: 'todo' })).toThrow(/mirrored/);
-    expect(setAttribute(log.state(), alice, dir, { threadId: n.threadId, name: 'status', value: null })).toHaveLength(1);
-  });
-
-  it('H2 個人のメモには標準の due（日付）を付けられる。定義をマスタに置かなくてよい（0031 の 4）', () => {
-    const { log, ctx } = world();
-    const n = addNote(log.state(), bob, ctx, { body: 'レビュー対応' });
-    log.push(n.events, '2026-10-16T10:00:00.000Z');
-    const set = setAttribute(log.state(), bob, dir, { threadId: n.threadId, name: 'due', value: '2026-10-20' });
-    log.push(set, '2026-10-16T10:01:00.000Z');
-    expect(log.state().threads[n.threadId]!.attributes).toEqual({ due: '2026-10-20' });
-    expect(() => setAttribute(log.state(), bob, dir, { threadId: n.threadId, name: 'due', value: 'あした' })).toThrow(/not a date/);
   });
 });

@@ -8,7 +8,6 @@ import {
   Directory,
   DomainError,
   endAddress,
-  ensureNotes,
   ensureUser,
   mergeContacts,
   planMasterEdit,
@@ -32,21 +31,13 @@ const edited = <T>(base: Seed, f: (d: Seed, c: ReturnType<typeof ctx>) => T) => 
   return { after, out };
 };
 
-describe('サインインと個人のメモ（0030 の 4・6）', () => {
+describe('サインイン（0030 の 4・6）', () => {
   it('H3 sub だけの名無し: User の行だけを作り、Contact は作らない。何も見えない', () => {
     const { after } = edited(seed, (d) => ensureUser(d, 'u_naoki'));
     expect(after.users.find((u) => u.id === 'u_naoki')).toEqual({ id: 'u_naoki', name: '' });
     expect(new Directory(after).contactOfUser('u_naoki')).toBeUndefined();
     expect(deriveViewer(new Directory(after), 'u_naoki')).toMatchObject({ contactId: null, listIds: [] });
     expect(edited(after, (d) => ensureUser(d, 'u_naoki')).out).toBe(false);
-  });
-
-  it('H3 個人のメモは Contact がなくても作れ、読者は本人だけ。2 回目は何もしない', () => {
-    const base = edited(seed, (d) => ensureUser(d, 'u_naoki')).after;
-    const { after, out } = edited(base, (d, c) => ensureNotes(d, 'u_naoki', c));
-    expect(deriveViewer(new Directory(after), 'u_naoki').dataSourceIds).toEqual([out]);
-    expect(edited(after, (d, c) => ensureNotes(d, 'u_naoki', c)).out).toBe(out);
-    expect(edited(seed, (d, c) => ensureNotes(d, 'u_alice', c)).out).toBe('ds_notes_alice');
   });
 });
 
@@ -101,7 +92,6 @@ describe('リストでのアイデンティティ（0030 の 7）', () => {
     const { after, out } = edited(seed, (d, c) => addListMember(d, 'l_slack', 'u_alice', 'T_UBS/U_ALICE', c));
     expect(out).toEqual({ kind: 'attached', contactId: 'p_alice' });
     expect(new Directory(after).readersOfList('l_slack')).toEqual(['u_eve', 'u_alice']);
-    expect(() => edited(seed, (d, c) => addListMember(d, 'l_notes_alice', 'u_bob', undefined, c))).toThrow(/only its owner/);
   });
 });
 

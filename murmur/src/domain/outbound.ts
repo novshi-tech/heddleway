@@ -5,7 +5,7 @@ import { draft, type AddressRef, type Anchors, type DraftEvent, type ThreadChoic
 import { defaultTitle, resolveAnchors, type SignalPayload } from './ingest';
 import { indexKey, type Projections } from './projections';
 import { directionOf, isOurs } from './sides';
-import { replyStateOf } from './turn';
+import { isTaskSource, replyStateOf } from './turn';
 import type { Directory } from './directory';
 import { canReadDataSource, type Viewer } from './viewer';
 
@@ -22,7 +22,7 @@ export interface RecordSentInput {
   from?: string;
   subject?: string;
   body: string;
-  /** メールの Message-ID・Slack の ts・LINE の sentMessages[].id・Jira の課題キーやコメント ID */
+  /** メールの Message-ID・Slack の ts・LINE の sentMessages[].id・Jira の課題キーやコメント ID・タスクのサービスのタスクの ID */
   sentRef: string;
   /** 送ったメッセージの構造アンカー（In-Reply-To・thread_ts・課題キーなど） */
   anchors?: Omit<Anchors, 'messageId'>;
@@ -43,6 +43,8 @@ export interface RecordSentInput {
  * - 同じ sent_ref の記録が既にあれば何もしない（冪等）
  * - source のスレッドがあれば経路 sent で結ぶ（Murmur が張るリンクの唯一の例外。スタンドの操作の一部）
  * - acknowledge なら、送ったスレッドの自分への名指しを送る前の分まで外す
+ * - タスクのサービス（0039 の決定 3）: タスクを作った記録。宛先は要らず、タスクの ID（sent_ref）がソースの区切りになる。
+ *   写しが先に届いていればそのスレッドに入り、あとから届く写しも同じスレッドに入る
  */
 export function recordSent(
   p: Projections,
@@ -54,7 +56,6 @@ export function recordSent(
   if (!ds || !canReadDataSource(viewer, ds.id)) {
     throw new DomainError('not_found', `data source ${input.dataSourceId} not found`);
   }
-  if (ds.kind !== 'service') throw new DomainError('invalid', 'record_sent is for a service data source (use add_note for notes)');
   if (!input.body.trim()) throw new DomainError('invalid', 'body is required');
   if (!input.sentRef.trim()) throw new DomainError('invalid', 'sent_ref is required');
 
@@ -65,7 +66,8 @@ export function recordSent(
     if (!address) throw new DomainError('invalid', `contact ${contactId} has no ${ds.channel} address`);
     if (!to.some((a) => a.value === address.value)) to.push({ channel: ds.channel, value: address.value });
   }
-  if (to.length === 0) throw new DomainError('invalid', 'to or to_contact_ids is required');
+  const task = isTaskSource(ds);
+  if (to.length === 0 && !task) throw new DomainError('invalid', 'to or to_contact_ids is required');
   // 送り主: 指定があればそれ（こちらのアドレスに限る）、なければ窓口（共有メールボックスなど）、窓口がなければ（個人の箱）送った人の Contact のアドレス
   let from: AddressRef | undefined;
   if (input.from !== undefined) {
@@ -89,7 +91,7 @@ export function recordSent(
 
   const events: DraftEvent[] = [];
   const signalId = existing?.signalId ?? ctx.newId('sig');
-  const anchors = { ...(input.anchors ?? {}) };
+  const anchors = { ...(input.anchors ?? {}), ...(task && !input.anchors?.threadKey ? { threadKey: input.sentRef } : {}) };
   events.push(
     draft('OutboundRecorded', {
       signalId,

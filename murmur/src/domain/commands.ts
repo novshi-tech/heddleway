@@ -1,11 +1,10 @@
 import type { CoreContext } from './context';
 import type { Directory } from './directory';
-import type { AttributeDef, DataSource } from './entities';
 import { DomainError } from './errors';
-import { AttributeValue, draft, type AddressRef, type Author, type DraftEvent, type ThreadChoice } from './events';
+import { draft, type AddressRef, type Author, type DraftEvent, type ThreadChoice } from './events';
 import type { Projections, SignalRecord, Thread } from './projections';
 import { addressKey, comparePos, isPending, sameAddress } from './comm';
-import { isListAddress, isStatefulSource, linkCandidates, listKindOf, pendingListSignalsFor, readerOfAddress } from './turn';
+import { isListAddress, isStatefulSource, isTaskSource, linkCandidates, listKindOf, pendingListSignalsFor, readerOfAddress } from './turn';
 import { canReadDataSource, type Viewer } from './viewer';
 
 // スタンド（＝ユーザー）が呼ぶ操作の判断部分。状態とコマンドを受けてイベントを返すだけの純関数。
@@ -29,15 +28,23 @@ export function visibleSignalOrThrow(p: Projections, viewer: Viewer, signalId: s
 
 // ---- 片付けと開き直し ----
 
-export function dismissThread(p: Projections, viewer: Viewer, input: { threadId: string; reason: string }): DraftEvent[] {
+/** タスクのサービスのスレッドは、完了も開き直しもソースで付ける（写しの closed。0039 の決定 3） */
+function refuseTask(dir: Directory, t: Thread): void {
+  const ds = dir.dataSource(t.dataSourceId);
+  if (isTaskSource(ds)) throw new DomainError('invalid', `thread ${t.id} is a task in ${ds?.name ?? t.dataSourceId}; complete or reopen it at the source`);
+}
+
+export function dismissThread(p: Projections, viewer: Viewer, dir: Directory, input: { threadId: string; reason: string }): DraftEvent[] {
   const t = visibleThreadOrThrow(p, viewer, input.threadId);
+  refuseTask(dir, t);
   if (!input.reason.trim()) throw new DomainError('invalid', 'reason is required');
   if (t.dismissed) return [];
   return [draft('ThreadDismissed', { threadId: t.id, actorUserId: viewer.userId, reason: input.reason })];
 }
 
-export function reopenThread(p: Projections, viewer: Viewer, input: { threadId: string; reason?: string }): DraftEvent[] {
+export function reopenThread(p: Projections, viewer: Viewer, dir: Directory, input: { threadId: string; reason?: string }): DraftEvent[] {
   const t = visibleThreadOrThrow(p, viewer, input.threadId);
+  refuseTask(dir, t);
   if (!t.dismissed) return [];
   return [draft('ThreadReopened', { threadId: t.id, actorUserId: viewer.userId, reason: input.reason })];
 }
@@ -88,80 +95,37 @@ export function moveSignal(
   };
 }
 
-// ---- 個人のメモ（0014 の 2） ----
-
-/** Viewer の個人のメモのデータソース */
-export function notesDataSourceOf(dir: Directory, viewer: Viewer): Extract<DataSource, { kind: 'notes' }> | undefined {
-  return dir.seed.dataSources.find(
-    (d): d is Extract<DataSource, { kind: 'notes' }> =>
-      d.kind === 'notes' && d.ownerUserId === viewer.userId && viewer.dataSourceIds.includes(d.id),
-  );
-}
+// ---- メモ（ThreadNoted。0039 の決定 2） ----
 
 /**
- * 個人のメモのデータソースへの SignalObserved（from は本人）と、置き先の SignalThreaded（by: self）。
- * threadId を渡せば既存のメモのスレッドに足し、渡さなければ新しいスレッド（「この件」）を作る。
- * 件名は title、なければ本文の最初の行（0014 の未決 2）
+ * スレッドにメモ（経過の記録）を書く。メモは人とスタンドがスレッドにする操作の 1 つで、中身を持つので、
+ * 個人リスト（読者が本人 1 人）のスレッドにだけ書ける。共有リストのスレッドには書かない（事実と構造の操作だけ。0031 の決定 2）。
+ * 共有の件を自分の側で追うなら、タスクのサービスのタスクを作って結び、そのスレッドに書く
  */
 export function addNote(
   p: Projections,
   viewer: Viewer,
   ctx: CoreContext,
-  input: { threadId?: string; title?: string; body: string; author?: Author },
-): { events: DraftEvent[]; threadId: string; signalId: string } {
+  input: { threadId: string; body: string; author?: Author },
+): { events: DraftEvent[]; noteId: string } {
   if (!input.body.trim()) throw new DomainError('invalid', 'body is required');
-  const ds = notesDataSourceOf(ctx.dir, viewer);
-  if (!ds) throw new DomainError('not_found', `notes of ${viewer.userId} not found`);
-
-  let choice: ThreadChoice;
-  if (input.threadId !== undefined) {
-    const t = visibleThreadOrThrow(p, viewer, input.threadId);
-    if (t.dataSourceId !== ds.id) throw new DomainError('invalid', `thread ${t.id} is not in your notes`);
-    if (input.title !== undefined) throw new DomainError('invalid', 'title is only for a new thread');
-    choice = { kind: 'existing', threadId: t.id };
-  } else {
-    const title = input.title?.trim() || firstLine(input.body);
-    choice = { kind: 'new', threadId: ctx.newId('thr'), title };
+  const t = visibleThreadOrThrow(p, viewer, input.threadId);
+  if (listKindOf(ctx.dir, t.dataSourceId) !== 'personal') {
+    throw new DomainError('invalid', `thread ${t.id} is in a shared list; write notes on a thread in your personal list (e.g. a task linked to it)`);
   }
-  const signalId = ctx.newId('sig');
-  const self = { channel: 'note' as const, value: ds.ownerUserId };
+  const noteId = ctx.newId('note');
   return {
-    threadId: choice.threadId,
-    signalId,
-    events: [
-      draft('SignalObserved', {
-        signalId,
-        dataSourceId: ds.id,
-        channel: 'note',
-        from: self,
-        to: [],
-        body: input.body,
-        sourceRef: `note:${signalId}`,
-        author: input.author ?? { kind: 'user' },
-      }),
-      draft('SignalThreaded', {
-        signalId,
-        thread: choice,
-        by: 'self',
-        confidence: 1,
-        reason: choice.kind === 'new' ? '本人が新しい件として書いた' : '本人が置き先を指定した',
-        actorUserId: viewer.userId,
-      }),
-    ],
+    noteId,
+    events: [draft('ThreadNoted', { noteId, threadId: t.id, body: input.body, author: input.author ?? { kind: 'user' }, actorUserId: viewer.userId })],
   };
-}
-
-function firstLine(body: string): string {
-  const line = body.trim().split('\n')[0]!.trim();
-  return line.length > 40 ? `${line.slice(0, 40)}…` : line;
 }
 
 // ---- 持ち主（ThreadClaimed） ----
 
 /**
  * 担当する・手放す（userId: null）・引き継ぐ（0038 の決定 1）。担当できるのはそのデータソースの読者だけ。
- * 状態を持つソース（Jira・PR）の担当はソースの担当者なので断る（担当はソースで移す）。
- * 個人リスト（個人のメモ・個人の箱）は本人が暗黙の担当なので断る
+ * 状態を持つソース（Jira・PR・タスクのサービス）の担当はソースの担当者なので断る（担当はソースで移す）。
+ * 個人リスト（個人の箱・タスクのリスト）は本人が暗黙の担当なので断る
  */
 export function claimThread(
   p: Projections,
@@ -171,7 +135,6 @@ export function claimThread(
 ): DraftEvent[] {
   const t = visibleThreadOrThrow(p, viewer, input.threadId);
   const ds = dir.dataSource(t.dataSourceId);
-  if (ds?.kind === 'notes') throw new DomainError('invalid', 'a notes thread has no assignee');
   if (isStatefulSource(ds)) throw new DomainError('invalid', `the assignee of thread ${t.id} is mirrored from ${ds?.name ?? t.dataSourceId}; change it at the source`);
   if (listKindOf(dir, t.dataSourceId) === 'personal') throw new DomainError('invalid', `thread ${t.id} is in a personal list; its reader is the assignee`);
   if (input.userId !== null) {
@@ -279,56 +242,4 @@ export function unlinkThreads(
   const other = link ? p.threads[link.threadId] : undefined;
   if (!link || !other || !canReadDataSource(viewer, other.dataSourceId)) return [];
   return [draft('ThreadLinked', { a: a.id, b: link.threadId, op: 'unlink', route: link.route, actorUserId: viewer.userId, reason: input.reason })];
-}
-
-// ---- 本人が付ける属性（ThreadAttributeSet） ----
-
-/**
- * 定義（AttributeDef）はスレッドのデータソースに付く。型を確かめる。value が null なら外す。
- * 外のサービスのスレッドの属性はソースの写し（ThreadMirrored）なので、Murmur の側では書き換えない（0010・0014）
- */
-export function setAttribute(
-  p: Projections,
-  viewer: Viewer,
-  dir: Directory,
-  input: { threadId: string; name: string; value: unknown },
-): DraftEvent[] {
-  const t = visibleThreadOrThrow(p, viewer, input.threadId);
-  const ds = dir.dataSource(t.dataSourceId);
-  if (ds?.kind === 'service') {
-    throw new DomainError('invalid', `attributes of thread ${t.id} are mirrored from ${ds.name}; change them at the source`);
-  }
-  const def = dir.attributeDefs(t.dataSourceId).find((d) => d.name === input.name);
-  if (!def) throw new DomainError('invalid', `attribute ${input.name} is not defined for data source ${t.dataSourceId}`);
-  const value = input.value === null ? null : checkAttribute(dir, def, input.value);
-  if ((t.attributes[def.name] ?? null) === value) return [];
-  return [draft('ThreadAttributeSet', { threadId: t.id, name: def.name, value, actorUserId: viewer.userId })];
-}
-
-export function checkAttribute(dir: Directory, def: AttributeDef, raw: unknown): AttributeValue {
-  const bad = (why: string) => new DomainError('invalid', `attribute ${def.name} (${def.type}): ${why}`);
-  const parsed = AttributeValue.safeParse(raw);
-  if (!parsed.success) throw bad('value must be a string, number or boolean');
-  const v = parsed.data;
-  switch (def.type) {
-    case 'string':
-      if (typeof v !== 'string') throw bad('not a string');
-      return v;
-    case 'number':
-      if (typeof v !== 'number' || !Number.isFinite(v)) throw bad('not a number');
-      return v;
-    case 'boolean':
-      if (typeof v !== 'boolean') throw bad('not a boolean');
-      return v;
-    case 'date':
-      if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}(T[\d:.]+(Z|[+-]\d{2}:\d{2}))?$/.test(v)) throw bad('not a date (YYYY-MM-DD)');
-      return v;
-    case 'enum':
-      if (typeof v !== 'string' || !(def.options ?? []).includes(v)) throw bad(`not one of ${(def.options ?? []).join(', ')}`);
-      return v;
-    case 'contact': {
-      if (typeof v !== 'string' || !dir.contact(v)) throw bad('unknown contact');
-      return v;
-    }
-  }
 }

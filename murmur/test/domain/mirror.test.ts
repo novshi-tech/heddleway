@@ -7,7 +7,6 @@ import {
   planMirror,
   recordSent,
   Seed,
-  setAttribute,
   assigneeOf,
   claimThread,
   isTriage,
@@ -89,7 +88,6 @@ describe('状態の写し（planMirror）', () => {
     expect(plan.kind === 'mirrored' && 'closed' in plan.fields).toBe(false);
     log.push(plan.kind === 'mirrored' ? plan.events : [], '2026-10-16T09:10:00.000Z');
     expect(log.state().threads[id]!.source).toEqual({ holders: ['jira:alice'], statusLabel: '未着手', due: '2026-10-20' });
-    expect(log.state().threads[id]!.attributes).toEqual({});
     expect(planMirror(log.state(), ctx, mirror('UBS-1', { statusLabel: '未着手', holders: ['jira:alice', 'jira:alice'] }, 'u2'))).toEqual({ kind: 'unchanged', threadId: id });
     expect(planMirror(log.state(), ctx, mirror('UBS-1', { statusLabel: '進行中', holders: ['jira:alice'] }, 'u3'))).toEqual(expect.objectContaining({ fields: { statusLabel: '進行中' } }));
     // 知らないアカウントもそのまま写す（名寄せされるまで誰の番にもならない）。holders は重複を除いて並べる
@@ -125,11 +123,16 @@ describe('状態の写し（planMirror）', () => {
     expect(Object.keys(p.threads)).toHaveLength(1);
   });
 
-  it('H9 写しは Murmur の側では書けない（外のサービスのスレッドに set_attribute は断る）', () => {
+  it('H9 タスクのサービス（0039）も同じ形で写す。個人リストなので担当は出さず、完了は closed', () => {
     const log = new EventLog();
     const ctx = ctxAt();
-    const created = ingestPure(log, ctx, issueEvent('UBS-1'), answer(false));
-    expect(() => setAttribute(log.state(), alice, dir, { threadId: created.outcome!.threadId, name: 'status', value: '完了' })).toThrow(/mirrored from Jira/);
+    const plan = planMirror(log.state(), ctx, { kind: 'mirror', dataSourceId: 'ds_tasks_alice', channel: 'todo', threadKey: 'AAMk1', fields: { title: 'DEV-12 の調査', holders: ['alice@ubs.example'], due: '2026-10-20', statusLabel: 'Murmur' }, sourceRef: 'todo:AAMk1:1' });
+    if (plan.kind !== 'mirrored') throw new Error('unreachable');
+    log.push(plan.events, '2026-10-16T09:00:00.000Z');
+    const t = log.state().threads[plan.threadId]!;
+    expect(t).toMatchObject({ dataSourceId: 'ds_tasks_alice', title: 'DEV-12 の調査', source: { due: '2026-10-20', statusLabel: 'Murmur' } });
+    expect(assigneeOf(dir, t)).toBeNull();
+    expect(() => planMirror(log.state(), ctx, { kind: 'mirror', dataSourceId: 'ds_tasks_alice', channel: 'jira', threadKey: 'x', fields: {}, sourceRef: 'r' })).toThrow(/is todo, not jira/);
   });
 });
 

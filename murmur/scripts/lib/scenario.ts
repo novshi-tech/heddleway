@@ -56,7 +56,6 @@ export const Tool = z.enum([
   'claim_thread',
   'link_threads',
   'unlink_threads',
-  'set_attribute',
   'record_sent',
   'acknowledge',
 ]);
@@ -82,11 +81,12 @@ export const Step = z.union([
     bind: Bind.optional(),
     note: z.string().optional(),
   }),
-  /** 状態の写し（ダミーの Jira の課題の更新）。kind は省いてよい */
+  /** 状態の写し（ダミーの Jira の課題・タスクのサービスのタスクの更新）。kind は省いてよい。bind は写したスレッド（threadId） */
   z.object({
     id: z.string(),
     at: z.string(),
     mirror: z.record(z.string(), z.unknown()),
+    bind: Bind.optional(),
     note: z.string().optional(),
   }),
   z.object({ id: z.string(), at: z.string(), cron: z.literal(true), note: z.string().optional() }),
@@ -129,7 +129,6 @@ const ThreadExpectation = z
     replyExpectedBy: z.string().nullable(),
     overdue: z.boolean(),
     closedAtSource: z.boolean(),
-    attributes: z.record(z.string(), z.unknown()),
     source: z.unknown(),
     /** 結んだスレッド（"$<束縛名>"）と経路 */
     links: z.record(z.string(), z.enum(['sent', 'anchor', 'manual'])),
@@ -362,6 +361,11 @@ export async function runScenario(scenario: Scenario, opts: { repo?: Repo; decid
       }
     } else if ('mirror' in step) {
       rec.mirror = await service.mirror(InboundMirrorBody.parse({ kind: 'mirror', ...(subst(step.mirror) as object) }));
+      for (const [alias, path] of Object.entries(step.bind ?? {})) {
+        const v = (rec.mirror as Record<string, unknown>)[path];
+        if (typeof v !== 'string') throw new Error(`step ${step.id}: ${path} を ${alias} に束縛できない（結果: ${JSON.stringify(rec.mirror)}）`);
+        bindings[alias] = v;
+      }
     } else {
       hint.current = { stepId: step.id };
       rec.cron = { ingested: await service.pollConnectors(), overdue: await service.checkOverdue() };
@@ -391,11 +395,10 @@ async function callTool(http: ReturnType<typeof createApp>, tool: Tool, as: stri
       { thread_id: input.thread_id, new_thread_title: input.new_thread_title, reason: input.reason },
     ],
     get_list: () => ['GET', `/api/lists/${enc(String(input.list_id))}`],
-    add_note: () => ['POST', '/api/notes', { thread_id: input.thread_id, title: input.title, body: input.body, author: input.author }],
+    add_note: () => ['POST', '/api/notes', { thread_id: input.thread_id, body: input.body, author: input.author }],
     claim_thread: () => ['POST', `/api/threads/${enc(String(input.thread_id))}/claim`, { user_id: input.user_id, reason: input.reason }],
     link_threads: () => ['POST', `/api/threads/${enc(String(input.thread_id))}/links`, { thread_id: input.other_thread_id, reason: input.reason }],
     unlink_threads: () => ['POST', `/api/threads/${enc(String(input.thread_id))}/unlink`, { thread_id: input.other_thread_id, reason: input.reason }],
-    set_attribute: () => ['POST', `/api/threads/${enc(String(input.thread_id))}/attributes`, { name: input.name, value: input.value }],
     record_sent: () => ['POST', '/api/sent', input],
     acknowledge: () => [
       'POST',

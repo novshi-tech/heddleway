@@ -27,19 +27,6 @@ export function renameUser(draft: Seed, userId: string, name: string): void {
   u.name = name.trim();
 }
 
-/** 個人のメモのデータソースがなければ作る（Contact がなくても使える。0030 の 4） */
-export function ensureNotes(draft: Seed, userId: string, ctx: CoreContext): string {
-  const existing = draft.dataSources.find((d) => d.kind === 'notes' && d.ownerUserId === userId);
-  if (existing) return existing.id;
-  const id = ctx.newId('ds');
-  const user = draft.users.find((u) => u.id === userId);
-  draft.dataSources.push({ kind: 'notes', id, name: `${user?.name || userId} のメモ`, description: '', ownerUserId: userId });
-  const listId = ctx.newId('l');
-  draft.lists.push({ id: listId, dataSourceId: id });
-  draft.listMembers.push({ listId, userId });
-  return id;
-}
-
 // ---- 7. リストでのアイデンティティ ----
 
 export type IdentityOutcome =
@@ -82,7 +69,7 @@ export function bindIdentity(draft: Seed, userId: string, ref: AddressRef, ctx: 
 }
 
 export interface PersonalDataSourceInput {
-  channel: Exclude<Channel, 'note'>;
+  channel: Channel;
   name: string;
   description?: string;
   /** そのリストでの本人のアイデンティティ（つないだアカウントのアドレス） */
@@ -141,7 +128,6 @@ export function addListMember(draft: Seed, listId: string, userId: string, ident
   const list = draft.lists.find((l) => l.id === listId);
   const ds = list ? draft.dataSources.find((d) => d.id === list.dataSourceId) : undefined;
   if (!list || !ds) throw new DomainError('not_found', `list ${listId} not found`);
-  if (ds.kind !== 'service') throw new DomainError('invalid', 'a notes list has only its owner');
   if (!draft.users.some((u) => u.id === userId)) throw new DomainError('not_found', `user ${userId} not found（サインインしていない）`);
   if (!draft.listMembers.some((m) => m.listId === listId && m.userId === userId)) draft.listMembers.push({ listId, userId });
   return identity === undefined ? null : bindIdentity(draft, userId, { channel: ds.channel, value: identity.trim() }, ctx);
@@ -165,12 +151,12 @@ export interface UnresolvedAddress {
 
 /**
  * Viewer が読めるデータソースのシグナルに出てきたアドレスのうち、Contact に解決できないもの（シグナルの時刻で）。
- * 窓口のアドレスとメモは数えない。最後に見た順
+ * 窓口のアドレスは数えない。最後に見た順
  */
 export function unresolvedAddresses(dir: Directory, viewer: Viewer, p: Projections): UnresolvedAddress[] {
   const out = new Map<string, UnresolvedAddress>();
   for (const s of Object.values(p.signals)) {
-    if (!canReadDataSource(viewer, s.dataSourceId) || s.channel === 'note') continue;
+    if (!canReadDataSource(viewer, s.dataSourceId)) continue;
     const ds = dir.dataSource(s.dataSourceId);
     for (const ref of [s.from, ...s.to]) {
       if (dir.contactIdOfAddress(ref, s.at) !== null) continue;
