@@ -167,7 +167,7 @@ export function renderAdminIndex(dir: Directory, p: Projections, href: Href): st
     })
     .join('\n');
   return page(
-    'Murmur 管理',
+    'トピック索引の管理',
     `<h1>リスト一覧 <small>seq ${p.lastSeq} · <a href="${esc(href('/timeline.html'))}">タイムライン</a></small></h1>
 <div class="scroll"><table><thead><tr><th>データソース</th><th>種類</th><th>読者</th><th>未片付け / 全部</th><th>仕分け待ち</th><th>期限超過</th></tr></thead>
 <tbody>${rows || '<tr><td colspan="6">リストはない</td></tr>'}</tbody></table></div>`,
@@ -195,7 +195,7 @@ export function renderAdminList(dir: Directory, p: Projections, listId: string, 
     )
     .join('\n');
   return page(
-    `${ds?.name ?? listId} — Murmur 管理`,
+    `${ds?.name ?? listId} — トピック索引の管理`,
     `<nav><a href="${esc(href('/admin'))}">リスト一覧</a></nav>
 <h1>${esc(ds?.name ?? list.dataSourceId)} <small>${esc(list.id)} · ${esc(ds?.channel ?? '')}</small></h1>
 <p class="muted">${esc(ds?.description ?? '')} 読者: ${dir.readersOfList(list.id).map((u) => esc(n.user(u))).join(', ')}</p>
@@ -231,7 +231,7 @@ export function renderAdminThread(dir: Directory, p: Projections, threadId: stri
     .map((e) => logEntry(dir, p, t, e, e.threadId === t.id ? undefined : { threadId: e.threadId, href }))
     .join('');
   return page(
-    `${t.title} — Murmur 管理`,
+    `${t.title} — トピック索引の管理`,
     `<nav><a href="${esc(href('/admin'))}">リスト一覧</a>${list ? ` › <a href="${esc(href(`/admin/lists/${list.id}`))}">${esc(n.ds(t.dataSourceId))}</a>` : ''}</nav>
 <h1>${esc(t.title)} <small>${esc(t.id)}</small></h1>
 <p class="comm">担当: ${assigneeLabel(dir, p, t)} · 名指し: ${attentionLabel(dir, p, t)}${isAwaiting(dir, t) ? ' · 相手待ち' : ''}${flags(dir, t) ? ` · ${flags(dir, t)}` : ''}</p>
@@ -258,5 +258,5 @@ export function renderTimeline(dir: Directory, p: Projections): string {
 </section>`,
     )
     .join('\n');
-  return page('Murmur Timeline', `<h1>タイムライン <small>seq ${p.lastSeq}</small></h1>\n${sections || '<p>スレッドはまだない</p>'}`);
+  return page('トピック索引のタイムライン', `<h1>タイムライン <small>seq ${p.lastSeq}</small></h1>\n${sections || '<p>スレッドはまだない</p>'}`);
 }

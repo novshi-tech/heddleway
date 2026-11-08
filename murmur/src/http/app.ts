@@ -333,7 +333,7 @@ export function createApp(opts: HttpOptions) {
       result = await k.connections.callback({ state: c.req.query('state') ?? null, code: c.req.query('code') ?? null, error: c.req.query('error') ?? null });
     } catch (err) {
       console.error(err);
-      result = { ok: false, message: 'つなぐ途中で失敗しました。しばらくしてから、スタンドからもう一度頼んでください。' };
+      result = { ok: false, message: 'つなぐ途中で失敗しました。しばらくしてから、エージェント（Claude など）からもう一度頼んでください。' };
     }
     return c.html(renderCallback(result), result.ok ? 200 : 400);
   });
@@ -376,5 +376,5 @@ export function createApp(opts: HttpOptions) {
 
 function renderCallback(r: { ok: boolean; message: string }): string {
   const esc = r.message.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]!);
-  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Murmur</title></head><body style="font-family:system-ui,sans-serif;max-width:40rem;margin:3rem auto;padding:0 1rem"><h1>${r.ok ? 'つなぎました' : 'つなげませんでした'}</h1><p>${esc}</p><p>このタブは閉じてかまいません。</p></body></html>`;
+  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>トピック索引</title></head><body style="font-family:system-ui,sans-serif;max-width:40rem;margin:3rem auto;padding:0 1rem"><h1>${r.ok ? 'つなぎました' : 'つなげませんでした'}</h1><p>${esc}</p><p>このタブは閉じてかまいません。</p></body></html>`;
 }

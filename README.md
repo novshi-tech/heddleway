@@ -1,6 +1,6 @@
 # Heddleway
 
-エージェントのための、チームのゲートウェイです(a team gateway for agents。名前は [docs/adr/0006](docs/adr/0006-name-heddleway.md))。Claude から、既存のコネクタではできない API 呼び出しを行うための汎用の API ゲートウェイで、通り抜ける連絡を Murmur(チームの仕事の記憶)がスレッドとして整理します。Cloudflare Workers で動くリモート MCP サーバーとして、自分の組織の Cloudflare アカウントにデプロイします。
+エージェントのための、チームのゲートウェイです(a team gateway for agents。名前は [docs/adr/0006](docs/adr/0006-name-heddleway.md))。Claude から、既存のコネクタではできない API 呼び出しを行うための汎用の API ゲートウェイで、通り抜けるやりとりを、トピック索引(内部の名前は Murmur)がトピックとして整理します。Cloudflare Workers で動くリモート MCP サーバーとして、自分の組織の Cloudflare アカウントにデプロイします。
 
 Claude(Cowork など)のコード実行のサンドボックスから、freee や Microsoft 365 などの API を、スクリプトで直接呼べるようになります。一覧の全件取得や集計、ファイルのダウンロード・アップロードのように、コネクタのツールでは手間のかかる作業を、Claude がスクリプトを書いて進めます。1 件の取得や登録のような小さい呼び出しは、コネクタのツール `api_get` / `api_request` から、スクリプトなしで呼べます([docs/adr/0007](docs/adr/0007-call-apis-from-mcp-tools.md))。
 
@@ -21,13 +21,13 @@ Claude ──MCP(OAuth でサインイン)──▶ ゲートウェイ ─┐
 
 Claude の Cowork で動作を確認しています。MCP の OAuth に従っているので、ほかの Claude のクライアントや ChatGPT のコネクタにも対応する設計ですが、まだ確認していません。設計の詳細は [docs/concept.md](docs/concept.md) と [docs/auth-design.md](docs/auth-design.md) にあります。
 
-## Murmur
+## トピック索引(Murmur)
 
-[`murmur/`](murmur/) は、ゲートウェイの機能の 1 つ「チームの仕事の記憶」(Murmur)です。メールや Jira などの連絡から対応の要る件を拾い、誰の番かを追います。利用者は意識せず、Claude が裏で読んで「いまやるべきこと」に答えるための記憶です([docs/adr/0005](docs/adr/0005-murmur-as-a-feature.md))。
+[`murmur/`](murmur/) は、ゲートウェイの機能の 1 つ「トピック索引」です(内部の名前は Murmur)。メール・Teams・Jira・To Do などのやりとりをトピック(アクションアイテムの候補になる会話)にまとめ、誰の番かを追います。自分が担当か、自分へのアテンションが残っているトピックが、自分のタスクです。利用者は意識せず、エージェント(Claude など)が裏で読んで「いまやるべきこと」に答えるための索引です([docs/adr/0005](docs/adr/0005-murmur-as-a-feature.md)、言葉は [murmur/docs/adr/0040](murmur/docs/adr/0040-surface-vocabulary.md))。
 
-- ゲートウェイの Worker に入っていて、デプロイの設定に Murmur の D1 を足すと有効になります(`wrangler.example.jsonc` の末尾)。足さなければ、ゲートウェイは Murmur なしで今までどおり動きます
-- 利用者ごとに、ゲートウェイの画面で有効にします(Claude から Murmur に接続をつなぐよう頼むと、有効にする画面に案内されます)。有効にした人の接続だけを、読み取りだけで使います。「つないだサービス」の画面でいつでも無効にできます
-- Claude からは、ほかのサービスと同じく `issue_token`(`identity:murmur`)と REST(`/api/murmur/...`)で使います。使い方はプラグイン `heddleway` の `murmur` スキルです
+- ゲートウェイの Worker に入っていて、デプロイの設定に Murmur の D1 を足すと有効になります(`wrangler.example.jsonc` の末尾)。足さなければ、ゲートウェイはトピック索引なしで今までどおり動きます
+- 利用者ごとに、ゲートウェイの画面で有効にします(エージェントにトピック索引への接続を頼むと、有効にする画面に案内されます)。有効にした人の接続だけを、読み取りだけで使います。「つないだサービス」の画面でいつでも無効にできます
+- エージェントからは、ほかのサービスと同じく `issue_token`(`identity:murmur`)と REST(`/api/murmur/...`)で使います。使い方はプラグイン `heddleway` の `topic-index` スキルです
 
 ## 前提
 
@@ -55,7 +55,7 @@ Claude の Cowork で動作を確認しています。MCP の OAuth に従って
 2. プラグイン `heddleway` と、使う提供元のプラグイン(`heddleway-google` など)をインストールします(下の「スキル」)。「Claude につなぐ」から zip でダウンロードできます。
 3. 各ユーザーは `https://<ゲートウェイ>/` にサインインし、連携先の認証情報を登録します(OAuth のサービスは「接続」)。
 4. あとは Claude に頼むだけです。Claude は `list_credentials` で認証情報を確かめ、小さい呼び出しは `api_get` / `api_request` で、大量の呼び出しやファイルは `issue_token` でトークンを受け取ってスクリプトで REST を呼びます。
-5. 許可したアプリ(Claude、Murmur など)は、Web 画面のトップの「アクセスを許可したアプリ」に 1 回の許可ごとに出ます。「取り消す」で、そのアプリのアクセストークンとリフレッシュトークンが使えなくなります。
+5. 許可したアプリ(Claude、トピック索引など)は、Web 画面のトップの「アクセスを許可したアプリ」に 1 回の許可ごとに出ます。「取り消す」で、そのアプリのアクセストークンとリフレッシュトークンが使えなくなります。
 
 ### 複数の組織で使う
 
@@ -79,7 +79,7 @@ curl -H "Authorization: Bearer $TOKEN" "https://<ゲートウェイ>/api/freee/a
 | | `board` | `board` | 販売管理 SaaS「board」の案件・見積・請求・発注・支払・顧客などの検索・登録・更新 |
 | | `gbizinfo` | `gbizinfo` | 経済産業省の法人情報(gBizINFO)の検索 |
 | | `serper` | `serper` | Serper 経由の Google 検索(ウェブ・画像・ニュース・地図・論文など) |
-| | `murmur` | `murmur` | Murmur(チームの仕事の記憶。このゲートウェイの機能)のスレッド・誰の番・To Do のタスクでの追跡と経過のメモ・送信の記録。有効にする手順は上の「Murmur」 |
+| | `topic-index` | `murmur` | トピック索引(このゲートウェイの機能)のトピック・誰の番・To Do のタスクでの追跡と経過のメモ・送信の記録。有効にする手順は上の「トピック索引(Murmur)」 |
 | `heddleway-microsoft` | `microsoft-graph` | `graph` | Outlook メール、OneDrive / SharePoint、Teams、予定表 |
 | `heddleway-google` | `gmail` | `gmail` | メールの検索・送信・返信・下書き、添付ファイル |
 | | `google-drive` | `drive` | ファイルの検索・ダウンロード・エクスポート・アップロード、共有ドライブ |
@@ -206,7 +206,7 @@ npm run secret -- <名前> put OAUTH_<CLIENT>_CLIENT_SECRET
 
 ```jsonc
 "murmur": {
-  "display_name": "Murmur",
+  "display_name": "トピック索引",
   "base_url": "https://murmur.internal/api",
   // 公開ルートを持たない Worker には、Service Binding で中継する
   "binding": "MURMUR",

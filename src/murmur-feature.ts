@@ -62,9 +62,9 @@ export function murmurFeature(env: Env): Feature | null {
   const murmur = createMurmur(config, port.authenticate);
   return {
     name: NAME,
-    displayName: "Murmur",
+    displayName: "トピック索引",
     consentText:
-      "Murmur は、あなたがつないだメール(Microsoft Graph)・Teams のチャネル・Jira を読み取り、対応の要る件と誰の番かを記録します。Claude が「いまやるべきこと」に答えるときに使います。読むのは、あなたが Claude から頼んでつないだものだけで、送信や書き込みはしません。",
+      "トピック索引は、あなたがつないだメール(Outlook)・To Do のタスク・Teams のチャネル・Jira を読み取り、やりとりをトピックにまとめて、誰の番かを記録します。エージェント(Claude など)が「いまやるべきこと」に答えるときに使います。読むのは、あなたがエージェントに頼んでつないだものだけで、送信や書き込みはしません。",
     consentCallbackPath: CALLBACK_PATH,
     fetch: (request, ctx) => murmur.fetch(request, ctx),
     scheduled: (_controller, ctx) => murmur.scheduled(ctx),

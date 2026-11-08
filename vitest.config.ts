@@ -38,7 +38,7 @@ const SERVICES = {
     auth: { type: "basic", username_label: "メールアドレス" },
   },
   murmur: {
-    display_name: "Murmur",
+    display_name: "トピック索引",
     base_url: "https://murmur.example/api",
     auth: { type: "identity", audience: "murmur" },
   },

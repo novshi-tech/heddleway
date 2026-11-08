@@ -92,7 +92,7 @@ describe("Murmur on", () => {
     expect(anon.headers.get("location")).toBe(`/login?next=${encodeURIComponent(`/features/murmur/consent?state=${state}`)}`);
 
     const cookie = await sessionCookie(bob);
-    expect(await (await call(on, `/features/murmur/consent?state=${state}`, { headers: { cookie } })).text()).toContain("Murmur を有効にしますか");
+    expect(await (await call(on, `/features/murmur/consent?state=${state}`, { headers: { cookie } })).text()).toContain("トピック索引を有効にしますか");
     const allowed = await call(on, "/features/murmur/consent", {
       method: "POST",
       headers: { cookie, origin, "content-type": "application/x-www-form-urlencoded" },
@@ -125,7 +125,7 @@ describe("Murmur on", () => {
     await client.connect(clientTransport);
     const text = (r: unknown) => JSON.parse((r as { content: { text: string }[] }).content[0].text);
     const listed = text(await client.callTool({ name: "list_credentials", arguments: {} })) as { credentials: { id: string; label: string }[] };
-    expect(listed.credentials.filter((c) => c.id === "identity:murmur")).toEqual([{ id: "identity:murmur", service: "murmur", label: "Murmur(サインイン中のユーザー)" }]);
+    expect(listed.credentials.filter((c) => c.id === "identity:murmur")).toEqual([{ id: "identity:murmur", service: "murmur", label: "トピック索引(サインイン中のユーザー)" }]);
     const issued = text(await client.callTool({ name: "issue_token", arguments: { credential_ids: ["identity:murmur"] } })) as { token: string };
     expect((await call(on, "/api/murmur/me", { headers: { authorization: `Bearer ${issued.token}` } })).status).toBe(200);
     // The MCP tools reach the feature too, through the same check of the gateway token.
