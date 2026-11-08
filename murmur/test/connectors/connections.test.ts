@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { Connections } from '../../src/app/connections';
 import type { SyncJob } from '../../src/connectors/graph/jobs';
-import { connectorOwner, connectSharedSpace, deriveViewer } from '../../src/domain';
+import { connectorOwner, connectSharedSpace, deriveViewer, seedProblems } from '../../src/domain';
 import { ConsentRequired, GatewayAuthError, type GatewayCredential, type GatewayPort, type UpstreamKind } from '../../src/ports/gateway';
 import { MemoryConnectorState } from '../../src/store/connector-state';
 import { counterIds, makeService } from '../helpers/service';
@@ -320,11 +320,22 @@ describe('H3 個人の箱をつなぐ', () => {
       expect(await ctx.connections.connectTodo('u_bob', { listId: 'L_murmur' })).toMatchObject({ status: 'connected', created: false });
     });
 
-    it('見えないリストはつなげない。1 つのアカウントでつなぐリストは 1 つ（0039 の未決 2）', async () => {
+    it('見えないリストはつなげない。リストはいくつでもつなげ、1 つずつが別の個人リストになる（フラグを付けたメールのリストも同じ。0039 の未決 2）', async () => {
+      todo.listsInfo.push({ id: 'L_flagged', displayName: 'フラグを設定したメール', wellknownListName: 'flaggedEmails' });
       await consentTodo('u_bob');
       await expect(ctx.connections.connectTodo('u_bob', { listId: 'L_nope' })).rejects.toMatchObject({ code: 'not_found' });
-      await ctx.connections.connectTodo('u_bob', { listId: 'L_murmur' });
-      await expect(ctx.connections.connectTodo('u_bob', { listId: 'L_default' })).rejects.toMatchObject({ code: 'conflict' });
+      const a = await ctx.connections.connectTodo('u_bob', { listId: 'L_murmur' });
+      const b = await ctx.connections.connectTodo('u_bob', { listId: 'L_flagged' });
+      expect(b).toMatchObject({ status: 'connected', created: true, data_source: { name: 'Bob の To Do（フラグを設定したメール）' } });
+      const ids = [a, b].map((r) => (r.status === 'connected' ? r.data_source.id : ''));
+      expect(ids[0]).not.toBe(ids[1]);
+      const dir = await ctx.service.directory();
+      // 同じアカウントの資格情報を使い回し、どちらも読者は本人だけ
+      expect(dir.dataSource(ids[0]!)!.credentialRefId).toBe(dir.dataSource(ids[1]!)!.credentialRefId);
+      for (const id of ids) expect(dir.readersOfList(dir.listOfDataSource(id)!.id)).toEqual(['u_bob']);
+      expect(queued).toEqual(ids.map((dataSourceId) => ({ kind: 'setup', dataSourceId })));
+      expect((await ctx.connections.list('u_bob')).map((c) => c.list).sort()).toEqual(['Murmur', 'フラグを設定したメール']);
+      expect(seedProblems((await ctx.service.directory()).seed)).toEqual([]);
     });
   });
 

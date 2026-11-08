@@ -75,8 +75,9 @@ export interface TaskListInput {
 }
 
 /**
- * 本人の To Do のタスクのリストを個人リストとして作る（あればそれを返す）。
- * 1 つのアカウントでつなげるタスクのリストは 1 つ（0039 の未決 2。別のリストをつなぐなら、今のものを外してから）
+ * 本人の To Do のタスクのリストを個人リストとして作る（同じリストがあればそれを返す）。
+ * To Do のリスト 1 つが Murmur のリスト 1 つで、いくつでもつなげる（0039 の未決 2）。どのリストも同じ扱いで、特別なリストは置かない。
+ * 同じアカウントの 2 つめからは、最初のリストの資格情報を使い回す（資格情報はアカウントに 1 つ）
  */
 export function connectTaskList(draft: Seed, ctx: CoreContext, input: TaskListInput): MailboxPlan {
   const user = draft.users.find((u) => u.id === input.userId);
@@ -91,26 +92,34 @@ export function connectTaskList(draft: Seed, ctx: CoreContext, input: TaskListIn
     if (same.connector?.kind === 'graph-todo') same.connector.listName = input.listName;
     return { kind: 'exists', dataSource: same };
   }
-  if (mine.length > 0) {
-    throw new DomainError('conflict', `タスクのリスト ${mine[0]!.name} をつないでいる。別のリストをつなぐなら、先にそれを外す`);
-  }
   const address = input.address.trim();
   if (!address.includes('@')) throw new DomainError('invalid', 'アカウントのアドレスがわからない');
   const name = input.displayName || user.name || address;
+  const connector = { kind: 'graph-todo' as const, listId: input.listId, listName: input.listName };
+  const naming = { name: `${name} の To Do（${input.listName}）`, description: `${name} の To Do のタスクのリスト「${input.listName}」。本人の同意で取り込む（読者は本人だけ。0039）` };
+  if (mine.length > 0) {
+    const credentialRefId = mine[0]!.credentialRefId;
+    const identity = bindIdentity(draft, input.userId, { channel: 'todo', value: address }, ctx);
+    const dataSource: ServiceDataSource = { kind: 'service', id: ctx.newId('ds'), channel: 'todo', ...naming, credentialRefId, selfAddresses: [], group: false, connector };
+    draft.dataSources.push(dataSource);
+    const listId = ctx.newId('l');
+    draft.lists.push({ id: listId, dataSourceId: dataSource.id });
+    draft.listMembers.push({ listId, userId: input.userId });
+    return { kind: 'created', dataSource, identity };
+  }
   const created = createPersonalDataSource(
     draft,
     input.userId,
     {
       channel: 'todo',
-      name: `${name} の To Do（${input.listName}）`,
-      description: `${name} の To Do のタスクのリスト「${input.listName}」。本人の同意で取り込む（読者は本人だけ。0039）`,
+      ...naming,
       identity: address,
       gatewayCredentialId: input.gatewayCredentialId,
     },
     ctx,
   );
   const dataSource = draft.dataSources.find((d) => d.id === created.dataSourceId) as ServiceDataSource;
-  dataSource.connector = { kind: 'graph-todo', listId: input.listId, listName: input.listName };
+  dataSource.connector = connector;
   return { kind: 'created', dataSource, identity: created.identity };
 }
 

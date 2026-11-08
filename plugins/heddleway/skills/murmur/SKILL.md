@@ -54,11 +54,11 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/gw_request.py POST murmur /sent --json '{"da
 
 ### To Do をつなぐ(本人のタスクのリスト)
 
-本人の Microsoft To Do のタスクのリストを 1 つ、本人だけが読む個人リストとして取り込む。タスクは状態を持つソースで、Murmur は写しを持つだけ(完了 `closedAtSource`・件名 `title`・期限 `source.due`・リストの名前 `source.statusLabel`)。タスクを作る・期限を変える・完了にするのは、microsoft-graph スキルの To Do(`references/todo.md`)で行う。同意は Outlook と同じもの。
+本人の Microsoft To Do のタスクのリストを、本人だけが読む個人リストとして取り込む。To Do のリスト 1 つが Murmur のリスト 1 つで、いくつでもつなげる。どのリストも同じ扱い。タスクは状態を持つソースで、Murmur は写しを持つだけ(完了 `closedAtSource`・件名 `title`・期限 `source.due`・リストの名前 `source.statusLabel`)。タスクを作る・期限を変える・完了にするのは、microsoft-graph スキルの To Do(`references/todo.md`)で行う。同意は Outlook と同じもの。
 
 1. ゲートウェイで Microsoft Graph がつながっているか(`list_credentials`)を確かめる。To Do の権限(`Tasks.ReadWrite`)がまだなければ、ゲートウェイで Microsoft Graph をつなぎ直してもらう
-2. `POST /connections/todo` を呼び、`status` で分ける。`authorize`・`choose`・`no_credential` は Outlook と同じ。`choose_list` なら `lists` からユーザーに選んでもらい(Murmur で追うタスク用のリストを作って選ぶのがおすすめ。`wellknown` が `defaultList` は「タスク」、`flaggedEmails` はフラグを付けたメール)、`list`(その `id`)を付けてもう一度呼ぶ
-3. つなげるリストは 1 つのアカウントで 1 つ。別のリストに替えるなら、今のものを `disconnect` してから
+2. `POST /connections/todo` を呼び、`status` で分ける。`authorize`・`choose`・`no_credential` は Outlook と同じ。`choose_list` なら `lists` からユーザーに選んでもらい(`wellknown` が `defaultList` は「タスク」、`flaggedEmails` は Outlook でフラグを付けたメール)、`list`(その `id`)を付けてもう一度呼ぶ。ほかのリストもつなぐなら、リストごとに呼ぶ
+3. フラグを付けたメールのリストをつなぐと、フラグを付けたメールがタスクとして入る(完了にすると、メールのフラグも完了になる)。ここには新しいタスクを作らない
 4. つないだときにリストの開いているタスクを取り込み、以後の変更を追う(つなぐ前に完了したタスクは取らない)。`broken` の扱いは Outlook と同じ
 
 ### Jira をつなぐ(プロジェクトの共有リスト)
@@ -106,7 +106,7 @@ Contact はチームで共有する連絡先(Outlook の連絡先と同じ)。�
 
 対応すると決めた件は、本人の To Do のタスク 1 つ(Murmur ではそのスレッド 1 本)で追う。共有のスレッド(Jira の課題・PR・共有メールボックスなど)には進み具合を書かない。共有の Jira の課題を自分のタスクで進めれば、チームの状態は Jira に、自分の段取りと経過はタスクとメモに分かれる。どちらも書き写さないので二重管理にならない。
 
-1. **着手したら作って記録する**: ユーザーが着手を決めたら、タスクの名前と期限(自分の段取りの期日。課題の期日と違ってよい)をユーザーに確かめ、microsoft-graph スキルで To Do のつないだリストにタスクを作る。作った直後に `POST /sent` で記録する(`data_source` に To Do のデータソース、`sent_ref` に作ったタスクの `id`、`subject` にタスクの名前、`body` に要点、`source_thread_id` に元のスレッド。`to` は要らない)。タスクのスレッドができて、元のスレッドと経路 `sent` で結ばれる。1 つのタスクが複数のスレッドにまたがれば、残りは `POST /threads/{タスクのid}/links` で結ぶ。チームに誰の担当かを見せたいなら、元のスレッドを `claim` で担当する(Jira などはソースで担当者を変える)
+1. **着手したら作って記録する**: ユーザーが着手を決めたら、タスクの名前と期限(自分の段取りの期日。課題の期日と違ってよい)と、どのリストに作るかをユーザーに確かめ(つないだリストが 1 つならそれ)、microsoft-graph スキルで To Do のそのリストにタスクを作る。作った直後に `POST /sent` で記録する(`data_source` に To Do のデータソース、`sent_ref` に作ったタスクの `id`、`subject` にタスクの名前、`body` に要点、`source_thread_id` に元のスレッド。`to` は要らない)。タスクのスレッドができて、元のスレッドと経路 `sent` で結ばれる。1 つのタスクが複数のスレッドにまたがれば、残りは `POST /threads/{タスクのid}/links` で結ぶ。チームに誰の担当かを見せたいなら、元のスレッドを `claim` で担当する(Jira などはソースで担当者を変える)
 2. **外に出したものはタスクから記録する**: PR を出した・課題にコメントした・返信したら、`record_sent` の `source_thread_id` にタスクのスレッドを入れる。送ったスレッドとタスクが経路 `sent` で結ばれ、レビューや返事が返るとタスクの `derivedBall` が `my_turn` になる。実装・レビュー・修正のループが 1 本のタスクに綴じられる
 3. **経過はメモに書く**: 指示・結果の要約・判断・次の一手を `POST /notes`(`thread_id` にタスクのスレッド)で足す。書き手を `author` で分ける(人の言葉は `user`、エージェント自身が書いたものは `{"kind":"agent","name":...}`)。To Do のタスクの本文には書かない(本人のタスクのアプリが経過で埋まる)
 4. **終わったら To Do で完了にする**: 結んだ先が完了しても(`closedAtSource`)、タスクは自動では閉じない。完了にしてよいかをユーザーに聞いてから、microsoft-graph スキルでタスクを完了にする(Murmur の `dismiss` ではない。写しの `closedAtSource` で閉じる)。期限を変えるのも To Do で
@@ -164,7 +164,7 @@ Contact はチームで共有する連絡先(Outlook の連絡先と同じ)。�
 | record_sent | `POST /sent` | 下の「送信の記録」 | 送ったシグナルの入ったスレッド(`get_thread` と同じ) |
 | rename_me | `PATCH /me` | `{"name"}` | `me` と同じ |
 | connect_outlook | `POST /connections/outlook` | `{"credential_id"?}`(ゲートウェイの Graph の接続。複数あるときだけ) | `status`: `authorize`(`authorize_url`)・`choose`(`credentials`)・`no_credential`(`register_url`)・`connected`(`data_source`、`created`)。上の「Outlook をつなぐ」 |
-| connect_todo | `POST /connections/todo` | `{"credential_id"?, "list"?}`(`list` は `choose_list` の `lists[].id`) | `connect_outlook` と同じ + `choose_list`(`lists`: `[{id, name, wellknown}]`)。別のリストを既につないでいれば `conflict`。上の「To Do をつなぐ」 |
+| connect_todo | `POST /connections/todo` | `{"credential_id"?, "list"?}`(`list` は `choose_list` の `lists[].id`) | `connect_outlook` と同じ + `choose_list`(`lists`: `[{id, name, wellknown}]`)。リストごとに呼ぶ(いくつでもつなげる)。上の「To Do をつなぐ」 |
 | connect_jira | `POST /connections/jira` | `{"credential_id"?, "site"?, "project"?}`(`site` は `choose_site` の `sites[].id`、`project` は `choose_project` の `projects[].key`) | `connect_outlook` と同じ + `choose_site`(`sites`)・`choose_project`(`projects`)。`forbidden` はデプロイで許していない。上の「Jira をつなぐ」 |
 | connect_teams | `POST /connections/teams` | `{"credential_id"?, "team"?, "channel"?}`(`team` は `choose_team` の `teams[].id`、`channel` は `choose_channel` の `channels[].id`) | `connect_outlook` と同じ + `choose_team`(`teams`)・`choose_channel`(`channels`)。`forbidden` はデプロイで許していないか Entra ID でない。上の「Teams をつなぐ」 |
 | list_connections | `GET /connections` | | 自分がつないだものと、読者になっている共有リスト(`kind`: `outlook` / `todo` / `jira` / `teams`、To Do は `list`、Jira は `site`・`project`、Teams は `team`・`channel`、共有リストは `shared: true`・`created_by`)と取り込みの状態(`status`: `setup` / `ok` / `broken`(`reason`) / `disconnected`)、`last_sync_at` |

@@ -165,6 +165,32 @@ describe('H9 To Do のキューの仕事', () => {
     expect(todo.subscriptions.size).toBe(0);
   });
 
+  it('H9 同じ人の 2 つのリスト（フラグを付けたメールのリストなど）は、それぞれのサブスクリプションと位置で別々に取り込む', async () => {
+    const { result } = await made.service.changeMaster('u_bob', 'To Do をつなぐ', (d, c) =>
+      connectTaskList(d, c, { userId: 'u_bob', gatewayCredentialId: 'gw_bob', displayName: 'Bob', address: 'bob.todo@ubs.example', listId: 'L_flagged', listName: 'フラグを設定したメール' }),
+    );
+    const flagged = result.dataSource.id;
+    await state.putSource({ ...(await state.source(dsId))!, dataSourceId: flagged });
+    todo.put('L_murmur', todoTask({ id: 'T1', title: '見積を取る', at: '2026-11-08T00:01:00Z' }));
+    todo.put('L_flagged', todoTask({ id: 'F1', title: 'Re: エントランスの床について', at: '2026-11-08T00:02:00Z' }));
+    await sync.handle({ kind: 'setup', dataSourceId: dsId });
+    await sync.handle({ kind: 'setup', dataSourceId: flagged });
+    expect([...todo.subscriptions.values()].map((x) => x.listId).sort()).toEqual(['L_flagged', 'L_murmur']);
+    const p = await made.service.state();
+    expect(Object.values(p.threads).map((t) => [t.dataSourceId, t.title]).sort()).toEqual(
+      [
+        [dsId, '見積を取る'],
+        [flagged, 'Re: エントランスの床について'],
+      ].sort(),
+    );
+    // 片方のリストへの通知は、そのリストだけを読む
+    todo.calls.length = 0;
+    const { jobs } = await jobsFromNotifications(todo.notification('L_flagged'), { subscription: (id) => state.subscription(id), hash: sha256Hex });
+    expect(jobs).toEqual([{ kind: 'sync', dataSourceId: flagged, folder: 'L_flagged' }]);
+    await sync.handle(jobs[0]!);
+    expect(todo.calls.filter((c) => c.startsWith('delta')).every((c) => c.includes('L_flagged'))).toBe(true);
+  });
+
   it('H3 タスクのリストは本人だけの個人リスト。データソースの経路は graph-todo', async () => {
     const dir = await made.service.directory();
     const ds = dir.dataSource(dsId) as ServiceDataSource;
