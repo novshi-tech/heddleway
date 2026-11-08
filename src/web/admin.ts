@@ -267,7 +267,7 @@ ${!creating && html`<p class="hint">ベース URL のホスト、トークンの
 <label class="choice"><input type="radio" name="auth_type" value="headers"${form.auth_type === "headers" ? " checked" : ""}> API キーやトークンをヘッダーで送る</label>
 <label class="choice"><input type="radio" name="auth_type" value="basic"${form.auth_type === "basic" ? " checked" : ""}> Basic 認証(ユーザー名とパスワード)</label>
 <label class="choice"><input type="radio" name="auth_type" value="oauth2"${form.auth_type === "oauth2" ? " checked" : ""}> OAuth 2.0(認可コード + PKCE)</label>
-<label class="choice"><input type="radio" name="auth_type" value="client_credentials"${form.auth_type === "client_credentials" ? " checked" : ""}> OAuth 2.0(client credentials。人がいないときに Murmur などの Worker が使う)</label>
+<label class="choice"><input type="radio" name="auth_type" value="client_credentials"${form.auth_type === "client_credentials" ? " checked" : ""}> OAuth 2.0(client credentials。人がいないときにトピック索引などの Worker が使う)</label>
 </fieldset>
 <fieldset data-auth="headers"><legend>API キーの場合: 送るヘッダー</legend>
 <p class="hint">利用者が「画面での名前」の欄に値を入れ、ゲートウェイがこのヘッダーで送ります。使わない行は空のままにします。${!creating && "ヘッダー名を変えたり足したりすると、今ある接続には値がないので使えなくなります(元の名前に戻せば使えます)。"}</p>

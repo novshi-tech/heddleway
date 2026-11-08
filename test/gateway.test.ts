@@ -335,7 +335,7 @@ describe("mcp tools", () => {
     expect(listed.services).toEqual(["freee", "gmail", "drive", "calendar", "docs", "analytics", "analytics-admin", "board", "gbizinfo", "serper", "graph", "git-host", "basic-free", "murmur"]);
     expect(listed.credentials).toEqual([
       expect.objectContaining({ id: cred.id, service: "board" }),
-      { id: "identity:murmur", service: "murmur", label: "Murmur(サインイン中のユーザー)" },
+      { id: "identity:murmur", service: "murmur", label: "トピック索引(サインイン中のユーザー)" },
     ]);
   });
 
@@ -553,7 +553,7 @@ describe("web ui", () => {
   it("lists connections and identity services on the home page", async () => {
     const cookie = await sessionCookie(carol);
     const empty = await (await SELF.fetch(`${BASE}/`, { headers: { cookie } })).text();
-    expect(empty).toContain("Murmur");
+    expect(empty).toContain("トピック索引");
     expect(empty).toContain("登録不要");
     expect(empty).toContain(`href="/connections/new"`);
     expect(empty).toContain("Heddleway · Acme");

@@ -105,7 +105,7 @@ ${rows.length > 0
   : html`<p class="empty">つながっているサービスはまだありません。<a href="/connections/new">接続を追加</a>から始めてください。</p>`}
 ${featureSection}
 <h2>アクセスを許可したアプリ</h2>
-<p>Claude や Murmur など、あなたがサインインして許可したアプリです。取り消すと、そのアプリはここでつないだサービスを使えなくなります。</p>
+<p>Claude やトピック索引など、あなたがサインインして許可したアプリです。取り消すと、そのアプリはここでつないだサービスを使えなくなります。</p>
 ${grantRows(grants)}
 <details class="account"><summary>アカウントの情報</summary><p>ユーザー ID: <code>${user.sub}</code></p><p>管理者を設定するときに使います。</p></details>`,
   );

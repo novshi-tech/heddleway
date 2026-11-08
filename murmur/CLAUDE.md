@@ -21,6 +21,7 @@
 - エージェントは「次の一手を決める者が書く」。オーケストレータの下で動くものは書かず、直接の参加者は書き手の印（`author`）を付けて書く。書き手の印は番に使わない（`docs/adr/0032`、0027 を改めた）
 - Murmur はゲートウェイの Worker の機能（`docs/adr/0023`、2026-11-04 に採用、2026-11-05 に UBS を移して完了）。novshi-tech/heddleway の `murmur/` にあり、パッケージ管理は npm（コマンドはこのディレクトリで実行）。運用はゲートウェイに合わせて PR で回す。ゲートウェイとのやりとりは全部 `src/ports/gateway.ts` の口を通し、口はゲートウェイの中核（`../src/feature-port.ts`）が実装する。組み立ては `src/feature.ts`（env を読まない）で、入口はゲートウェイの `../src/murmur-feature.ts`。コードの境界は vertical slice（互いの実装を import しない、env は入口だけ、秘密ではなく能力を渡す、Murmur は実行時の依存を足さない）。MCP のツールは足さず、スキルと REST で使う
 - 共有リストはスペース単位（Teams・Slack のチャネル、Jira のプロジェクト）で 1 つ。読者はソースの「読める人」のうち本人が名乗って対応が付いた Murmur の User で、見回りで写す。経路は作った人の委任。作れるのはそのスペースを読める人なら誰でも（管理者がデプロイの設定でサービスを許す）。Jira も共有リストにし、個人リストは本人だけが読むもの（Outlook・To Do のタスクのリスト）に限る（`docs/adr/0037`、2026-11-05 に採用・実装。Teams の形は `docs/adr/0036`）
+- ユーザーに見せる言葉（表の言葉）は内側の言葉と分ける（`docs/adr/0040`、2026-11-08 に採用）。表では Murmur を「トピック索引」、スレッドを「トピック」、自分の番のトピックを「タスク」（To Do のものは「To Do のタスク」）、名指しを「アテンション」、スタンドを「エージェント」、読者を「メンバー」、シグナルを「メッセージ」、データソースを「リスト」、仕分け待ちを「割当待ち」、開き直しを「再開」と呼ぶ。ADR・コード・API の名前は内側の言葉のまま。スキル・ゲートウェイの画面・同意やコールバックの文言は表の言葉で書く
 - ADR には汎用の製品としての決定を書く。特定の会社の事情（どの会社のアカウントで回すか、どの会社をまとめるか）は書かない
 
 ## 約束事
@@ -103,4 +104,4 @@ npm run seed <scenario> -- --deployment <名前>    # ゲートウェイのデ�
 - 本体は上流サービスのトークンを持たず、データソースの中身は書き換えない（購読の管理だけはする。`docs/adr/0024`）。上流を読むのはゲートウェイの口の `upstream` だけで、トークンはゲートウェイの中核の中で使われ、読める口の許可リストもゲートウェイの中核が強制する。本人がゲートウェイの画面で Murmur を有効にしていなければ何も読めない。実装は個人の箱の Outlook（`src/connectors/graph/`）と、本人のタスクのリストの To Do（`src/connectors/todo/`。0039）と、プロジェクトの共有リストの Jira（`src/connectors/jira/`。0034・0037）と、チャネルの共有リストの Teams（`src/connectors/teams/`。0036・0037）とダミーコネクタ。外部コネクタは `MURMUR_WEBHOOK_SECRET` があるデプロイだけ有効
 - 初めてつないだ sub は User の行だけ作る（名無し、Contact なし）。自分の Contact はリストに入るときのアイデンティティで決まり、名寄せは人とスタンドが API で付ける（`docs/adr/0030`）。seed の `--user` の差し替えはシナリオを実環境で回すときだけ
 - 本体の API はゲートウェイの中継の後ろ（`<ゲートウェイ>/api/murmur/*`）だけで、`issue_token` の `identity:murmur` で発行したゲートウェイのトークンが要る（口の `authenticate` でもう一度確かめる）。公開の経路は `<ゲートウェイ>/murmur/` の下の `/webhooks/*`（Graph の通知は clientState、Jira の通知は URL の本人ごとの秘密で照合）、同意のコールバック（`/oauth/callback`）、`MURMUR_TIMELINE_TOKEN` で守る参照専用の画面（`/admin`・`/timeline.html`）だけ
-- スタンド（Cowork / Claude Code）用のスキルは同じリポジトリの `plugins/heddleway/skills/murmur/SKILL.md`（`murmur/` から見て `../plugins/...`）（共通のプラグイン `heddleway`。ゲートウェイに同梱し、`/setup` とマーケットプレイスで配る）、接続手順は `docs/stand/connect.md`。下書きは置かない。HTTP API を変えたら、同じ時期にゲートウェイのスキル（API の表と手順）も直し、プラグインの版を上げる
+- スタンド（Cowork / Claude Code）用のスキルは同じリポジトリの `plugins/heddleway/skills/topic-index/SKILL.md`（`murmur/` から見て `../plugins/...`）（共通のプラグイン `heddleway`。ゲートウェイに同梱し、`/setup` とマーケットプレイスで配る）、接続手順は `docs/stand/connect.md`。下書きは置かない。HTTP API を変えたら、同じ時期にゲートウェイのスキル（API の表と手順）も直し、プラグインの版を上げる

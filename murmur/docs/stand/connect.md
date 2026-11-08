@@ -31,13 +31,13 @@ npm run deploy -- <名前>
 DB を空にしてから `fixtures/<scenario>/seed.json` を入れるので、シナリオは 1 つずつ回す。受信は `POST <ゲートウェイ>/murmur/webhooks/dummy`（本文は InboundSignal の配列、`x-murmur-signature` は
 MURMUR_WEBHOOK_SECRET の HMAC-SHA256 hex）で流し込む（`npm run send`）。
 
-スタンド用スキルは、ゲートウェイに同梱の共通のプラグイン `heddleway` に入っている（スキル `murmur`）。
+スタンド用スキルは、ゲートウェイに同梱の共通のプラグイン `heddleway` に入っている（スキル `topic-index`。0.21 までは `murmur`）。
 
 ## Cowork
 
 1. Cowork の設定で API ゲートウェイの MCP コネクタを有効にする（既存のもの。追加の MCP は不要）
-2. プラグイン `heddleway` をインストールし（ゲートウェイの「Claude につなぐ」からダウンロードできる）、スキル `murmur` を有効にする
-3. 「自分の番のものを見せて」で `GET /threads?filter=my_turn`（list_threads）が呼ばれることを確認する
+2. プラグイン `heddleway` をインストールし（ゲートウェイの「Claude につなぐ」からダウンロードできる）、スキル `topic-index` を有効にする
+3. 「今日やることは?」で `GET /threads?filter=my_turn`（list_threads）が呼ばれることを確認する
 
 ## Claude Code
 

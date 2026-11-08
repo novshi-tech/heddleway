@@ -147,7 +147,7 @@ export class Connections {
     if (!input.state) return { ok: false, message: '認可の state がありません。' };
     const notBefore = new Date(Date.parse(this.deps.now()) - PENDING_MINUTES * 60_000).toISOString();
     const pending = await this.deps.state.takePending(input.state, notBefore);
-    if (!pending) return { ok: false, message: 'この認可は期限が切れたか、もう使われています。スタンドからもう一度つないでください。' };
+    if (!pending) return { ok: false, message: 'この認可は期限が切れたか、もう使われています。エージェント（Claude など）からもう一度つないでください。' };
     if (input.error || !input.code) return { ok: false, message: `ゲートウェイで許可されませんでした（${input.error ?? 'no code'}）。` };
 
     const request = pending.request ?? { kind: 'outlook' };
@@ -171,13 +171,13 @@ export class Connections {
                 : `${result.data_source.name} をつなぎました。これから届くメールを取り込みます（過去のメールは取りません）。`,
         };
       case 'choose':
-        return { ok: true, message: `ゲートウェイに ${label} の接続が複数あります。スタンドに戻って、どれをつなぐか選んでください。` };
+        return { ok: true, message: `ゲートウェイに ${label} の接続が複数あります。エージェント（Claude など）に戻って、どれをつなぐか選んでください。` };
       case 'choose_site':
-        return { ok: true, message: 'Jira のサイトが複数あります。スタンドに戻って、どのサイトをつなぐか選んでください。' };
+        return { ok: true, message: 'Jira のサイトが複数あります。エージェント（Claude など）に戻って、どのサイトをつなぐか選んでください。' };
       case 'choose_list':
-        return { ok: true, message: 'To Do のタスクのリストを選んでください。スタンドに戻って、どのリストをつなぐか選んでください。' };
+        return { ok: true, message: 'To Do のタスクのリストを選んでください。エージェント（Claude など）に戻って、どのリストをつなぐか選んでください。' };
       default:
-        return { ok: false, message: 'つなげませんでした。スタンドからもう一度頼んでください。' };
+        return { ok: false, message: 'つなげませんでした。エージェント（Claude など）からもう一度頼んでください。' };
     }
   }
 

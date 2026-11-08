@@ -83,7 +83,7 @@ export class GatewayAuthError extends Error {
  * 資格情報の問題の 1 つなので、取り込みではデータソースを broken にして止める（本人がつなぎ直すと戻る）
  */
 export class ConsentRequired extends GatewayAuthError {
-  constructor(message = 'Murmur がゲートウェイで有効になっていない（本人の同意がない）') {
+  constructor(message = 'トピック索引がゲートウェイで有効になっていない（本人の同意がない）') {
     super(message);
     this.name = 'ConsentRequired';
   }

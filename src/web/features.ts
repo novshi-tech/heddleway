@@ -25,9 +25,9 @@ export async function consentPage(request: Request, env: Env, name: string): Pro
   const state = url.searchParams.get("state") ?? "";
   if (!STATE.test(state)) return new Response("bad request", { status: 400 });
   return page(
-    `${f.displayName} を有効にする`,
+    `${f.displayName}を有効にする`,
     html`${masthead(env, user)}
-<h1>${f.displayName} を有効にしますか?</h1>
+<h1>${f.displayName}を有効にしますか?</h1>
 <form method="post" action="/features/${f.name}/consent" class="card">
 <input type="hidden" name="state" value="${state}">
 <p>${f.consentText}</p>
