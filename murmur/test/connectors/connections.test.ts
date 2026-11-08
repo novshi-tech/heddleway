@@ -337,6 +337,25 @@ describe('H3 個人の箱をつなぐ', () => {
       expect((await ctx.connections.list('u_bob')).map((c) => c.list).sort()).toEqual(['Murmur', 'フラグを設定したメール']);
       expect(seedProblems((await ctx.service.directory()).seed)).toEqual([]);
     });
+
+    it('ゲートウェイの接続を足し直して ID が変わっても、同じアカウントならつなげる。ほかのリストも新しい接続で読む', async () => {
+      await consentTodo('u_bob');
+      const first = await ctx.connections.connectTodo('u_bob', { listId: 'L_murmur' });
+      const firstId = first.status === 'connected' ? first.data_source.id : '';
+      await state.putSource({ ...(await state.source(firstId))!, status: 'broken', reason: 'credential must be reconnected' });
+      gw.credentialsOf.set('u_bob', [{ id: 'gw_bob2', service: 'graph', label: 'ubs' }]);
+      queued = [];
+      const second = await ctx.connections.connectTodo('u_bob', { listId: 'L_default' });
+      expect(second).toMatchObject({ status: 'connected', created: true });
+      const secondId = second.status === 'connected' ? second.data_source.id : '';
+      expect(await state.source(firstId)).toMatchObject({ gatewayCredentialId: 'gw_bob2', status: 'setup' });
+      expect(await state.source(secondId)).toMatchObject({ gatewayCredentialId: 'gw_bob2' });
+      expect(queued.map((j) => j.kind === 'setup' && j.dataSourceId).sort()).toEqual([firstId, secondId].sort());
+      const dir = await ctx.service.directory();
+      expect(dir.credentialRef(dir.dataSource(firstId)!.credentialRefId)?.gatewayCredentialId).toBe('gw_bob2');
+      // 同じリストをもう一度つなげば、新しい接続で読み直す
+      expect(await ctx.connections.connectTodo('u_bob', { listId: 'L_murmur' })).toMatchObject({ status: 'connected', created: false });
+    });
   });
 
   describe('H3 Teams のチャネルの共有リスト（0036・0037）', () => {

@@ -1,5 +1,5 @@
 import type { MurmurService } from '../../app/service';
-import type { ServiceDataSource } from '../../domain';
+import { renameTaskList, type ServiceDataSource } from '../../domain';
 import { GatewayAuthError } from '../../ports/gateway';
 import type { ConnectorStateStore } from '../../store/connector-state';
 import { GraphError } from '../graph/api';
@@ -88,6 +88,11 @@ export class TodoSync {
     } catch (err) {
       if (!(err instanceof GatewayAuthError)) throw err;
       const latest = (await this.deps.state.source(dataSourceId)) ?? source;
+      // 外したもの（disconnect の仕事の途中で同意が切れた）は外したままにする。broken にすると見回りが勝手につなぎ直す
+      if (latest.status === 'disconnected') {
+        this.deps.log?.({ msg: 'connector_disconnect_unclean', dataSourceId, reason: err.message });
+        return;
+      }
       await this.deps.state.putSource({ ...latest, status: 'broken', reason: err.message, lastRetryAt: this.deps.now() });
       this.deps.log?.({ msg: 'connector_broken', dataSourceId, reason: err.message });
     }
@@ -101,11 +106,30 @@ export class TodoSync {
       return this.setup(ctx);
     }
     await this.apply(ctx, plan.actions);
-    if (plan.sync) await this.syncList(ctx);
+    if (plan.sync) {
+      await this.refreshList(ctx);
+      await this.syncList(ctx);
+    }
+  }
+
+  /**
+   * To Do の側でリストの名前が変わっていれば、データソースの名前と写しの statusLabel を直す（位置を捨てて読み直し、写しを直す。写しは冪等）。
+   * リストがなくなっていれば止める（broken。本人に伝わる）
+   */
+  private async refreshList(ctx: Ctx): Promise<void> {
+    const list = (await (await this.api(ctx)).lists()).find((l) => l.id === ctx.ds.connector.listId);
+    if (!list) throw new GatewayAuthError(`To Do のリスト ${ctx.ds.connector.listName} が見つからない（消したか、見えなくなった）`);
+    if (list.displayName === ctx.ds.connector.listName) return;
+    const { result } = await this.deps.service.changeMaster(null, 'To Do のリストの名前が変わった', (d) => renameTaskList(d, ctx.ds.id, list.displayName));
+    if (!result) return;
+    this.deps.log?.({ msg: 'todo_list_renamed', dataSourceId: ctx.ds.id });
+    ctx.ds = { ...ctx.ds, connector: { ...ctx.ds.connector, listName: list.displayName } };
+    await this.putCursor(ctx, ctx.ds.connector.listId, { link: null, lastReceivedAt: ctx.source.folders[ctx.ds.connector.listId]?.lastReceivedAt ?? null });
   }
 
   /** つないだ直後・broken からの戻り: サブスクリプションをそろえ、リストを読み切って ok にする */
   private async setup(ctx: Ctx): Promise<void> {
+    await this.refreshList(ctx);
     const now = this.deps.now();
     const plan = planMaintenance({ ...ctx.source, status: 'ok', lastSyncAt: now }, ctx.subs, [ctx.ds.connector.listId], now, this.deps.notificationUrl);
     if (plan.kind === 'maintain') await this.apply(ctx, plan.actions);

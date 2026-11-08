@@ -363,8 +363,16 @@ export class Connections {
       connectTaskList(d, ctx, { userId, gatewayCredentialId: credentialId, displayName: me.displayName, address: me.addresses[0] ?? '', listId: list.id, listName: list.displayName }),
     );
     const ds = plan.dataSource;
+    // ゲートウェイの接続を足し直した（ID が変わった）: 同じアカウントのほかのリストも新しい接続で読む
+    const dir = await this.deps.service.directory();
+    for (const s of await this.deps.state.sources()) {
+      if (s.kind !== 'todo' || s.dataSourceId === ds.id || s.userId !== userId || s.gatewayCredentialId === credentialId) continue;
+      if (dir.dataSource(s.dataSourceId)?.credentialRefId !== ds.credentialRefId || s.status === 'disconnected') continue;
+      await this.deps.state.putSource({ ...s, gatewayCredentialId: credentialId, ...(s.status === 'broken' ? { status: 'setup' as const, reason: null } : {}) });
+      if (s.status === 'broken') await this.deps.queue.send({ kind: 'setup', dataSourceId: s.dataSourceId });
+    }
     const current = await this.deps.state.source(ds.id);
-    if (!current || current.status !== 'ok') {
+    if (!current || current.status !== 'ok' || current.gatewayCredentialId !== credentialId) {
       await this.deps.state.putSource({
         kind: 'todo',
         dataSourceId: ds.id,

@@ -103,9 +103,12 @@ export class GatewayGraphApi implements GraphApi {
   }
 }
 
-/** ゲートウェイの口で Graph を 1 回呼ぶ。ゲートウェイ・同意の問題は GatewayAuthError / GatewayError、Graph のエラーは GraphError（To Do も使う） */
-export async function graphRequest(upstream: UpstreamCall, method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<unknown> {
-  const res = await upstream(method, path, { body, headers: { prefer: GRAPH_PREFER } });
+/**
+ * ゲートウェイの口で Graph を 1 回呼ぶ。ゲートウェイ・同意の問題は GatewayAuthError / GatewayError、Graph のエラーは GraphError（To Do も使う）。
+ * prefer を渡せば Prefer ヘッダーに足す（To Do の期限を本人のタイムゾーンで受け取る outlook.timezone など）
+ */
+export async function graphRequest(upstream: UpstreamCall, method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown, prefer?: string): Promise<unknown> {
+  const res = await upstream(method, path, { body, headers: { prefer: prefer ? `${GRAPH_PREFER}, ${prefer}` : GRAPH_PREFER } });
   if (res.status === 204) return {};
   const json = (await res.json().catch(() => ({}))) as { error?: unknown };
   if (res.ok) return json;

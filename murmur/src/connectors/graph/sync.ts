@@ -80,6 +80,11 @@ export class GraphMailSync {
     } catch (err) {
       if (!(err instanceof GatewayAuthError)) throw err;
       const latest = (await this.deps.state.source(dataSourceId)) ?? source;
+      // 外したもの（disconnect の仕事の途中で同意が切れた）は外したままにする。broken にすると見回りが勝手につなぎ直す
+      if (latest.status === 'disconnected') {
+        this.deps.log?.({ msg: 'connector_disconnect_unclean', dataSourceId, reason: err.message });
+        return;
+      }
       await this.deps.state.putSource({ ...latest, status: 'broken', reason: err.message, lastRetryAt: this.deps.now() });
       this.deps.log?.({ msg: 'connector_broken', dataSourceId, reason: err.message });
     }

@@ -61,6 +61,8 @@ describe('HTTP API', () => {
     // メモは個人リストのスレッドに書く。thread_id のないメモ（個人のメモのデータソース）はもうない（0039）
     expect((await call('POST', '/api/notes', 'u_carol', { body: 'メモ' })).status).toBe(400);
     expect((await call('GET', '/api/me', 'u_carol')).body.lists).toHaveLength(1);
+    // To Do のリストは POST /connections/todo でつなぐ（経路のないタスクのリストは作れない。0039）
+    expect((await call('POST', '/api/data-sources', 'u_carol', { channel: 'todo', name: 'x', identity: 'carol@example.com', gateway_credential_id: 'g' })).status).toBe(400);
     // 別の User のアドレスは選べない
     expect((await call('POST', '/api/data-sources', 'u_carol', { channel: 'email', name: 'x', identity: 'alice@ubs.example', gateway_credential_id: 'g' })).status).toBe(409);
   });

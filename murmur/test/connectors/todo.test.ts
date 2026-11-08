@@ -165,11 +165,40 @@ describe('H9 To Do のキューの仕事', () => {
     expect(todo.subscriptions.size).toBe(0);
   });
 
+  it('外す途中で同意が切れても外したまま（broken にしない。見回りが勝手につなぎ直さない）', async () => {
+    await sync.handle({ kind: 'setup', dataSourceId: dsId });
+    await state.putSource({ ...(await state.source(dsId))!, status: 'disconnected', reason: '本人が外した' });
+    todo.authBroken = true;
+    await sync.handle({ kind: 'disconnect', dataSourceId: dsId });
+    expect(await state.source(dsId)).toMatchObject({ status: 'disconnected', reason: '本人が外した' });
+    todo.authBroken = false;
+    todo.calls.length = 0;
+    now = '2026-11-08T05:00:00.000Z';
+    await sync.handle({ kind: 'maintain' });
+    expect(todo.calls.filter((c) => c.startsWith('delta') || c.startsWith('create'))).toEqual([]);
+  });
+
+  it('To Do の側でリストの名前が変わったら、見回りでデータソースの名前と写しの statusLabel を直す。リストがなくなったら止める', async () => {
+    todo.put('L_murmur', todoTask({ id: 'T1', title: '見積を取る', at: '2026-11-08T00:01:00Z' }));
+    await sync.handle({ kind: 'setup', dataSourceId: dsId });
+    todo.listsInfo[1]!.displayName = 'Murmur（UBS）';
+    now = '2026-11-08T01:00:00.000Z';
+    await sync.handle({ kind: 'maintain' });
+    expect((await made.service.directory()).dataSource(dsId)).toMatchObject({ name: 'Bob の To Do（Murmur（UBS））', connector: { listName: 'Murmur（UBS）' } });
+    expect((await threads())[0]!.source?.statusLabel).toBe('Murmur（UBS）');
+
+    todo.listsInfo.splice(1, 1);
+    now = '2026-11-08T02:00:00.000Z';
+    await sync.handle({ kind: 'maintain' });
+    expect(await state.source(dsId)).toMatchObject({ status: 'broken', reason: expect.stringMatching(/見つからない/) });
+  });
+
   it('H9 同じ人の 2 つのリスト（フラグを付けたメールのリストなど）は、それぞれのサブスクリプションと位置で別々に取り込む', async () => {
     const { result } = await made.service.changeMaster('u_bob', 'To Do をつなぐ', (d, c) =>
       connectTaskList(d, c, { userId: 'u_bob', gatewayCredentialId: 'gw_bob', displayName: 'Bob', address: 'bob.todo@ubs.example', listId: 'L_flagged', listName: 'フラグを設定したメール' }),
     );
     const flagged = result.dataSource.id;
+    todo.listsInfo.push({ id: 'L_flagged', displayName: 'フラグを設定したメール', wellknownListName: 'flaggedEmails' });
     await state.putSource({ ...(await state.source(dsId))!, dataSourceId: flagged });
     todo.put('L_murmur', todoTask({ id: 'T1', title: '見積を取る', at: '2026-11-08T00:01:00Z' }));
     todo.put('L_flagged', todoTask({ id: 'F1', title: 'Re: エントランスの床について', at: '2026-11-08T00:02:00Z' }));

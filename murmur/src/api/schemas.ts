@@ -83,7 +83,8 @@ export const RenameBody = z.object({ name: z.string().min(1) });
 
 /** 個人のリスト。スタンドはゲートウェイで目的のサービスがつながっているかを確かめてから作る */
 export const CreateDataSourceBody = z.object({
-  channel: Channel,
+  /** タスクのサービス（todo）は POST /connections/todo でつなぐ（経路のないタスクのリストは写しが来ない。0039） */
+  channel: Channel.exclude(['todo']),
   name: z.string().min(1),
   description: z.string().optional(),
   /** そのリストでの自分のアイデンティティ（つないだアカウントのアドレス） */

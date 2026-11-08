@@ -1,4 +1,5 @@
 import type { CoreContext } from './context';
+import { sameAddress } from './comm';
 import { sameValue } from './directory';
 import type { DataSource, Seed, ServiceDataSource } from './entities';
 import { DomainError } from './errors';
@@ -82,25 +83,26 @@ export interface TaskListInput {
 export function connectTaskList(draft: Seed, ctx: CoreContext, input: TaskListInput): MailboxPlan {
   const user = draft.users.find((u) => u.id === input.userId);
   if (!user) throw new DomainError('forbidden', `user ${input.userId} はまだサインインしていない`);
-  const mine = draft.dataSources.filter((ds): ds is ServiceDataSource => {
-    if (ds.kind !== 'service' || ds.connector?.kind !== 'graph-todo') return false;
-    const cred = draft.credentialRefs.find((c) => c.id === ds.credentialRefId);
-    return cred?.principal.kind === 'user' && cred.principal.userId === input.userId && cred.gatewayCredentialId === input.gatewayCredentialId;
-  });
-  const same = mine.find((ds) => ds.connector?.kind === 'graph-todo' && ds.connector.listId === input.listId);
+  const address = input.address.trim();
+  if (!address.includes('@')) throw new DomainError('invalid', 'アカウントのアドレスがわからない');
+  // 本人のそのアカウントの資格情報（To Do のリストで共有する）。ゲートウェイの接続を足し直して ID が変わったら付け替える
+  const cred = draft.credentialRefs.find(
+    (c) => c.principal.kind === 'user' && c.principal.userId === input.userId && sameAddress(c.address, { channel: 'todo', value: address }),
+  );
+  if (cred) cred.gatewayCredentialId = input.gatewayCredentialId;
+  const same = draft.dataSources.find(
+    (ds): ds is ServiceDataSource => ds.kind === 'service' && ds.connector?.kind === 'graph-todo' && ds.connector.listId === input.listId && ds.credentialRefId === cred?.id,
+  );
   if (same) {
     if (same.connector?.kind === 'graph-todo') same.connector.listName = input.listName;
     return { kind: 'exists', dataSource: same };
   }
-  const address = input.address.trim();
-  if (!address.includes('@')) throw new DomainError('invalid', 'アカウントのアドレスがわからない');
   const name = input.displayName || user.name || address;
   const connector = { kind: 'graph-todo' as const, listId: input.listId, listName: input.listName };
   const naming = { name: `${name} の To Do（${input.listName}）`, description: `${name} の To Do のタスクのリスト「${input.listName}」。本人の同意で取り込む（読者は本人だけ。0039）` };
-  if (mine.length > 0) {
-    const credentialRefId = mine[0]!.credentialRefId;
+  if (cred) {
     const identity = bindIdentity(draft, input.userId, { channel: 'todo', value: address }, ctx);
-    const dataSource: ServiceDataSource = { kind: 'service', id: ctx.newId('ds'), channel: 'todo', ...naming, credentialRefId, selfAddresses: [], group: false, connector };
+    const dataSource: ServiceDataSource = { kind: 'service', id: ctx.newId('ds'), channel: 'todo', ...naming, credentialRefId: cred.id, selfAddresses: [], group: false, connector };
     draft.dataSources.push(dataSource);
     const listId = ctx.newId('l');
     draft.lists.push({ id: listId, dataSourceId: dataSource.id });
@@ -110,17 +112,23 @@ export function connectTaskList(draft: Seed, ctx: CoreContext, input: TaskListIn
   const created = createPersonalDataSource(
     draft,
     input.userId,
-    {
-      channel: 'todo',
-      ...naming,
-      identity: address,
-      gatewayCredentialId: input.gatewayCredentialId,
-    },
+    { channel: 'todo', ...naming, identity: address, gatewayCredentialId: input.gatewayCredentialId },
     ctx,
   );
   const dataSource = draft.dataSources.find((d) => d.id === created.dataSourceId) as ServiceDataSource;
   dataSource.connector = connector;
   return { kind: 'created', dataSource, identity: created.identity };
+}
+
+/** To Do の側でリストの名前が変わった（見回りで気づく）。データソースの名前と、写しの statusLabel に使う名前を直す */
+export function renameTaskList(draft: Seed, dataSourceId: string, listName: string): boolean {
+  const ds = draft.dataSources.find((d) => d.id === dataSourceId);
+  if (!ds || ds.connector?.kind !== 'graph-todo' || ds.connector.listName === listName || !listName.trim()) return false;
+  const displayName = ds.name.split(' の To Do（')[0] || ds.name;
+  ds.connector.listName = listName;
+  ds.name = `${displayName} の To Do（${listName}）`;
+  ds.description = `${displayName} の To Do のタスクのリスト「${listName}」。本人の同意で取り込む（読者は本人だけ。0039）`;
+  return true;
 }
 
 // ---- Jira（0034・0037）: プロジェクト単位の共有リスト ----
