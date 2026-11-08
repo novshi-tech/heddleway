@@ -94,6 +94,12 @@ export const SourceConnector = z.discriminatedUnion('kind', [
     teamId: z.string().min(1),
     channelId: z.string().min(1),
   }),
+  /** Microsoft To Do のタスクのリスト（0039）。本人の委任で読む個人リスト。listName は写しの statusLabel に使う */
+  z.object({
+    kind: z.literal('graph-todo'),
+    listId: z.string().min(1),
+    listName: z.string().min(1),
+  }),
 ]);
 export type SourceConnector = z.infer<typeof SourceConnector>;
 

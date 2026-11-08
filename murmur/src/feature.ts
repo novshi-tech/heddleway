@@ -19,6 +19,8 @@ import { GatewayJiraApi } from './connectors/jira/api';
 import { JiraSync } from './connectors/jira/sync';
 import { GatewayTeamsApi } from './connectors/teams/api';
 import { TeamsSync } from './connectors/teams/sync';
+import { GatewayTodoApi } from './connectors/todo/api';
+import { TodoSync } from './connectors/todo/sync';
 import { randomHex, sha256Hex } from './connectors/secrets';
 import { D1ConnectorState } from './store/connector-state';
 
@@ -81,7 +83,7 @@ function build(config: MurmurConfig): MurmurService {
 }
 
 interface ConnectorShell extends ConnectorHttp {
-  /** キューの仕事を Outlook と Jira の両方に渡す（それぞれ自分の経路のデータソースだけ扱う） */
+  /** キューの仕事を Outlook・Jira・Teams・To Do に渡す（それぞれ自分の経路のデータソースだけ扱う） */
   sync: { handle(job: SyncJob): Promise<void> };
 }
 
@@ -96,6 +98,7 @@ function buildConnectors(config: MurmurConfig, service: MurmurService, waitUntil
   const graphFor = (call: UpstreamCall) => new GatewayGraphApi(call);
   const jiraFor = (call: UpstreamCall) => new GatewayJiraApi(call);
   const teamsFor = (call: UpstreamCall) => new GatewayTeamsApi(call);
+  const todoFor = (call: UpstreamCall) => new GatewayTodoApi(call);
   // Jira の Webhook の受け口の秘密（本人ごと。S0: REST の Webhook の URL は本人ごとに 1 つ）。鍵から導くので保管しない
   const jiraSecret = (userId: string) => sha256Hex(`${c.webhookKey}:jira-webhook:${userId}`);
 
@@ -135,14 +138,26 @@ function buildConnectors(config: MurmurConfig, service: MurmurService, waitUntil
     hash: sha256Hex,
     log,
   });
+  const todo = new TodoSync({
+    service,
+    state,
+    queue,
+    todoFor: async (source) => todoFor(await gateway.upstream(source.userId, source.gatewayCredentialId, 'graph')),
+    now,
+    notificationUrl: `${publicUrl}/webhooks/graph`,
+    newClientState: () => randomHex(32),
+    hash: sha256Hex,
+    log,
+  });
   sync = {
     async handle(job) {
       await graph.handle(job);
       await jira.handle(job);
       await teams.handle(job);
+      await todo.handle(job);
     },
   };
-  const connections = new Connections({ gateway, service, queue, newId: randomIds, graphFor, jiraFor, teamsFor, state, now, sharedServices: config.sharedServices ?? [] });
+  const connections = new Connections({ gateway, service, queue, newId: randomIds, graphFor, jiraFor, teamsFor, todoFor, state, now, sharedServices: config.sharedServices ?? [] });
   return {
     sync,
     connections,

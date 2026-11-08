@@ -60,6 +60,60 @@ export function connectMailbox(draft: Seed, ctx: CoreContext, input: MailboxInpu
   return { kind: 'created', dataSource, identity: created.identity };
 }
 
+// ---- To Do（0039）: 本人のタスクのリスト ----
+
+export interface TaskListInput {
+  userId: string;
+  /** ゲートウェイの資格情報（本人の graph の接続）の ID */
+  gatewayCredentialId: string;
+  /** 持ち主の表示名 */
+  displayName: string;
+  /** 本人の主のアドレス。リストでのアイデンティティ（チャネル todo）になる */
+  address: string;
+  listId: string;
+  listName: string;
+}
+
+/**
+ * 本人の To Do のタスクのリストを個人リストとして作る（あればそれを返す）。
+ * 1 つのアカウントでつなげるタスクのリストは 1 つ（0039 の未決 2。別のリストをつなぐなら、今のものを外してから）
+ */
+export function connectTaskList(draft: Seed, ctx: CoreContext, input: TaskListInput): MailboxPlan {
+  const user = draft.users.find((u) => u.id === input.userId);
+  if (!user) throw new DomainError('forbidden', `user ${input.userId} はまだサインインしていない`);
+  const mine = draft.dataSources.filter((ds): ds is ServiceDataSource => {
+    if (ds.kind !== 'service' || ds.connector?.kind !== 'graph-todo') return false;
+    const cred = draft.credentialRefs.find((c) => c.id === ds.credentialRefId);
+    return cred?.principal.kind === 'user' && cred.principal.userId === input.userId && cred.gatewayCredentialId === input.gatewayCredentialId;
+  });
+  const same = mine.find((ds) => ds.connector?.kind === 'graph-todo' && ds.connector.listId === input.listId);
+  if (same) {
+    if (same.connector?.kind === 'graph-todo') same.connector.listName = input.listName;
+    return { kind: 'exists', dataSource: same };
+  }
+  if (mine.length > 0) {
+    throw new DomainError('conflict', `タスクのリスト ${mine[0]!.name} をつないでいる。別のリストをつなぐなら、先にそれを外す`);
+  }
+  const address = input.address.trim();
+  if (!address.includes('@')) throw new DomainError('invalid', 'アカウントのアドレスがわからない');
+  const name = input.displayName || user.name || address;
+  const created = createPersonalDataSource(
+    draft,
+    input.userId,
+    {
+      channel: 'todo',
+      name: `${name} の To Do（${input.listName}）`,
+      description: `${name} の To Do のタスクのリスト「${input.listName}」。本人の同意で取り込む（読者は本人だけ。0039）`,
+      identity: address,
+      gatewayCredentialId: input.gatewayCredentialId,
+    },
+    ctx,
+  );
+  const dataSource = draft.dataSources.find((d) => d.id === created.dataSourceId) as ServiceDataSource;
+  dataSource.connector = { kind: 'graph-todo', listId: input.listId, listName: input.listName };
+  return { kind: 'created', dataSource, identity: created.identity };
+}
+
 // ---- Jira（0034・0037）: プロジェクト単位の共有リスト ----
 
 const PROJECT_KEY = /^[A-Z][A-Z0-9_]*$/;

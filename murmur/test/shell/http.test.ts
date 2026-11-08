@@ -303,13 +303,14 @@ describe('H3 外部コネクタの公開ルート（0024）', () => {
     const connectOutlook = async (userId: string, credentialId?: string) => ({ status: 'authorize', authorize_url: `https://gw/authorize?u=${userId}&c=${credentialId ?? ''}` });
     const connectJira = async (userId: string, input: unknown) => ({ status: 'connected', userId, input });
     const connectTeams = async (userId: string, input: unknown) => ({ status: 'connected', userId, input });
+    const connectTodo = async (userId: string, input: unknown) => ({ status: 'connected', userId, input });
     const http = createApp({
       service: () => ctx.service,
       authenticate,
       webhookVerify: async () => false,
       connectors: withConnectors
         ? () => ({
-            connections: { connectOutlook, connectJira, connectTeams, list: async () => [], disconnect: async () => [], callback: async () => ({ ok: true, message: '<b>つないだ</b>' }) } as never,
+            connections: { connectOutlook, connectJira, connectTeams, connectTodo, list: async () => [], disconnect: async () => [], callback: async () => ({ ok: true, message: '<b>つないだ</b>' }) } as never,
             notifications: async (body) => {
               notified.push(body);
               return 1;
@@ -375,6 +376,14 @@ describe('H3 外部コネクタの公開ルート（0024）', () => {
     expect((await http.request('/api/connections/teams', { method: 'POST' })).status).toBe(401);
     const res = await http.request('/api/connections/teams', { method: 'POST', headers: auth, body: JSON.stringify({ team: 't1', channel: '19:c@thread.skype' }) });
     expect(await res.json()).toEqual({ status: 'connected', userId: 'u_bob', input: { credentialId: undefined, teamId: 't1', channelId: '19:c@thread.skype' } });
+  });
+
+  it('H3 /api/connections/todo はタスクのリストを渡す（本人のトークンが要る。0039）', async () => {
+    const { http } = await app();
+    const auth = { authorization: `Bearer ${token('u_bob')}`, 'content-type': 'application/json' };
+    expect((await http.request('/api/connections/todo', { method: 'POST' })).status).toBe(401);
+    const res = await http.request('/api/connections/todo', { method: 'POST', headers: auth, body: JSON.stringify({ list: 'L_murmur' }) });
+    expect(await res.json()).toEqual({ status: 'connected', userId: 'u_bob', input: { credentialId: undefined, listId: 'L_murmur' } });
   });
 
   it('設定がなければ 404', async () => {

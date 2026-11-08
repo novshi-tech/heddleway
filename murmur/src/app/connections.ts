@@ -1,6 +1,8 @@
-import { canDisconnect, connectJiraProject, connectorOwner, connectTeamsChannel, deriveViewer, DomainError, teamsAddress, connectMailbox, replaceSharedCredential, syncSharedReaders, type ServiceDataSource } from '../domain';
+import { canDisconnect, connectJiraProject, connectorOwner, connectTaskList, connectTeamsChannel, deriveViewer, DomainError, teamsAddress, connectMailbox, replaceSharedCredential, syncSharedReaders, type ServiceDataSource } from '../domain';
 import { jiraMembers } from '../connectors/jira/readers';
 import type { TeamRef, TeamsApi } from '../connectors/teams/api';
+import type { TodoApi } from '../connectors/todo/api';
+import type { TodoTaskList } from '../connectors/todo/task';
 import { teamsMembers } from '../connectors/teams/plan';
 import { ConsentRequired, GatewayAuthError, type GatewayCredential, type GatewayPort, type UpstreamCall, type UpstreamKind } from '../ports/gateway';
 import type { GraphApi } from '../connectors/graph/api';
@@ -14,6 +16,7 @@ import type { MurmurService } from './service';
 // 本人がスタンドから頼み、ゲートウェイの同意の画面で本体を許可すると、
 // 本体はデータソースを実行時に作り（読者は本人 1 人）、キューにサブスクリプションと初回の delta を頼む。
 // Jira（0034）も同じ同意で、ゲートウェイの jira の接続からサイトを選び、本人の JQL の範囲を個人リストにする。
+// To Do（0039）も同じ同意で、ゲートウェイの graph の接続からタスクのリストを 1 つ選んで個人リストにする。
 
 /** 認可の途中の state の寿命 */
 const PENDING_MINUTES = 15;
@@ -26,6 +29,7 @@ export interface ConnectionsDeps {
   graphFor(call: UpstreamCall): GraphApi;
   jiraFor(call: UpstreamCall): JiraApi;
   teamsFor(call: UpstreamCall): TeamsApi;
+  todoFor(call: UpstreamCall): TodoApi;
   state: ConnectorStateStore;
   now: () => string;
   /** 共有リストを許すサービス（0037 の決定 4。管理者がデプロイの設定で決める） */
@@ -46,6 +50,8 @@ export type ConnectResult =
   /** Teams: つなぐチーム・チャネルを選んでもう一度（0036・0037。チャネル単位の共有リスト） */
   | { status: 'choose_team'; teams: TeamRef[] }
   | { status: 'choose_channel'; channels: TeamRef[] }
+  /** To Do: つなぐタスクのリストを選んでもう一度（0039） */
+  | { status: 'choose_list'; lists: { id: string; name: string; wellknown: string | null }[] }
   | { status: 'connected'; data_source: { id: string; name: string }; created: boolean };
 
 export interface ConnectJiraInput {
@@ -62,16 +68,24 @@ export interface ConnectTeamsInput {
   channelId?: string;
 }
 
+export interface ConnectTodoInput {
+  credentialId?: string;
+  /** タスクのリストの ID（省けば一覧を返す） */
+  listId?: string;
+}
+
 export interface ConnectionView {
   data_source: string;
   name: string;
-  kind: 'outlook' | 'jira' | 'teams';
+  kind: 'outlook' | 'jira' | 'teams' | 'todo';
   /** Jira: サイトとプロジェクト */
   site?: string;
   project?: string;
   /** Teams: チームとチャネルの ID */
   team?: string;
   channel?: string;
+  /** To Do: タスクのリストの名前 */
+  list?: string;
   /** 共有リスト（0037）。読者はソースから写す */
   shared?: boolean;
   /** 共有リストを作った人 */
@@ -98,6 +112,11 @@ export class Connections {
   /** Teams のチャネルを共有リストとしてつなぐ（0036・0037。同意は Outlook と同じもの。ゲートウェイの graph の接続で読む） */
   async connectTeams(userId: string, input: ConnectTeamsInput = {}): Promise<ConnectResult> {
     return this.connect(userId, input.credentialId ?? null, { kind: 'teams', teamId: input.teamId, channelId: input.channelId });
+  }
+
+  /** To Do のタスクのリストを個人リストとしてつなぐ（0039。同意は Outlook と同じもの。ゲートウェイの graph の接続で読む） */
+  async connectTodo(userId: string, input: ConnectTodoInput = {}): Promise<ConnectResult> {
+    return this.connect(userId, input.credentialId ?? null, { kind: 'todo', listId: input.listId });
   }
 
   private async connect(userId: string, credentialId: string | null, request: NonNullable<PendingAuthorization['request']>): Promise<ConnectResult> {
@@ -147,12 +166,16 @@ export class Connections {
           message:
             request.kind === 'jira'
               ? `${result.data_source.name} をつなぎました。これから更新される課題を取り込みます（過去のコメントは取りません）。`
-              : `${result.data_source.name} をつなぎました。これから届くメールを取り込みます（過去のメールは取りません）。`,
+              : request.kind === 'todo'
+                ? `${result.data_source.name} をつなぎました。リストの開いているタスクと、これから変わるタスクを取り込みます。`
+                : `${result.data_source.name} をつなぎました。これから届くメールを取り込みます（過去のメールは取りません）。`,
         };
       case 'choose':
         return { ok: true, message: `ゲートウェイに ${label} の接続が複数あります。スタンドに戻って、どれをつなぐか選んでください。` };
       case 'choose_site':
         return { ok: true, message: 'Jira のサイトが複数あります。スタンドに戻って、どのサイトをつなぐか選んでください。' };
+      case 'choose_list':
+        return { ok: true, message: 'To Do のタスクのリストを選んでください。スタンドに戻って、どのリストをつなぐか選んでください。' };
       default:
         return { ok: false, message: 'つなげませんでした。スタンドからもう一度頼んでください。' };
     }
@@ -176,6 +199,7 @@ export class Connections {
     if (!chosen) return { status: 'choose', credentials: creds };
     if (request.kind === 'jira') return this.connectJiraWith(userId, chosen.id, request);
     if (request.kind === 'teams') return this.connectTeamsWith(userId, chosen.id, request);
+    if (request.kind === 'todo') return this.connectTodoWith(userId, chosen.id, request);
 
     const me = await this.deps.graphFor(await this.deps.gateway.upstream(userId, chosen.id, 'graph')).me();
     const { result: plan } = await this.deps.service.changeMaster(userId, 'Outlook をつなぐ', (d, ctx) =>
@@ -327,6 +351,38 @@ export class Connections {
     return { status: 'connected', data_source: { id: ds.id, name: ds.name }, created: plan.kind === 'created' };
   }
 
+  private async connectTodoWith(userId: string, credentialId: string, request: { kind: 'todo'; listId?: string }): Promise<ConnectResult> {
+    const api = this.deps.todoFor(await this.deps.gateway.upstream(userId, credentialId, 'graph'));
+    const lists = await api.lists();
+    const view = (l: TodoTaskList) => ({ id: l.id, name: l.displayName, wellknown: l.wellknownListName && l.wellknownListName !== 'none' ? l.wellknownListName : null });
+    if (!request.listId) return { status: 'choose_list', lists: lists.map(view) };
+    const list = lists.find((l) => l.id === request.listId);
+    if (!list) throw new DomainError('not_found', `task list ${request.listId} はこの接続から見えない`);
+    const me = await api.me();
+    const { result: plan } = await this.deps.service.changeMaster(userId, 'To Do のタスクのリストをつなぐ', (d, ctx) =>
+      connectTaskList(d, ctx, { userId, gatewayCredentialId: credentialId, displayName: me.displayName, address: me.addresses[0] ?? '', listId: list.id, listName: list.displayName }),
+    );
+    const ds = plan.dataSource;
+    const current = await this.deps.state.source(ds.id);
+    if (!current || current.status !== 'ok') {
+      await this.deps.state.putSource({
+        kind: 'todo',
+        dataSourceId: ds.id,
+        userId,
+        gatewayCredentialId: credentialId,
+        status: 'setup',
+        reason: null,
+        // つなぎ直しも delta を最初から読む（写しは冪等なので、変わっていないタスクは何もしない）
+        folders: {},
+        connectedAt: current?.connectedAt ?? this.deps.now(),
+        lastSyncAt: current?.lastSyncAt ?? null,
+        lastRetryAt: null,
+      });
+      await this.deps.queue.send({ kind: 'setup', dataSourceId: ds.id });
+    }
+    return { status: 'connected', data_source: { id: ds.id, name: ds.name }, created: plan.kind === 'created' };
+  }
+
   /** 自分がつないだもの（個人のリストと、自分の委任で読んでいる共有リスト）と、読者になっている共有リスト */
   async list(userId: string): Promise<ConnectionView[]> {
     const dir = await this.deps.service.directory();
@@ -340,12 +396,14 @@ export class Connections {
       const ds = dir.dataSource(s.dataSourceId) as ServiceDataSource | undefined;
       const jira = ds?.connector?.kind === 'jira' ? ds.connector : undefined;
       const teams = ds?.connector?.kind === 'teams' ? ds.connector : undefined;
+      const todo = ds?.connector?.kind === 'graph-todo' ? ds.connector : undefined;
       return {
         data_source: s.dataSourceId,
         name: ds?.name ?? s.dataSourceId,
         kind: s.kind ?? ('outlook' as const),
         ...(jira ? { site: jira.site, ...(jira.projectKey ? { project: jira.projectKey } : {}) } : {}),
         ...(teams ? { team: teams.teamId, channel: teams.channelId } : {}),
+        ...(todo ? { list: todo.listName } : {}),
         ...(ds?.shared ? { shared: true, created_by: ds.shared.createdBy } : {}),
         status: s.status,
         reason: s.reason,

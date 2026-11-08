@@ -98,18 +98,23 @@ export class GatewayGraphApi implements GraphApi {
     }
   }
 
-  private async call(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<unknown> {
-    const res = await this.upstream(method, path, { body, headers: { prefer: GRAPH_PREFER } });
-    if (res.status === 204) return {};
-    const json = (await res.json().catch(() => ({}))) as { error?: unknown };
-    if (res.ok) return json;
-    // ゲートウェイ自身のエラーは { error: "..." }、Graph のエラーは { error: { code } }
-    if (typeof json.error === 'string') {
-      if (res.status === 401 || res.status === 403) throw new GatewayAuthError(json.error);
-      throw new GatewayError(json.error, res.status);
-    }
-    const code = (json.error as { code?: string } | undefined)?.code ?? String(res.status);
-    if (res.status === 401 || res.status === 403) throw new GatewayAuthError(`graph ${res.status} ${code}`);
-    throw new GraphError(res.status, code);
+  private call(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<unknown> {
+    return graphRequest(this.upstream, method, path, body);
   }
+}
+
+/** ゲートウェイの口で Graph を 1 回呼ぶ。ゲートウェイ・同意の問題は GatewayAuthError / GatewayError、Graph のエラーは GraphError（To Do も使う） */
+export async function graphRequest(upstream: UpstreamCall, method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<unknown> {
+  const res = await upstream(method, path, { body, headers: { prefer: GRAPH_PREFER } });
+  if (res.status === 204) return {};
+  const json = (await res.json().catch(() => ({}))) as { error?: unknown };
+  if (res.ok) return json;
+  // ゲートウェイ自身のエラーは { error: "..." }、Graph のエラーは { error: { code } }
+  if (typeof json.error === 'string') {
+    if (res.status === 401 || res.status === 403) throw new GatewayAuthError(json.error);
+    throw new GatewayError(json.error, res.status);
+  }
+  const code = (json.error as { code?: string } | undefined)?.code ?? String(res.status);
+  if (res.status === 401 || res.status === 403) throw new GatewayAuthError(`graph ${res.status} ${code}`);
+  throw new GraphError(res.status, code);
 }

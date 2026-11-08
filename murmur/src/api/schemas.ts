@@ -160,6 +160,12 @@ export const ConnectTeamsBody = z.object({
   channel: z.string().min(1).optional(),
 });
 
+/** To Do のタスクのリストを個人リストとしてつなぐ（0039）。list を省くと一覧（choose_list）を返す */
+export const ConnectTodoBody = z.object({
+  credential_id: z.string().min(1).optional(),
+  list: z.string().min(1).optional(),
+});
+
 /** Jira のプロジェクトを共有リストとしてつなぐ（0037）。project を省くと一覧（choose_project）を返す */
 export const ConnectJiraBody = z.object({
   credential_id: z.string().min(1).optional(),

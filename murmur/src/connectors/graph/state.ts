@@ -38,7 +38,7 @@ export interface TeamsCursor {
 
 /** 実行時に作ったデータソースの取り込みの状態。kind がなければ Outlook（Jira より前の行） */
 export interface SourceState {
-  kind?: 'outlook' | 'jira' | 'teams';
+  kind?: 'outlook' | 'jira' | 'teams' | 'todo';
   dataSourceId: string;
   /** 個人の箱の本人（ゲートウェイの User） */
   userId: string;
@@ -46,7 +46,7 @@ export interface SourceState {
   status: SourceStatus;
   /** broken・disconnected の理由 */
   reason: string | null;
-  /** Outlook: フォルダごとの delta の位置（Jira では空） */
+  /** Outlook: フォルダごとの delta の位置。To Do: タスクのリストの ID ごとの delta の位置（lastReceivedAt は最後に取り込んだタスクの更新時刻）。Jira では空 */
   folders: Record<string, FolderCursor>;
   /** Jira: 取り込みの位置と Webhook */
   jira?: JiraCursor;
