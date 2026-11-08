@@ -1,7 +1,7 @@
 {
   "name": "heddleway-microsoft",
   "displayName": "Heddleway: Microsoft 365",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "description": "API ゲートウェイ経由で Microsoft Graph(Outlook メール・OneDrive / SharePoint・Teams・予定表・To Do)を操作するスキル。heddleway プラグインと一緒に使う。",
   "author": {
     "name": "novshi-tech"

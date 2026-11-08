@@ -7,9 +7,10 @@ Murmur で追うタスク(`murmur` スキルの「タスクとして追う」)�
 ## タスクのリスト
 
 ```sh
-python3 $GW GET graph /v1.0/me/todo/lists -q '$select=id,displayName,wellknownListName'
+python3 $GW GET graph /v1.0/me/todo/lists
 ```
 
+- リストの一覧は `$select` を付けると 400（`RequestBroker--ParseUri`）になる。付けずに呼ぶ(実物で確認、2026-11-08)
 - `wellknownListName` が `defaultList` は既定の「タスク」、`flaggedEmails` は Outlook でフラグを付けたメール(読むだけ。ここにタスクは作らない)。
 - リストを作る: `POST /v1.0/me/todo/lists`、`{"displayName": "Murmur"}`。
 
