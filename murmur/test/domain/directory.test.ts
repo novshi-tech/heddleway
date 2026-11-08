@@ -20,8 +20,9 @@ describe('Directory', () => {
     expect(isOurs(dir, dir.dataSource('ds_alice')!, { channel: 'email', value: 'alice@ubs.example' })).toBe(true);
     // 読者でない User の Contact（Eve は LINE の読者ではない）はこちらではない
     expect(isOurs(dir, dir.dataSource('ds_line')!, { channel: 'line', value: 'U_carol' })).toBe(false);
-    expect(isOurs(dir, dir.dataSource('ds_notes_alice')!, { channel: 'email', value: 'alice@ubs.example' })).toBe(false);
-    expect(isOurs(dir, dir.dataSource('ds_notes_alice')!, { channel: 'note', value: 'u_alice' })).toBe(true);
+    // タスクのリストは、つないだアカウント（窓口）がこちら
+    expect(isOurs(dir, dir.dataSource('ds_tasks_alice')!, { channel: 'todo', value: 'alice@ubs.example' })).toBe(true);
+    expect(isOurs(dir, dir.dataSource('ds_tasks_alice')!, { channel: 'todo', value: 'bob@ubs.example' })).toBe(false);
   });
 
   it('H3 Viewer は User の Contact と、読者になっているリスト・データソースを束ねる', () => {
@@ -29,8 +30,8 @@ describe('Directory', () => {
     expect(v).toEqual({
       userId: 'u_alice',
       contactId: 'p_alice',
-      listIds: ['l_support', 'l_alice', 'l_notes_alice'],
-      dataSourceIds: ['ds_support', 'ds_alice', 'ds_notes_alice'],
+      listIds: ['l_support', 'l_alice', 'l_tasks_alice'],
+      dataSourceIds: ['ds_support', 'ds_alice', 'ds_tasks_alice'],
     });
     expect(canReadDataSource(v, 'ds_alice')).toBe(true);
     expect(canReadDataSource(v, 'ds_line')).toBe(false);
@@ -52,28 +53,13 @@ describe('H3 マスタの整合性（seedProblems）', () => {
     return seedProblems(Seed.parse(s));
   };
 
-  it('H2 属性の定義は個人のメモのデータソースだけに付く。enum には選択肢が要る（0031）', () => {
-    const def = (dataSourceId: string, over: object = {}) => ({ dataSourceId, name: 'x', type: 'string' as const, description: 'd', ...over });
-    expect(broken((s) => s.attributeDefs!.push(def('ds_support'))).join()).toMatch(/ds_support\|x: 属性を付けられるのは個人のメモのデータソースだけ/);
-    expect(broken((s) => s.attributeDefs!.push(def('ds_none'))).join()).toMatch(/ds_none\|x: data source がない/);
-    expect(broken((s) => s.attributeDefs!.push(def('ds_notes_alice', { type: 'enum' }))).join()).toMatch(/enum の選択肢がない/);
-    expect(broken((s) => s.attributeDefs!.push(def('ds_notes_alice', { type: 'enum', options: ['a'] })))).toEqual([]);
-    expect(broken((s) => s.attributeDefs!.push(def('ds_notes_alice', { name: 'due' }))).join()).toMatch(/標準の属性と重なる/);
-  });
-
-  it('H2 個人のメモには標準の属性 due が付く。外のサービスのデータソースには付かない（0031 の 4）', () => {
-    expect(dir.attributeDefs('ds_notes_alice').map((d) => d.name)).toEqual(['due', 'status']);
-    expect(dir.attributeDefs('ds_notes_bob')).toEqual([expect.objectContaining({ name: 'due', type: 'date' })]);
-    expect(dir.attributeDefs('ds_support')).toEqual([]);
-  });
-
   it('データソース 1 つにリスト 1 つ', () => {
     expect(broken((s) => s.lists!.push({ id: 'l_dup', dataSourceId: 'ds_support' })).join()).toMatch(/ds_support: リストが 2 個/);
     expect(broken((s) => (s.lists = s.lists!.filter((l) => l.id !== 'l_line'))).join()).toMatch(/ds_line: リストが 0 個/);
   });
 
-  it('個人のメモの読者は本人だけ', () => {
-    expect(broken((s) => s.listMembers!.push({ listId: 'l_notes_alice', userId: 'u_bob' })).join()).toMatch(/個人のメモの読者は本人/);
+  it('個人リスト（タスクのリスト）の読者は本人だけ', () => {
+    expect(broken((s) => s.listMembers!.push({ listId: 'l_tasks_alice', userId: 'u_bob' })).join()).toMatch(/個人の資格情報/);
   });
 
   it('個人の資格情報は読者 1 人（その本人）のデータソースにしか使わない', () => {

@@ -28,25 +28,18 @@
   "dataSources": [
     { "kind": "service", "id": "ds_slack_client", "channel": "slack", "name": "Slack 共有チャンネル #client-mori", "description": "クライアント PM（森さん）との共有チャンネル。能勢の資格情報で取り込む", "credentialRefId": "c_nose_slack", "selfAddresses": [], "group": true },
     { "kind": "service", "id": "ds_jira", "channel": "jira", "name": "Jira プロジェクト NVT", "description": "開発の課題。1 課題 1 スレッド", "credentialRefId": "c_jira", "selfAddresses": [{ "channel": "jira", "value": "nvt.atlassian.net" }] },
-    { "kind": "service", "id": "ds_bitbucket", "channel": "bitbucket", "name": "Bitbucket nvt/web", "description": "プルリクエストとパイプラインの通知", "credentialRefId": "c_bb", "selfAddresses": [{ "channel": "bitbucket", "value": "bitbucket.org/nvt" }] },
-    { "kind": "notes", "id": "ds_notes_nose", "name": "能勢のメモ", "ownerUserId": "u_nose" },
-    { "kind": "notes", "id": "ds_notes_kato", "name": "加藤のメモ", "ownerUserId": "u_kato" }
+    { "kind": "service", "id": "ds_bitbucket", "channel": "bitbucket", "name": "Bitbucket nvt/web", "description": "プルリクエストとパイプラインの通知", "credentialRefId": "c_bb", "selfAddresses": [{ "channel": "bitbucket", "value": "bitbucket.org/nvt" }] }
   ],
   "lists": [
     { "id": "l_slack_client", "dataSourceId": "ds_slack_client" },
     { "id": "l_jira", "dataSourceId": "ds_jira" },
-    { "id": "l_bitbucket", "dataSourceId": "ds_bitbucket" },
-    { "id": "l_notes_nose", "dataSourceId": "ds_notes_nose" },
-    { "id": "l_notes_kato", "dataSourceId": "ds_notes_kato" }
+    { "id": "l_bitbucket", "dataSourceId": "ds_bitbucket" }
   ],
   "listMembers": [
     { "listId": "l_slack_client", "userId": "u_nose" },
     { "listId": "l_jira", "userId": "u_nose" },
     { "listId": "l_jira", "userId": "u_kato" },
     { "listId": "l_bitbucket", "userId": "u_nose" },
-    { "listId": "l_bitbucket", "userId": "u_kato" },
-    { "listId": "l_notes_nose", "userId": "u_nose" },
-    { "listId": "l_notes_kato", "userId": "u_kato" }
-  ],
-  "attributeDefs": []
+    { "listId": "l_bitbucket", "userId": "u_kato" }
+  ]
 }

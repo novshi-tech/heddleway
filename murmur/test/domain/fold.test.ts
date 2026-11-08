@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalJson, directionOf, draft, fold, FoldError, isStaleProjections, summarizeThread, type DomainEvent, type MirrorFields, type Projections } from '../../src/domain';
+import { canonicalJson, directionOf, draft, fold, FoldError, isStaleProjections, parseEvent, summarizeThread, type DomainEvent, type MirrorFields, type Projections } from '../../src/domain';
 import { dir, EventLog } from '../helpers/world';
 
 /** 投影のスレッドに、クエリ層で解決したもの（担当・名指し・相手。0030・0038）を重ねたもの */
@@ -162,13 +162,28 @@ describe('fold', () => {
     expect(() => fold([...log.events, other, { ...into('s9', 't1'), seq: 4, at: T0 } as DomainEvent])).toThrow(/cannot go into/);
   });
 
-  it('H1 個人のメモ: SignalObserved（channel note）+ SignalThreaded（by self）。名指しを作らず、シグナルとして並ぶ', () => {
+  it('H1 メモ（ThreadNoted。0039）: スレッドのログに本文と書き手で載る。シグナルにはならず、名指しを作らない', () => {
     const log = new EventLog();
-    log.push([note('n1'), draft('SignalThreaded', { signalId: 'n1', thread: { kind: 'new', threadId: 'm1', title: '雨漏りの件' }, by: 'self', confidence: 1, reason: 'r', needsResponse: null })], T0);
-    log.push([note('n2'), draft('SignalThreaded', { signalId: 'n2', thread: { kind: 'existing', threadId: 'm1' }, by: 'self', confidence: 1, reason: 'r', needsResponse: null })], T1);
+    log.push([taskThread('m1', '雨漏りの件'), note('n1', 'm1')], T0);
+    log.push([note('n2', 'm1', { kind: 'agent', name: 'orchestrator' })], T1);
     const t = view(log.state(), 'm1');
-    expect(t).toMatchObject({ dataSourceId: 'ds_notes_alice', assignee: null, triage: false, attention: { named: [], list: null }, signalIds: ['n1', 'n2'], counterpartContactIds: [], lastOutboundAt: null });
-    expect(t.log.map((l) => l.kind)).toEqual(['note', 'note']);
+    expect(t).toMatchObject({ dataSourceId: 'ds_tasks_alice', assignee: null, triage: false, attention: { named: [], list: null }, signalIds: [], counterpartContactIds: [], lastOutboundAt: null, updatedAt: T1 });
+    expect(t.log.map((l) => [l.kind, l.noteId, l.author])).toEqual([
+      ['mirrored', undefined, undefined],
+      ['note', 'n1', { kind: 'user' }],
+      ['note', 'n2', { kind: 'agent', name: 'orchestrator' }],
+    ]);
+    expect(Object.keys(log.state().signals)).toEqual([]);
+    expect(() => fold([...log.events, { ...note('n3', 'nope'), seq: 99, at: T2 } as DomainEvent])).toThrow(/unknown thread/);
+  });
+
+  it('H1 写しの closed で閉じた時刻が残り、開き直せば消える（closedAtSourceAt。0039）', () => {
+    const log = new EventLog();
+    log.push([taskThread('m1', '件')], T0);
+    log.push([draft('ThreadMirrored', { threadId: 'm1', dataSourceId: 'ds_tasks_alice', threadKey: 'task-m1', fields: { closed: true }, sourceRef: 'c' })], T1);
+    expect(view(log.state(), 'm1')).toMatchObject({ closedAtSource: true, closedAtSourceAt: T1 });
+    log.push([draft('ThreadMirrored', { threadId: 'm1', dataSourceId: 'ds_tasks_alice', threadKey: 'task-m1', fields: { closed: false }, sourceRef: 'o' })], T2);
+    expect(view(log.state(), 'm1')).toMatchObject({ closedAtSource: false, closedAtSourceAt: null });
   });
 
   it('H4 ThreadClaimed: 担当する・手放すで担当が変わり、ログに残る。名指しは変えない', () => {
@@ -185,7 +200,7 @@ describe('fold', () => {
   it('H1 ThreadLinked は無向: 1 つのイベントが両端に同じ辺を載せ、unlink で両端から外れる。リンク先の状態は読まない', () => {
     const log = new EventLog();
     log.push([observed('s1'), intoNew('s1', 't1')], T0);
-    log.push([note('n1'), draft('SignalThreaded', { signalId: 'n1', thread: { kind: 'new', threadId: 'm1', title: '件' }, by: 'self', confidence: 1, reason: 'r', needsResponse: null })], T0);
+    log.push([taskThread('m1', '件'), note('n1', 'm1')], T0);
     log.push([draft('ThreadLinked', { a: 'm1', b: 't1', route: 'manual', actorUserId: 'u_alice', reason: 'この件' })], T1);
     let p = log.state();
     const edge = { route: 'manual', linkedAt: T1, actorUserId: 'u_alice' };
@@ -201,16 +216,6 @@ describe('fold', () => {
     expect(view(p, 't1').log.map((l) => l.kind)).toEqual(['signal', 'linked', 'unlinked']);
     expect(() => fold([...log.events, { ...draft('ThreadLinked', { a: 't1', b: 't1', route: 'manual', actorUserId: 'u' }), seq: 99, at: T2 } as DomainEvent])).toThrow(/itself/);
     expect(() => fold([...log.events, { ...draft('ThreadLinked', { a: 't1', b: 'nope', route: 'manual', actorUserId: 'u' }), seq: 99, at: T2 } as DomainEvent])).toThrow(/unknown thread/);
-  });
-
-  it('H2 ThreadAttributeSet: 値を付け、null で外す。名指しは変えない', () => {
-    const log = new EventLog();
-    log.push([observed('s1'), intoNew('s1', 't1')], T0);
-    log.push([draft('ThreadAttributeSet', { threadId: 't1', name: 'status', value: 'todo', actorUserId: 'u_alice' })], T1);
-    expect(view(log.state(), 't1')).toMatchObject({ attributes: { status: 'todo' } });
-    expect(listOf(log.state(), 't1')).toEqual(['u_alice', 'u_bob']);
-    log.push([draft('ThreadAttributeSet', { threadId: 't1', name: 'status', value: null, actorUserId: 'u_alice' })], T2);
-    expect(view(log.state(), 't1').attributes).toEqual({});
   });
 
   it('H4 OutboundRecorded（新しい送信）でシグナルができ、SignalThreaded で置かれる。返事期待が載り、ReplyOverdue で超過、相手の名指しを外して解消', () => {
@@ -256,7 +261,8 @@ describe('fold', () => {
     expect(view(log.state(), 't1').source).toBeNull();
     log.push([mirrored({ statusLabel: '進行中', holders: ['jira:alice'], closed: false, title: '雨漏りの修繕' })], T1);
     let t = view(log.state(), 't1');
-    expect(t).toMatchObject({ title: '雨漏りの修繕', source: { holders: ['jira:alice'], statusLabel: '進行中', due: null }, attributes: {}, closedAtSource: false });
+    expect(t).toMatchObject({ title: '雨漏りの修繕', source: { holders: ['jira:alice'], statusLabel: '進行中', due: null }, closedAtSource: false });
+    expect('attributes' in t).toBe(false);
     expect(t.log.at(-1)).toMatchObject({ kind: 'mirrored', fields: { statusLabel: '進行中', holders: ['jira:alice'], closed: false } });
     log.push([recorded('o1', false, T2), into('o1', 't1', null, 'human')], T1);
     log.push([draft('ReplyOverdue', { threadId: 't1', signalId: 'o1', replyExpectedBy: T2 })], '2026-10-16T12:00:00.000Z');
@@ -279,11 +285,16 @@ describe('fold', () => {
     const old = structuredClone(p) as Projections;
     delete (old.threads.t1 as Partial<(typeof old.threads)['t1']>).attention;
     expect(isStaleProjections(old)).toBe(true);
+    // 0039 より前の投影（本人が付ける属性を持つ）も作り直す
+    const withAttributes = structuredClone(p) as Projections;
+    (withAttributes.threads.t1 as unknown as Record<string, unknown>).attributes = {};
+    expect(isStaleProjections(withAttributes)).toBe(true);
   });
 
-  it('H1 書き手の印は個人のメモのシグナルだけ（0031 の 3）', () => {
-    const bad = { ...observed('s1'), payload: { ...observed('s1').payload, author: { kind: 'agent', name: 'codex' } } };
-    expect(() => fold([{ ...bad, seq: 1, at: T0 } as DomainEvent])).toThrow(/author is only for notes/);
+  it('H1 古い形のイベント（channel note のシグナル・ThreadAttributeSet）は読まない（0039。マイグレーション 0003 で消す）', () => {
+    const old = { ...observed('s1'), payload: { ...observed('s1').payload, channel: 'note' } };
+    expect(() => parseEvent({ seq: 1, at: T0, type: old.type, payload: old.payload })).toThrow();
+    expect(() => parseEvent({ seq: 1, at: T0, type: 'ThreadAttributeSet', payload: { threadId: 't1', name: 'due', value: null, actorUserId: 'u' } })).toThrow();
   });
 
   it('H9 ThreadMirrored（created）: 写しでスレッドを作る。件名が要り、既にあるスレッドは作れない（0031 の 8）', () => {
@@ -314,14 +325,18 @@ function recorded(signalId: string, merged: boolean, replyExpectedBy: string | n
 }
 
 
-function note(signalId: string) {
-  return draft('SignalObserved', {
-    signalId,
-    dataSourceId: 'ds_notes_alice',
-    channel: 'note',
-    from: { channel: 'note', value: 'u_alice' },
-    to: [],
-    body: '電話で聞いた',
-    sourceRef: `note:${signalId}`,
+/** Alice のタスクのリストに、写しでタスクのスレッドを作る */
+function taskThread(threadId: string, title: string) {
+  return draft('ThreadMirrored', {
+    threadId,
+    created: true,
+    dataSourceId: 'ds_tasks_alice',
+    threadKey: `task-${threadId}`,
+    fields: { title, holders: ['alice@ubs.example'] },
+    sourceRef: `todo:${threadId}`,
   });
+}
+
+function note(noteId: string, threadId: string, author?: { kind: 'user' } | { kind: 'agent'; name: string }) {
+  return draft('ThreadNoted', { noteId, threadId, body: '電話で聞いた', ...(author ? { author } : {}), actorUserId: 'u_alice' });
 }

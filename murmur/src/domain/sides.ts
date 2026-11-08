@@ -13,11 +13,9 @@ import type { SignalRecord, Thread } from './projections';
  * そのデータソースで「こちら」のアドレスか（at 時点）。
  * - 窓口のアドレス（selfAddresses）
  * - 読者の Contact に付いているアドレス（メンバーが自分のアカウントで書く Jira・Slack、個人の箱）
- * - 個人のメモは、メモのチャネルなら全部こちら
  */
 export function isOurs(dir: Directory, ds: DataSource | undefined, ref: AddressRef, at?: string): boolean {
   if (!ds) return false;
-  if (ds.kind === 'notes') return ref.channel === 'note';
   if (ds.selfAddresses.some((a) => sameAddress(a, ref))) return true;
   const contactId = dir.contactIdOfAddress(ref, at);
   if (contactId === null) return false;

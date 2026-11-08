@@ -8,7 +8,6 @@ import {
   lastActivityAt,
   replyStateOf,
   sortLog,
-  type AttributeValue,
   type Directory,
   type MirrorFields,
   type Projections,
@@ -38,16 +37,6 @@ function names(dir: Directory, p: Projections) {
   };
 }
 
-/** 属性の値。contact 型は名前で出す */
-function attrValue(dir: Directory, dataSourceId: string, name: string, v: AttributeValue | null): string {
-  if (v === null) return '(空)';
-  const def = dir.attributeDefs(dataSourceId).find((d) => d.name === name);
-  if (def?.type !== 'contact' || typeof v !== 'string') return String(v);
-  const ds = dir.dataSource(dataSourceId);
-  const id = dir.contact(v) ? v : ds?.kind === 'service' ? dir.contactIdOfAddress({ channel: ds.channel, value: v }) : null;
-  return (id ? dir.contact(id)?.name : undefined) ?? v;
-}
-
 /** ソースのアカウントを Contact の名前で出す（解決できなければそのまま） */
 function holderName(dir: Directory, dataSourceId: string, value: string): string {
   const ds = dir.dataSource(dataSourceId);
@@ -66,9 +55,9 @@ function mirrorPairs(dir: Directory, dataSourceId: string, f: MirrorFields): [st
   return out;
 }
 
-/** スレッドの属性と写し（一覧・詳細に出す） */
+/** スレッドの写し（一覧・詳細に出す） */
 function attrPairs(dir: Directory, t: Thread): [string, string][] {
-  const out: [string, string][] = Object.entries(t.attributes).map(([k, v]) => [k, attrValue(dir, t.dataSourceId, k, v)]);
+  const out: [string, string][] = [];
   if (t.source) out.push(...mirrorPairs(dir, t.dataSourceId, { holders: t.source.holders, statusLabel: t.source.statusLabel, due: t.source.due }));
   return out;
 }
@@ -118,18 +107,14 @@ function logEntry(dir: Directory, p: Projections, t: Thread, l: Thread['log'][nu
     case 'linked':
     case 'unlinked':
       return `${head(l.kind === 'linked' ? '結んだ' : '外した', l.kind)}${esc(n.thread(l.otherThreadId!))} [${esc(l.route)}] ${esc(l.reason ?? '')}</li>`;
-    case 'attribute':
-      return `${head('属性', l.kind)}${esc(l.name)} = ${esc(l.value === null ? '(外した)' : l.value)}</li>`;
     case 'mirrored':
       return `${head('写し', l.kind)}${mirrorPairs(dir, t.dataSourceId, l.fields ?? {})
         .map(([k, v]) => `${esc(k)} = ${esc(v)}`)
         .join(' · ')}</li>`;
     case 'overdue':
       return `${head('期限超過', l.kind)}${esc(l.replyExpectedBy)}</li>`;
-    case 'note': {
-      const s = p.signals[l.signalId!];
-      return `${head('メモ', 'note')}${esc(s?.body.slice(0, 140))}${origin}</li>`;
-    }
+    case 'note':
+      return `${head(l.author?.kind === 'agent' ? `メモ（${esc(l.author.name)}）` : 'メモ', 'note')}${esc(l.body?.slice(0, 140))}${origin}</li>`;
     case 'signal': {
       const s = p.signals[l.signalId!];
       const nr =
@@ -176,7 +161,7 @@ export function renderAdminIndex(dir: Directory, p: Projections, href: Href): st
       const ts = threads.filter((t) => t.dataSourceId === l.dataSourceId);
       const triage = ts.filter((t) => isTriage(dir, t)).length;
       return `<tr><td><a href="${esc(href(`/admin/lists/${l.id}`))}">${esc(ds?.name ?? l.dataSourceId)}</a><br><small>${esc(l.id)}</small></td>
-<td>${ds?.kind === 'notes' ? '個人のメモ' : esc(ds?.channel ?? '')}</td>
+<td>${esc(ds?.channel ?? '')}</td>
 <td>${dir.readersOfList(l.id).map((u) => esc(names(dir, p).user(u))).join(', ')}</td>
 <td>${ts.filter((t) => !t.dismissed).length} / ${ts.length}</td><td>${triage}</td><td>${ts.filter((t) => replyStateOf(dir, t).overdue).length}</td></tr>`;
     })
@@ -212,8 +197,8 @@ export function renderAdminList(dir: Directory, p: Projections, listId: string, 
   return page(
     `${ds?.name ?? listId} — Murmur 管理`,
     `<nav><a href="${esc(href('/admin'))}">リスト一覧</a></nav>
-<h1>${esc(ds?.name ?? list.dataSourceId)} <small>${esc(list.id)} · ${ds?.kind === 'notes' ? '個人のメモ' : esc(ds?.channel ?? '')}</small></h1>
-<p class="muted">${esc(ds?.description ?? '')} 読者: ${dir.readersOfList(list.id).map((u) => esc(n.user(u))).join(', ')}${dir.attributeDefs(list.dataSourceId).length ? ` · 属性: ${dir.attributeDefs(list.dataSourceId).map((d) => esc(d.name)).join(', ')}` : ''}</p>
+<h1>${esc(ds?.name ?? list.dataSourceId)} <small>${esc(list.id)} · ${esc(ds?.channel ?? '')}</small></h1>
+<p class="muted">${esc(ds?.description ?? '')} 読者: ${dir.readersOfList(list.id).map((u) => esc(n.user(u))).join(', ')}</p>
 <div class="scroll"><table><thead><tr><th>スレッド</th><th>誰の番</th><th>結び</th><th>属性</th><th>状態</th><th>更新</th></tr></thead>
 <tbody>${rows || '<tr><td colspan="6">スレッドはまだない</td></tr>'}</tbody></table></div>`,
   );

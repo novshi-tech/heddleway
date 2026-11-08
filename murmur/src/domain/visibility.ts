@@ -1,6 +1,6 @@
 import type { Directory } from './directory';
-import type { AttributeDef, DataSource } from './entities';
-import type { AddressRef, AttributeValue, Author, MirrorFields } from './events';
+import type { DataSource } from './entities';
+import type { AddressRef, Author, MirrorFields } from './events';
 import { sortLog } from './comm';
 import type { Projections, SignalRecord, SourceState, Thread, ThreadLink, ThreadLogEntry } from './projections';
 import { commView, directionOf } from './sides';
@@ -10,9 +10,11 @@ import {
   derivedBall,
   isAwaiting,
   isMyTurn,
+  isTaskSource,
   isTriage,
   linkCandidates,
   linkedActiveSinceDismissed,
+  listKindOf,
   myTurnOf,
   replyStateOf,
   type Assignee,
@@ -24,20 +26,20 @@ import {
 import { canReadDataSource, type Viewer } from './viewer';
 
 // クエリ層の可視性。投影のスナップショットと Viewer から「見えるもの」だけを返す純関数。
-// - リストの読者には、そのデータソースのスレッドの生の中身が見える。個人のメモは本人だけ
-// - 持ち主とリンク（結び先の id）はスレッドの側にあるので、スレッドが見える人に見える。結び先の中身はその先の可視性に従う
+// - リストの読者には、そのデータソースのスレッドの生の中身と、そこに書いたメモが見える（メモを書けるのは個人リストだけ。0039）
+// - 持ち主はスレッドの側にあるので、スレッドが見える人に見える。リンクは両端を読める人にだけ見える（0033 の 3）
 // - Contact のない User は 0 件、ゴースト Contact は Viewer になれない
 
 /**
  * - my_turn: Viewer の番（自分が担当・自分への名指し・リスト宛ての名指しが残っている。0038）で、開いているもの
- * - mine: Viewer の個人のメモのスレッド（閉じたものも）
+ * - mine: Viewer のタスク（個人リストのタスクのサービスのスレッド。閉じたものも。0039）
  * - open: 開いているもの（片付けていない・ソースで完了していない）
  * - awaiting: 相手待ち（読者でないアドレスへの名指しが残っている）で、開いているもの
  * - overdue: 返事期待の期限を過ぎたもの
  * - triage: 仕分け待ち（共有リストで、開いていて、担当がいない）
  * - all: 全部
  *
- * since を渡せば、それより後に動いたものだけ（スレッド自身か、見えるリンク先の updatedAt。メモのスレッドの導出したボールはリンク先で変わるため）
+ * since を渡せば、それより後に動いたものだけ（スレッド自身か、見えるリンク先の updatedAt。タスクの導出したボールはリンク先で変わるため）
  */
 export type ThreadFilter = 'my_turn' | 'mine' | 'open' | 'awaiting' | 'overdue' | 'triage' | 'all';
 
@@ -65,7 +67,6 @@ export interface ThreadSummary {
   overdue: boolean;
   closedAtSource: boolean;
   links: ThreadLink[];
-  attributes: Record<string, AttributeValue>;
   source: SourceState | null;
   signalCount: number;
   updatedAt: string;
@@ -103,7 +104,6 @@ export function summarizeThread(dir: Directory, p: Projections, t: Thread): Thre
     ...replyStateOf(dir, t),
     closedAtSource: t.closedAtSource,
     links: t.links,
-    attributes: t.attributes,
     source: t.source,
     signalCount: t.signalIds.length,
     updatedAt: t.updatedAt,
@@ -150,10 +150,7 @@ export function listThreads(
     if (filter === 'awaiting' && !isAwaiting(dir, t)) continue;
     if (filter === 'overdue' && !replyStateOf(dir, t).overdue) continue;
     if (filter === 'my_turn' && !isMyTurn(dir, viewer, t)) continue;
-    if (filter === 'mine') {
-      const ds = dir.dataSource(t.dataSourceId);
-      if (ds?.kind !== 'notes' || ds.ownerUserId !== viewer.userId) continue;
-    }
+    if (filter === 'mine' && !(isTaskSource(dir.dataSource(t.dataSourceId)) && listKindOf(dir, t.dataSourceId) === 'personal')) continue;
     if (opts.since !== undefined && !movedSince(viewer, p, t, opts.since)) continue;
     out.push(threadItem(dir, viewer, p, t));
   }
@@ -177,7 +174,7 @@ function movedSince(viewer: Viewer, p: Projections, t: Thread, since: string): b
   return lastActivityAt(viewer, p, t) > since;
 }
 
-export type SignalView = { direction: 'inbound' | 'outbound'; author?: Author } & Pick<
+export type SignalView = { direction: 'inbound' | 'outbound' } & Pick<
   SignalRecord,
   'signalId' | 'channel' | 'from' | 'to' | 'subject' | 'body' | 'attachments' | 'anchors' | 'at' | 'threadedBy' | 'recorded'
 >;
@@ -196,8 +193,6 @@ function signalView(dir: Directory, s: SignalRecord): SignalView {
     at: s.at,
     threadedBy: s.threadedBy,
     recorded: s.recorded,
-    // 書き手の印より前のメモは本人が書いたもの
-    ...(s.channel === 'note' ? { author: s.author ?? { kind: 'user' as const } } : {}),
   };
 }
 
@@ -207,13 +202,13 @@ export interface TimelineEntry {
   threadId: string;
   kind: ThreadLogEntry['kind'];
   signal?: SignalView;
+  /** note: メモ（0039 の決定 2） */
+  note?: { noteId: string; body: string; author: Author };
   reason?: string;
   actorUserId?: string;
   userId?: string | null;
   otherThreadId?: string;
   route?: ThreadLogEntry['route'];
-  name?: string;
-  value?: AttributeValue | null;
   fields?: MirrorFields;
   replyExpectedBy?: string | null;
   /** acknowledged: 外したアドレス・リスト宛てか・どのシグナルまでか */
@@ -287,8 +282,7 @@ export function getThreadView(
       if (e.userId !== undefined) entry.userId = e.userId;
       if (e.otherThreadId !== undefined) entry.otherThreadId = e.otherThreadId;
       if (e.route !== undefined) entry.route = e.route;
-      if (e.name !== undefined) entry.name = e.name;
-      if (e.value !== undefined) entry.value = e.value;
+      if (e.kind === 'note') entry.note = { noteId: e.noteId!, body: e.body!, author: e.author ?? { kind: 'user' } };
       if (e.fields !== undefined) entry.fields = e.fields;
       if (e.kind === 'overdue' && e.replyExpectedBy !== undefined) entry.replyExpectedBy = e.replyExpectedBy;
       if (e.kind === 'acknowledged') {
@@ -300,7 +294,7 @@ export function getThreadView(
     });
   return {
     thread: threadItem(dir, viewer, p, t),
-    dataSource: { id: t.dataSourceId, name: ds?.name ?? t.dataSourceId, kind: ds?.kind ?? 'service', channel: ds?.kind === 'service' ? ds.channel : 'note' },
+    dataSource: { id: t.dataSourceId, name: ds?.name ?? t.dataSourceId, kind: ds?.kind ?? 'service', channel: ds?.channel ?? '' },
     linked,
     timeline,
   };
@@ -316,7 +310,6 @@ export interface ListView {
   dataSource: { id: string; kind: DataSource['kind']; name: string; description: string; channel: string };
   /** 読者（User）と、その Contact（あれば） */
   readers: { userId: string; name: string; contactId: string | null }[];
-  attributeDefs: AttributeDef[];
 }
 
 /** 見えるリストの一覧（list_lists） */
@@ -330,11 +323,10 @@ export function getListView(dir: Directory, viewer: Viewer, listId: string): Lis
   if (!list || !ds || !canReadDataSource(viewer, ds.id)) return null;
   return {
     id: list.id,
-    dataSource: { id: ds.id, kind: ds.kind, name: ds.name, description: ds.description, channel: ds.kind === 'service' ? ds.channel : 'note' },
+    dataSource: { id: ds.id, kind: ds.kind, name: ds.name, description: ds.description, channel: ds.channel },
     readers: dir.readersOfList(list.id).map((u) => {
       const c = dir.contactOfUser(u);
       return { userId: u, name: c?.name ?? dir.user(u)?.name ?? u, contactId: c?.id ?? null };
     }),
-    attributeDefs: dir.attributeDefs(ds.id),
   };
 }

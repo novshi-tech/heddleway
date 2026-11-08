@@ -17,10 +17,8 @@ export const ListThreadsQuery = z.object({
 export const GetThreadQuery = z.object({ since: Instant.optional() });
 
 export const AddNoteBody = z.object({
-  /** 足す先の自分のメモのスレッド。省略すれば新しいスレッド（「この件」） */
-  thread_id: z.string().optional(),
-  /** 新しいスレッドの件名。省略すれば本文の最初の行 */
-  title: z.string().min(1).optional(),
+  /** メモを書くスレッド。個人リスト（読者が本人 1 人）のスレッドだけ（0039 の決定 2）。新しく追うものは、タスクのサービスにタスクを作る */
+  thread_id: z.string().min(1),
   body: z.string().min(1),
   /** 書き手。省略すれば本人（user）。エージェント自身が書いたものは {kind:'agent', name}（0031 の 3） */
   author: Author.optional(),
@@ -54,7 +52,7 @@ export const AcknowledgeManyBody = z.object({ thread_ids: z.array(z.string().min
 export const RecordSentBody = z
   .object({
     data_source: z.string(),
-    /** 宛先のアドレス（チャネルはデータソースのもの） */
+    /** 宛先のアドレス（チャネルはデータソースのもの）。to か to_contact_ids のどちらかが要る（タスクのサービスでタスクを作った記録だけ要らない。0039） */
     to: z.array(z.string()).default([]),
     to_contact_ids: z.array(z.string()).default([]),
     /** 送ったアドレス（Jira・Slack の自分のアカウントなど）。省けばデータソースの窓口、窓口がなければ自分の Contact のアドレス */
@@ -77,10 +75,7 @@ export const RecordSentBody = z
     reply_expected_by: Instant.optional(),
     /** 送ったスレッドの、送る前までの自分への名指しを一緒に外す（0038） */
     acknowledge: z.boolean().optional(),
-  })
-  .refine((b) => b.to.length + b.to_contact_ids.length > 0, { message: 'to か to_contact_ids のどちらかが要る' });
-
-export const SetAttributeBody = z.object({ name: z.string(), value: z.unknown() });
+  });
 
 // ---- User と Contact（0030 の 6〜9） ----
 
@@ -88,7 +83,8 @@ export const RenameBody = z.object({ name: z.string().min(1) });
 
 /** 個人のリスト。スタンドはゲートウェイで目的のサービスがつながっているかを確かめてから作る */
 export const CreateDataSourceBody = z.object({
-  channel: Channel.exclude(['note']),
+  /** タスクのサービス（todo）は POST /connections/todo でつなぐ（経路のないタスクのリストは写しが来ない。0039） */
+  channel: Channel.exclude(['todo']),
   name: z.string().min(1),
   description: z.string().optional(),
   /** そのリストでの自分のアイデンティティ（つないだアカウントのアドレス） */
@@ -163,6 +159,12 @@ export const ConnectTeamsBody = z.object({
   credential_id: z.string().min(1).optional(),
   team: z.string().min(1).optional(),
   channel: z.string().min(1).optional(),
+});
+
+/** To Do のタスクのリストを個人リストとしてつなぐ（0039）。list を省くと一覧（choose_list）を返す */
+export const ConnectTodoBody = z.object({
+  credential_id: z.string().min(1).optional(),
+  list: z.string().min(1).optional(),
 });
 
 /** Jira のプロジェクトを共有リストとしてつなぐ（0037）。project を省くと一覧（choose_project）を返す */

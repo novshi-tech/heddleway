@@ -21,7 +21,7 @@ describe('MurmurService.ingest', () => {
 
   it('H3 データソースのない取り込みは invalid', async () => {
     const { service } = await makeService(seed);
-    await expect(service.ingest(email({ dataSourceId: 'ds_notes_alice', from: 'a@x', sourceRef: 'r' }))).rejects.toMatchObject({ code: 'invalid' });
+    await expect(service.ingest(email({ dataSourceId: 'ds_nope', from: 'a@x', sourceRef: 'r' }))).rejects.toMatchObject({ code: 'invalid' });
   });
 });
 
@@ -72,7 +72,7 @@ describe('スタンドの操作', () => {
     expect(me.lists.map((l) => [l.id, l.dataSourceId, l.kind])).toEqual([
       ['l_support', 'ds_support', 'service'],
       ['l_alice', 'ds_alice', 'service'],
-      ['l_notes_alice', 'ds_notes_alice', 'notes'],
+      ['l_tasks_alice', 'ds_tasks_alice', 'service'],
     ]);
     // このデプロイに Contact のない User は contact が null
     expect((await service.me('u_mallory')).contact).toBeNull();

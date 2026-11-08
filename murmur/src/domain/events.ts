@@ -35,13 +35,8 @@ export const Direction = z.enum(['inbound', 'outbound']);
 export type Direction = z.infer<typeof Direction>;
 
 /**
- * データソースで観測されたシグナル（0014 の 5）。受信も、ツール外で行われた送信も同じ種別。
- * イベントはアドレスだけを持ち、向き（こちらからか）と Contact はクエリ層がそのときのマスタで決める（0030）。
- * 古いイベントに残る direction・fromPartyId・toPartyIds は読まない
- */
-/**
- * 個人のメモの書き手（0031 の 3・0032）。user は人の言葉（スタンドが中継したものを含む）、agent はエージェント自身が書いたもの。
- * スタンドの自己申告で、誰の番・ボール・可視性には使わない
+ * メモの書き手（0031 の 3・0032）。user は人の言葉（スタンドが中継したものを含む）、agent はエージェント自身が書いたもの。
+ * スタンドの自己申告で、誰の番・名指し・担当・可視性には使わない
  */
 export const Author = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('user') }),
@@ -49,6 +44,11 @@ export const Author = z.discriminatedUnion('kind', [
 ]);
 export type Author = z.infer<typeof Author>;
 
+/**
+ * データソースで観測されたシグナル（0014 の 5）。受信も、ツール外で行われた送信も同じ種別。
+ * イベントはアドレスだけを持ち、向き（こちらからか）と Contact はクエリ層がそのときのマスタで決める（0030）。
+ * 古いイベントに残る direction・fromPartyId・toPartyIds は読まない
+ */
 export const SignalObserved = z.object({
   signalId: z.string(),
   dataSourceId: z.string(),
@@ -61,8 +61,6 @@ export const SignalObserved = z.object({
   attachments: z.array(FileRef).default([]),
   /** データソースごとの重複排除キー */
   sourceRef: z.string(),
-  /** 書き手（個人のメモだけ） */
-  author: Author.optional(),
 });
 
 export const ThreadChoice = z.discriminatedUnion('kind', [
@@ -78,7 +76,7 @@ export type ThreadChoice = z.infer<typeof ThreadChoice>;
  * - no_match: どの規則にも当たらず、候補もない → 新しいスレッド
  * - ai: 直近のスレッドから AI が話題の続きかを判断した
  * - human: 人の訂正（シグナルの移し替え）
- * - self: 本人が置き先を指定した（個人のメモ、送信の記録）
+ * - self: 本人が置き先を指定した（送信の記録）
  */
 export const ThreadedBy = z.enum(['anchor', 'awaiting', 'no_match', 'ai', 'human', 'self']);
 export type ThreadedBy = z.infer<typeof ThreadedBy>;
@@ -136,14 +134,15 @@ export const ThreadLinked = z.object({
   reason: z.string().optional(),
 });
 
-export const AttributeValue = z.union([z.string(), z.number(), z.boolean()]);
-export type AttributeValue = z.infer<typeof AttributeValue>;
-
-/** 本人が付ける属性の値（定義は個人のメモのデータソースの AttributeDef）。value が null なら外す。外のサービスのスレッドには付けない（0031） */
-export const ThreadAttributeSet = z.object({
+/**
+ * メモ（経過の記録。0039 の決定 2）。人とスタンドがスレッドにする操作の 1 つで、正は Murmur にある。データソースのシグナルではない。
+ * 書けるのは個人リスト（読者が本人 1 人）のスレッドだけ（コマンドが確かめる）。名指しも担当も動かさない
+ */
+export const ThreadNoted = z.object({
+  noteId: z.string(),
   threadId: z.string(),
-  name: z.string(),
-  value: AttributeValue.nullable(),
+  body: z.string().min(1),
+  author: Author.default({ kind: 'user' }),
   actorUserId: z.string(),
 });
 
@@ -225,7 +224,7 @@ export const EventPayloads = {
   ThreadReopened,
   ThreadClaimed,
   ThreadLinked,
-  ThreadAttributeSet,
+  ThreadNoted,
   ThreadMirrored,
   OutboundRecorded,
   ReplyOverdue,

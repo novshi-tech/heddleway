@@ -30,7 +30,7 @@ const dismissed = (h: number): ThreadLogEntry => ({ seq: ++seq, at: at(h), kind:
 const reopened = (h: number): ThreadLogEntry => ({ seq: ++seq, at: at(h), kind: 'reopened' });
 const claimed = (h: number, userId: string | null): ThreadLogEntry => ({ seq: ++seq, at: at(h), kind: 'claimed', userId });
 const overdue = (h: number, signalId: string): ThreadLogEntry => ({ seq: ++seq, at: at(h), kind: 'overdue', signalId, replyExpectedBy: at(h - 1) });
-const other = (h: number, kind: 'note' | 'linked' | 'attribute'): ThreadLogEntry => ({ seq: ++seq, at: at(h), kind });
+const other = (h: number, kind: 'note' | 'linked'): ThreadLogEntry => ({ seq: ++seq, at: at(h), kind });
 
 /** 名指しが残っているアドレスの値 */
 const pending = (s: CommState) => s.attention.named.filter((n) => isPending(n)).map((n) => n.address.value);
@@ -114,7 +114,7 @@ describe('deriveComm（H2・H8・0038）', () => {
   });
 
   it('H2 メモ・リンク・属性は名指しを作らない', () => {
-    const s = deriveComm([other(9, 'note'), other(10, 'linked'), other(11, 'attribute')]);
+    const s = deriveComm([other(9, 'note'), other(10, 'linked')]);
     expect(s.attention).toEqual({ named: [], broadcasts: [], listAcks: {} });
   });
 });

@@ -32,6 +32,8 @@ const GRAPH_SCOPE = [
   "ChannelMember.Read.All",
   "Team.ReadBasic.All",
   "Channel.ReadBasic.All",
+  // To Do: Murmur reads a task list as a personal list, and the stand creates and updates tasks (Murmur's 0039).
+  "Tasks.ReadWrite",
 ].join(" ");
 
 // User token scopes: reading conversations and people, searching, and writing as the user.

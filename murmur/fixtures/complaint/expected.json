@@ -26,13 +26,13 @@
       ]
     },
     {
-      "after": "a04",
+      "after": "a03",
       "threads": {
         "$noteThread": {
-          "dataSourceId": "ds_notes_sato",
+          "dataSourceId": "ds_tasks_sato",
           "title": "田中ビル エントランス床のクレーム",
           "signalCount": 1,
-          "links": { "$compThread": "manual" },
+          "links": { "$compThread": "sent" },
           "assignee": null,
           "named": [],
           "listReaders": [],
@@ -147,7 +147,7 @@
     { "after": "a01", "threads": { "$compThread": { "dismissed": true, "activeSinceDismissed": false } } },
     {
       "after": "a07",
-      "threads": { "$noteThread": { "dismissed": true, "assignee": null, "named": [], "listReaders": [], "triage": false, "awaiting": false } },
+      "threads": { "$noteThread": { "dismissed": false, "closedAtSource": true, "assignee": null, "named": [], "listReaders": [], "triage": false, "awaiting": false } },
       "views": [{ "as": "u_sato", "thread": "$noteThread", "access": "full", "item": { "linkedActiveSinceDismissed": false } }]
     },
     {
@@ -163,10 +163,10 @@
           "triage": false,
           "awaiting": false
         },
-        "$noteThread": { "dismissed": true, "assignee": null, "named": [], "listReaders": [], "triage": false, "awaiting": false }
+        "$noteThread": { "dismissed": false, "closedAtSource": true, "assignee": null, "named": [], "listReaders": [], "triage": false, "awaiting": false }
       },
       "views": [
-        { "as": "u_sato", "thread": "$noteThread", "access": "full", "item": { "dismissed": true, "linkedActiveSinceDismissed": true } },
+        { "as": "u_sato", "thread": "$noteThread", "access": "full", "item": { "closedAtSource": true, "linkedActiveSinceDismissed": true } },
         { "as": "u_sato", "threads": { "filter": "mine" }, "expect": ["$noteThread"] }
       ]
     }
@@ -178,7 +178,7 @@
         "activeSinceDismissed": false,
         "counterpartContactIds": ["p_tanaka"],
         "signalCount": 4,
-        "links": { "$noteThread": "manual", "$partnerThread": "sent" },
+        "links": { "$noteThread": "sent", "$partnerThread": "sent" },
         "replyExpectedBy": null,
         "assignee": { "addresses": [], "by": "claim", "contactIds": [], "userIds": ["u_sato"] },
         "named": [],
@@ -209,12 +209,12 @@
         "awaiting": false
       },
       "$noteThread": {
-        "dataSourceId": "ds_notes_sato",
-        "dismissed": true,
+        "dataSourceId": "ds_tasks_sato",
+        "dismissed": false,
+        "closedAtSource": true,
         "signalCount": 1,
         "counterpartContactIds": [],
-        "attributes": { "priority": "高" },
-        "links": { "$compThread": "manual", "$partnerThread": "manual" },
+        "links": { "$compThread": "sent", "$partnerThread": "manual" },
         "assignee": null,
         "named": [],
         "listReaders": [],
@@ -224,14 +224,15 @@
     },
     "threadCount": 4,
     "eventCounts": {
-      "SignalObserved": 7,
+      "SignalObserved": 6,
       "SignalThreaded": 9,
-      "ThreadDismissed": 2,
+      "ThreadDismissed": 1,
       "ThreadClaimed": 1,
       "ThreadLinked": 3,
-      "ThreadAttributeSet": 1,
+      "ThreadNoted": 1,
+      "ThreadMirrored": 1,
       "ThreadReopened": 0,
-      "OutboundRecorded": 2,
+      "OutboundRecorded": 3,
       "ReplyOverdue": 1
     }
   },
@@ -257,7 +258,7 @@
       "as": "u_sato",
       "thread": "$noteThread",
       "access": "full",
-      "item": { "dismissed": true, "linkedActiveSinceDismissed": false, "derivedBall": { "kind": "none" } }
+      "item": { "closedAtSource": true, "linkedActiveSinceDismissed": false, "derivedBall": { "kind": "none" } }
     },
     { "as": "u_suzuki", "threads": { "filter": "mine" }, "expect": [] },
     { "as": "u_nvt", "thread": "$noteThread", "access": null }

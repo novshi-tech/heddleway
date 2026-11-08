@@ -1,6 +1,6 @@
 ---
 name: microsoft-graph
-description: Microsoft Graph API(Microsoft 365)を API ゲートウェイ経由で操作する。Outlook メールの検索・取得・送信・返信と添付ファイルの保存、OneDrive / SharePoint のファイル検索・一覧・ダウンロード・アップロード、Teams のチャネルとチャットのメッセージ、予定表の予定の確認・作成・更新・招待への応答を扱う。「メールを検索して」「添付の PDF を保存して」「SharePoint から請求書を探して」「OneDrive にアップロードして」「Teams に投稿して」「今週の予定を確認して」「会議を入れて」などの依頼で使う。
+description: Microsoft Graph API(Microsoft 365)を API ゲートウェイ経由で操作する。Outlook メールの検索・取得・送信・返信と添付ファイルの保存、OneDrive / SharePoint のファイル検索・一覧・ダウンロード・アップロード、Teams のチャネルとチャットのメッセージ、予定表の予定の確認・作成・更新・招待への応答、To Do のタスクの確認・作成・更新・完了を扱う。「メールを検索して」「添付の PDF を保存して」「SharePoint から請求書を探して」「OneDrive にアップロードして」「Teams に投稿して」「今週の予定を確認して」「会議を入れて」「To Do にタスクを作って」「タスクを完了にして」などの依頼で使う。
 ---
 
 # Microsoft Graph API
@@ -39,19 +39,20 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/graph_all.py /v1.0/me/mailFolders/inbox/mess
 | メールの検索・取得・送信・返信、添付ファイル | [references/mail.md](references/mail.md) |
 | OneDrive / SharePoint のファイル検索・一覧・ダウンロード・アップロード・共有 | [references/files.md](references/files.md) |
 | 予定表の予定、招待への応答 | [references/calendar.md](references/calendar.md) |
+| To Do のタスクのリスト・タスクの作成・更新・完了 | [references/todo.md](references/todo.md) |
 | Teams のチャネル・チャットのメッセージ | [references/teams.md](references/teams.md) |
 | ページング、OData クエリ、エラー、スロットリング、`$batch` | [references/common.md](references/common.md) |
 
 ## 権限
 
-ゲートウェイの `graph` には、次の委任アクセス許可が付いている: Files.ReadWrite.All、Sites.ReadWrite.All、Mail.ReadWrite、Mail.Send、Calendars.ReadWrite、Chat.ReadWrite、ChannelMessage.Send、ChannelMessage.Read.All、ChannelMember.Read.All、Team.ReadBasic.All、Channel.ReadBasic.All、User.Read。
+ゲートウェイの `graph` には、次の委任アクセス許可が付いている: Files.ReadWrite.All、Sites.ReadWrite.All、Mail.ReadWrite、Mail.Send、Calendars.ReadWrite、Chat.ReadWrite、ChannelMessage.Send、ChannelMessage.Read.All、ChannelMember.Read.All、Team.ReadBasic.All、Channel.ReadBasic.All、Tasks.ReadWrite、User.Read。
 
-- To Do(Tasks)、Planner、連絡先、ユーザーやグループの管理などは、この範囲にないので使えない。頼まれたら、使えないことを伝える。
+- Planner、連絡先、ユーザーやグループの管理などは、この範囲にないので使えない。頼まれたら、使えないことを伝える。
 - 権限の範囲内でも、テナントの設定やファイル・チャネルの権限で 403(`ErrorAccessDenied`、`accessDenied` など)になることがある。
 
 ## 制限と注意
 
 - スロットリングは 429 と `Retry-After`(秒)で返る。固定の上限はないので、待ってから再試行する。大量の取得は `graph_all.py` を使い、結果をファイルに保存して使い回す。
 - ゲートウェイ自身のエラーは `{"error": "..."}`、Graph のエラーは `{"error": {"code": "...", "message": "..."}}` の形。見分け方は [references/common.md](references/common.md)。
-- メールの送信・返信、Teams への投稿、予定の作成・変更・削除(参加者に通知が飛ぶ)、ファイルの上書き・削除・共有は、実行前に宛先と内容をユーザーに確認する。
+- メールの送信・返信、Teams への投稿、予定の作成・変更・削除(参加者に通知が飛ぶ)、To Do のタスクの完了・削除、ファイルの上書き・削除・共有は、実行前に宛先と内容をユーザーに確認する。
 - ファイルやメールの本文・添付を会話に貼らない。スクリプトでファイルに保存し、必要な部分だけ読む。

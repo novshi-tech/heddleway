@@ -17,16 +17,12 @@
     { "id": "c_oa", "principal": { "kind": "team" }, "address": { "channel": "line", "value": "@ubs-clean" } }
   ],
   "dataSources": [
-    { "kind": "service", "id": "ds_line_oa", "channel": "line", "name": "LINE 公式アカウント @ubs-clean", "description": "清掃スタッフとの 1:1 のやりとり（勤怠の連絡、代務の打診など）", "credentialRefId": "c_oa", "selfAddresses": [{ "channel": "line", "value": "@ubs-clean" }] },
-    { "kind": "notes", "id": "ds_notes_kimura", "name": "木村のメモ", "ownerUserId": "u_kimura" }
+    { "kind": "service", "id": "ds_line_oa", "channel": "line", "name": "LINE 公式アカウント @ubs-clean", "description": "清掃スタッフとの 1:1 のやりとり（勤怠の連絡、代務の打診など）", "credentialRefId": "c_oa", "selfAddresses": [{ "channel": "line", "value": "@ubs-clean" }] }
   ],
   "lists": [
-    { "id": "l_line_oa", "dataSourceId": "ds_line_oa" },
-    { "id": "l_notes_kimura", "dataSourceId": "ds_notes_kimura" }
+    { "id": "l_line_oa", "dataSourceId": "ds_line_oa" }
   ],
   "listMembers": [
-    { "listId": "l_line_oa", "userId": "u_kimura" },
-    { "listId": "l_notes_kimura", "userId": "u_kimura" }
-  ],
-  "attributeDefs": []
+    { "listId": "l_line_oa", "userId": "u_kimura" }
+  ]
 }

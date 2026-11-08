@@ -17,7 +17,7 @@ import {
   planOverdue,
   recordSent,
 } from '../../src/domain';
-import { alice, answer, bob, dir, email, EventLog, ingestPure, line, makeCtx, view } from '../helpers/world';
+import { alice, answer, bob, dir, email, EventLog, ingestPure, line, makeCtx, task, updateTask, view } from '../helpers/world';
 
 // クエリ層の「誰の番か」・リンク先から導出したボール・結び候補・タイムライン（H2・H8）
 
@@ -78,7 +78,7 @@ describe('誰の番か（担当と名指し。0038）', () => {
     const p = log.state();
     expect(isAwaiting(dir, p.threads[shared]!)).toBe(true);
     expect(listThreads(dir, alice, p, { filter: 'awaiting' }).map((t) => t.id)).toEqual([shared]);
-    log.push(dismissThread(p, alice, { threadId: shared, reason: 'x' }), '2026-10-16T10:00:00.000Z');
+    log.push(dismissThread(p, alice, dir, { threadId: shared, reason: 'x' }), '2026-10-16T10:00:00.000Z');
     const q = log.state();
     expect([isAwaiting(dir, q.threads[shared]!), isTriage(dir, q.threads[shared]!), myTurnOf(dir, bob, q.threads[shared]!)]).toEqual([false, false, []]);
   });
@@ -98,30 +98,30 @@ describe('誰の番か（担当と名指し。0038）', () => {
 describe('一覧の並び（lastActivityAt）', () => {
   it('H2 一覧は自分か見える結んだ先の最新の更新の降順。結んだ先が動けば、メモにだれも書く前でもタスクが上に来る（0031 の 5）', () => {
     const { log, ctx, shared } = world();
-    const task = addNote(log.state(), alice, ctx, { title: '雨漏りの対応', body: '着手する' });
-    log.push(task.events, '2026-10-16T10:00:00.000Z');
-    log.push(linkThreads(log.state(), alice, { threadId: task.threadId, otherThreadId: shared }), '2026-10-16T10:01:00.000Z');
-    const other = addNote(log.state(), alice, ctx, { title: '別の件', body: 'メモ' });
-    log.push(other.events, '2026-10-16T11:00:00.000Z');
+    ctx.setNow('2026-10-16T10:00:00.000Z');
+    const t = task(log, ctx, '雨漏りの対応');
+    log.push(linkThreads(log.state(), alice, { threadId: t, otherThreadId: shared }), '2026-10-16T10:01:00.000Z');
+    ctx.setNow('2026-10-16T11:00:00.000Z');
+    const other = task(log, ctx, '別の件');
     const mine = () => listThreads(dir, alice, log.state(), { filter: 'mine' });
-    expect(mine().map((t) => t.id)).toEqual([other.threadId, task.threadId]);
+    expect(mine().map((x) => x.id)).toEqual([other, t]);
     // 結んだ先（support@ のスレッド）に返事が来る
     ctx.setNow('2026-10-16T12:00:00.000Z');
     ingestPure(log, ctx, email({ from: 'carol@example.com', sourceRef: 'r9', anchors: { inReplyTo: '<m1>' } }), () => answer({}));
-    expect(mine().map((t) => t.id)).toEqual([task.threadId, other.threadId]);
+    expect(mine().map((x) => x.id)).toEqual([t, other]);
     expect(mine()[0]).toMatchObject({ updatedAt: '2026-10-16T10:01:00.000Z', lastActivityAt: '2026-10-16T12:00:00.000Z' });
-    // 見えない結んだ先は数えない（Bob から見た Bob のメモ）
-    const bobs = addNote(log.state(), bob, ctx, { body: 'Bob の件' });
-    log.push(bobs.events, '2026-10-16T09:00:00.000Z');
-    expect(listThreads(dir, bob, log.state(), { filter: 'mine' })[0]!.lastActivityAt).toBe('2026-10-16T09:00:00.000Z');
+    // mine はタスクだけ（support@ のスレッドや本人の箱のメールは入らない）。Bob のタスクは Bob にだけ
+    ctx.setNow('2026-10-16T13:00:00.000Z');
+    const bobs = task(log, ctx, 'Bob の件', { dataSourceId: 'ds_tasks_bob' });
+    expect(listThreads(dir, bob, log.state(), { filter: 'mine' }).map((x) => x.id)).toEqual([bobs]);
+    expect(mine().map((x) => x.id)).not.toContain(bobs);
   });
 });
 
 describe('リンク先から導出したボール（derivedBall）', () => {
-  it('H2 メモのスレッドのボールは、見えるリンク先から決まる（どれかが自分の番 → my_turn、全部相手待ち → waiting）', () => {
+  it('H2 タスクのボールは、見えるリンク先から決まる（どれかが自分の番 → my_turn、全部相手待ち → waiting）', () => {
     const { log, ctx, shared, addressed } = world();
-    const n = addNote(log.state(), alice, ctx, { body: '雨漏りの件' });
-    log.push(n.events, '2026-10-16T10:00:00.000Z');
+    const n = { threadId: task(log, ctx, '雨漏りの件') };
     expect(derivedBall(dir, alice, log.state(), log.state().threads[n.threadId]!)).toBeNull();
 
     log.push(acknowledgeAttention(log.state(), alice, dir, { threadId: shared }), '2026-10-16T10:00:30.000Z');
@@ -137,23 +137,26 @@ describe('リンク先から導出したボール（derivedBall）', () => {
     log.push(acknowledgeAttention(log.state(), alice, dir, { threadId: addressed }), '2026-10-16T11:01:00.000Z');
     const p = log.state();
     expect(derivedBall(dir, alice, p, p.threads[n.threadId]!)).toEqual({ kind: 'waiting', threadIds: [addressed, shared].sort() });
-    // メモのスレッド自身の名指しは動かない（本人の側の状態を Murmur は変えない）
+    // タスク自身の名指しは動かない（本人の側の状態を Murmur は変えない）
     expect(p.threads[n.threadId]!.attention.named).toEqual([]);
   });
 
-  it('H2 閉じたメモのスレッドに結ばれた先が動いても開き直さず、linkedActiveSinceDismissed で知らせるだけ', () => {
+  it('H2 ソースで完了したタスクに結ばれた先が動いても開き直さず、linkedActiveSinceDismissed で知らせるだけ（0039）', () => {
     const { log, ctx, shared } = world();
-    const n = addNote(log.state(), alice, ctx, { body: '件' });
-    log.push(n.events, '2026-10-16T10:00:00.000Z');
+    const n = { threadId: task(log, ctx, '件') };
     log.push(linkThreads(log.state(), alice, { threadId: n.threadId, otherThreadId: shared }), '2026-10-16T10:01:00.000Z');
-    log.push(dismissThread(log.state(), alice, { threadId: n.threadId, reason: '済み' }), '2026-10-16T10:02:00.000Z');
+    ctx.setNow('2026-10-16T10:02:00.000Z');
+    updateTask(log, ctx, 'task:件', { closed: true });
     let view = getThreadView(dir, alice, log.state(), n.threadId)!;
-    expect(view.thread).toMatchObject({ dismissed: true, linkedActiveSinceDismissed: false });
+    expect(view.thread).toMatchObject({ closedAtSource: true, linkedActiveSinceDismissed: false });
     ctx.setNow('2026-10-16T12:00:00.000Z');
     ingestPure(log, ctx, email({ from: 'carol@example.com', sourceRef: 'r9', anchors: { inReplyTo: '<m1>' } }), () => answer({ thread: null }));
     view = getThreadView(dir, alice, log.state(), n.threadId)!;
-    expect(view.thread).toMatchObject({ dismissed: true, linkedActiveSinceDismissed: true });
-    expect(log.events.filter((e) => e.type === 'ThreadReopened')).toEqual([]);
+    expect(view.thread).toMatchObject({ closedAtSource: true, linkedActiveSinceDismissed: true });
+    expect(log.events.filter((e) => e.type === 'ThreadMirrored' && e.payload.fields.closed === false)).toEqual([]);
+    // ソースで開き直せば消える
+    updateTask(log, ctx, 'task:件', { closed: false });
+    expect(getThreadView(dir, alice, log.state(), n.threadId)!.thread).toMatchObject({ closedAtSource: false, linkedActiveSinceDismissed: false });
   });
 });
 
@@ -203,18 +206,21 @@ describe('リンクの可視性（0033）', () => {
 describe('タイムライン（getThreadView）', () => {
   it('H2 自分のスレッドの綴じたものと、見えるリンク先のシグナルを時刻順に並べる。since で差分に絞る。見えない先へのリンクは、あることも出さない（0033）', () => {
     const { log, ctx, shared } = world();
-    const n = addNote(log.state(), alice, ctx, { body: '電話で聞いた' });
-    log.push(n.events, '2026-10-16T10:00:00.000Z');
+    ctx.setNow('2026-10-16T09:30:00.000Z');
+    const n = { threadId: task(log, ctx, '雨漏り') };
+    log.push(addNote(log.state(), alice, ctx, { threadId: n.threadId, body: '電話で聞いた' }).events, '2026-10-16T10:00:00.000Z');
     log.push(linkThreads(log.state(), alice, { threadId: n.threadId, otherThreadId: shared }), '2026-10-16T10:01:00.000Z');
-    log.push([draft('ThreadAttributeSet', { threadId: n.threadId, name: 'status', value: 'todo', actorUserId: 'u_alice' })], '2026-10-16T10:02:00.000Z');
+    ctx.setNow('2026-10-16T10:02:00.000Z');
+    updateTask(log, ctx, 'task:雨漏り', { due: '2026-10-20' });
     const view = getThreadView(dir, alice, log.state(), n.threadId)!;
     expect(view.timeline.map((e) => [e.kind, e.threadId])).toEqual([
       ['signal', shared],
+      ['mirrored', n.threadId],
       ['note', n.threadId],
       ['linked', n.threadId],
-      ['attribute', n.threadId],
+      ['mirrored', n.threadId],
     ]);
-    expect(getThreadView(dir, alice, log.state(), n.threadId, { since: '2026-10-16T10:00:30.000Z' })!.timeline.map((e) => e.kind)).toEqual(['linked', 'attribute']);
+    expect(getThreadView(dir, alice, log.state(), n.threadId, { since: '2026-10-16T10:00:30.000Z' })!.timeline.map((e) => e.kind)).toEqual(['linked', 'mirrored']);
 
     const bobView = getThreadView(dir, bob, log.state(), shared)!;
     expect(bobView.linked).toEqual([]);
@@ -225,7 +231,7 @@ describe('タイムライン（getThreadView）', () => {
     expect(JSON.stringify(bobView)).not.toContain('電話で聞いた');
     // Alice には両端が見える
     const aliceView = getThreadView(dir, alice, log.state(), shared)!;
-    expect(aliceView.linked).toEqual([expect.objectContaining({ threadId: n.threadId, visible: true, dataSourceId: 'ds_notes_alice' })]);
+    expect(aliceView.linked).toEqual([expect.objectContaining({ threadId: n.threadId, visible: true, dataSourceId: 'ds_tasks_alice' })]);
     expect(aliceView.timeline.map((e) => e.kind)).toContain('linked');
     expect(getThreadView(dir, bob, log.state(), n.threadId)).toBeNull();
   });

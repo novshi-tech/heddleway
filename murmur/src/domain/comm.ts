@@ -28,6 +28,7 @@ export function deriveComm(entries: readonly ThreadLogEntry[]): CommState {
     replyExpectedSignalId: null,
     overdue: false,
     closedAtSource: false,
+    closedAtSourceAt: null,
   };
   const sorted = sortLog(entries);
   const named = new Map<string, Naming>();
@@ -83,12 +84,14 @@ export function deriveComm(entries: readonly ThreadLogEntry[]): CommState {
         if (e.signalId !== undefined && e.signalId === state.replyExpectedSignalId) overdueSignalId = e.signalId;
         break;
       case 'mirrored':
-        if (e.fields?.closed !== undefined) state.closedAtSource = e.fields.closed;
+        if (e.fields?.closed !== undefined && e.fields.closed !== state.closedAtSource) {
+          state.closedAtSource = e.fields.closed;
+          state.closedAtSourceAt = e.fields.closed ? e.at : null;
+        }
         break;
       case 'note':
       case 'linked':
       case 'unlinked':
-      case 'attribute':
         break;
     }
   }

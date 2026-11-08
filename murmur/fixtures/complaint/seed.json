@@ -15,25 +15,20 @@
     { "id": "a_cleanco", "channel": "email", "value": "ops@clean-toto.example", "contactId": "p_cleanco" }
   ],
   "credentialRefs": [
-    { "id": "c_support", "principal": { "kind": "team" }, "address": { "channel": "email", "value": "support@ubs.example" } }
+    { "id": "c_support", "principal": { "kind": "team" }, "address": { "channel": "email", "value": "support@ubs.example" } },
+    { "id": "c_tasks_sato", "principal": { "kind": "user", "userId": "u_sato" }, "address": { "channel": "todo", "value": "sato@ubs.example" } }
   ],
   "dataSources": [
     { "kind": "service", "id": "ds_support", "channel": "email", "name": "support@（組織のメールボックス）", "description": "顧客と協力会社とのやりとりの窓口", "credentialRefId": "c_support", "selfAddresses": [{ "channel": "email", "value": "support@ubs.example" }] },
-    { "kind": "notes", "id": "ds_notes_sato", "name": "佐藤のメモ", "ownerUserId": "u_sato" },
-    { "kind": "notes", "id": "ds_notes_suzuki", "name": "鈴木のメモ", "ownerUserId": "u_suzuki" }
+    { "kind": "service", "id": "ds_tasks_sato", "channel": "todo", "name": "佐藤のタスク（To Do）", "description": "佐藤が組織のアカウントの To Do で追うタスク", "credentialRefId": "c_tasks_sato", "selfAddresses": [{ "channel": "todo", "value": "sato@ubs.example" }] }
   ],
   "lists": [
     { "id": "l_support", "dataSourceId": "ds_support" },
-    { "id": "l_notes_sato", "dataSourceId": "ds_notes_sato" },
-    { "id": "l_notes_suzuki", "dataSourceId": "ds_notes_suzuki" }
+    { "id": "l_tasks_sato", "dataSourceId": "ds_tasks_sato" }
   ],
   "listMembers": [
     { "listId": "l_support", "userId": "u_sato" },
     { "listId": "l_support", "userId": "u_suzuki" },
-    { "listId": "l_notes_sato", "userId": "u_sato" },
-    { "listId": "l_notes_suzuki", "userId": "u_suzuki" }
-  ],
-  "attributeDefs": [
-    { "dataSourceId": "ds_notes_sato", "name": "priority", "type": "enum", "options": ["高", "中", "低"], "description": "件の優先度。本人が付ける" }
+    { "listId": "l_tasks_sato", "userId": "u_sato" }
   ]
 }

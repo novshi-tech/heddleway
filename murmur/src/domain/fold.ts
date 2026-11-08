@@ -24,10 +24,10 @@ export class FoldError extends Error {}
 
 /**
  * 保存された投影の形が今の fold と違うか（作り直しが要るか）。投影はいつでもイベントから作り直せる（H1）。
- * 0038 で、スレッドに名指し（attention）を足し、ボールをやめた
+ * 0038 で、スレッドに名指し（attention）を足し、ボールをやめた。0039 で、本人が付ける属性（attributes）をやめた
  */
 export function isStaleProjections(p: Projections): boolean {
-  return Object.values(p.threads).some((t) => (t as Partial<Thread>).attention === undefined);
+  return Object.values(p.threads).some((t) => (t as Partial<Thread>).attention === undefined || 'attributes' in t);
 }
 
 /** fold の途中で書き換えたもの。スレッドは recompute、シグナルは addSignal・置き先・記録の統合で書き換わる */
@@ -114,12 +114,10 @@ function apply(s: Projections, e: DomainEvent, c: Changes): void {
       recompute(s, t, e.at, c);
       return;
     }
-    case 'ThreadAttributeSet': {
+    case 'ThreadNoted': {
       const p = e.payload;
       const t = mustThread(s, p.threadId);
-      if (p.value === null) delete t.attributes[p.name];
-      else t.attributes[p.name] = p.value;
-      t.log.push({ seq: e.seq, at: e.at, kind: 'attribute', name: p.name, value: p.value, actorUserId: p.actorUserId });
+      t.log.push({ seq: e.seq, at: e.at, kind: 'note', noteId: p.noteId, body: p.body, author: p.author, actorUserId: p.actorUserId });
       recompute(s, t, e.at, c);
       return;
     }
@@ -153,7 +151,6 @@ function onLinked(s: Projections, e: DomainEvent, p: PayloadOf<'ThreadLinked'>, 
 }
 
 function onSignal(s: Projections, e: Extract<DomainEvent, { type: 'SignalObserved' }>, c: Changes): void {
-  if (e.payload.author && e.payload.channel !== 'note') throw new FoldError(`signal ${e.payload.signalId}: author is only for notes`);
   addSignal(s, e, { ...e.payload, recorded: null }, c);
 }
 
@@ -200,7 +197,6 @@ function addSignal(s: Projections, e: DomainEvent, p: NewSignal, c: Changes): vo
     attachments: p.attachments,
     sourceRef: p.sourceRef,
     recorded: p.recorded,
-    ...(p.author ? { author: p.author } : {}),
     at: e.at,
     seq: e.seq,
     threadId: null,
@@ -240,7 +236,7 @@ function onThreaded(s: Projections, e: DomainEvent, p: PayloadOf<'SignalThreaded
   t.log.push({
     seq: sig.seq,
     at: sig.at,
-    kind: sig.channel === 'note' ? 'note' : 'signal',
+    kind: 'signal',
     signalId: sig.signalId,
     from: sig.from,
     to: sig.to,
@@ -252,7 +248,7 @@ function onThreaded(s: Projections, e: DomainEvent, p: PayloadOf<'SignalThreaded
 function recompute(s: Projections, t: Thread, at: string, c: Changes): void {
   c.threads.add(t.id);
   t.log = sortLog(t.log);
-  t.signalIds = t.log.filter((l) => l.kind === 'signal' || l.kind === 'note').map((l) => l.signalId!);
+  t.signalIds = t.log.filter((l) => l.kind === 'signal').map((l) => l.signalId!);
   Object.assign(t, deriveComm(t.log));
   if (at > t.updatedAt) t.updatedAt = at;
 }
@@ -265,7 +261,6 @@ function newThread(id: string, dataSourceId: string, title: string, at: string):
     signalIds: [],
     log: [],
     links: [],
-    attributes: {},
     source: null,
     sourceKey: null,
     createdAt: at,

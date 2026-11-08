@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { acknowledgeAttention, addNote, commView, directionOf, getThreadView, listThreads, myTurnOf, planOverdue, recordSent, type RecordSentInput } from '../../src/domain';
-import { alice, answer, bob, dir, view, email, eve, EventLog, ingestPure, line, makeCtx } from '../helpers/world';
+import { acknowledgeAttention, commView, directionOf, getThreadView, listThreads, myTurnOf, planMirror, planOverdue, recordSent, type RecordSentInput } from '../../src/domain';
+import { alice, answer, bob, dir, view, email, eve, EventLog, ingestPure, line, makeCtx, task } from '../helpers/world';
 
 // 送信の記録（record_sent）・期限の見回り・観測された送信の統合（H4・H5）
 
@@ -55,10 +55,10 @@ describe('record_sent', () => {
     expect(t).toMatchObject({ awaiting: false, replyExpectedBy: null, overdue: false });
   });
 
-  it('H4 元のスレッドが別のデータソース（個人のメモ）なら、新しいスレッドに入れて経路 sent で結ぶ', () => {
+  it('H4 元のスレッドが別のデータソース（タスク）なら、新しいスレッドに入れて経路 sent で結ぶ', () => {
     const { log, ctx, cust } = world();
-    const note = addNote(log.state(), alice, ctx, { body: '雨漏りの件' });
-    push(log, ctx, T(9, 5), note);
+    ctx.setNow(T(9, 5));
+    const note = { threadId: task(log, ctx, '雨漏りの件') };
     const r = recordSent(log.state(), alice, ctx, sent({ to: ['info@dave.example'], subject: '見積依頼', sentRef: '<u2@ubs.example>', sourceThreadId: note.threadId }));
     expect(r.events.map((e) => e.type)).toEqual(['OutboundRecorded', 'SignalThreaded', 'ThreadLinked']);
     push(log, ctx, T(9, 10), r);
@@ -89,11 +89,30 @@ describe('record_sent', () => {
     expect(() => recordSent(log.state(), alice, ctx, sent({ toContactIds: ['p_eve'] }))).toThrow(/address/);
     expect(() => recordSent(log.state(), eve, ctx, sent())).toThrow(/not found/);
     expect(() => recordSent(log.state(), bob, ctx, sent({ dataSourceId: 'ds_alice' }))).toThrow(/not found/);
-    expect(() => recordSent(log.state(), alice, ctx, sent({ dataSourceId: 'ds_notes_alice' }))).toThrow(/add_note/);
     expect(() => recordSent(log.state(), alice, ctx, sent({ dataSourceId: 'ds_alice', replyToThreadId: cust }))).toThrow(/another data source/);
     push(log, ctx, T(9, 10), recordSent(log.state(), alice, ctx, sent({ replyToThreadId: cust })));
     expect(recordSent(log.state(), bob, ctx, sent({ replyToThreadId: cust })).events).toEqual([]);
     expect(() => recordSent(log.state(), alice, ctx, sent({ sentRef: '<m1>' }))).toThrow(/received/);
+  });
+});
+
+describe('タスクを作った記録（0039 の決定 3）', () => {
+  it('H4 H9 タスクのサービスへの record_sent は宛先が要らない。タスクの ID が区切りになり、元のスレッドと経路 sent で結ぶ。あとから届く写しは同じスレッドに入る', () => {
+    const { log, ctx, cust } = world();
+    const r = recordSent(log.state(), alice, ctx, sent({ dataSourceId: 'ds_tasks_alice', to: [], subject: '雨漏りの見積を取る', body: '期限 10/20', sentRef: 'AAMk-task-1', sourceThreadId: cust }));
+    push(log, ctx, T(9, 10), r);
+    let p = log.state();
+    expect(p.threads[r.threadId]).toMatchObject({ dataSourceId: 'ds_tasks_alice', title: '雨漏りの見積を取る', links: [{ threadId: cust, route: 'sent' }] });
+    expect(p.signals[r.signalId]).toMatchObject({ from: { channel: 'todo', value: 'alice@ubs.example' }, to: [], anchors: { threadKey: 'AAMk-task-1', messageId: 'AAMk-task-1' } });
+    expect(view(p, r.threadId)).toMatchObject({ assignee: null, attention: { named: [], list: null }, awaiting: false });
+    // 写しが届く（件名が直り、期限が付く）。同じスレッドに入る
+    const m = planMirror(p, ctx, { kind: 'mirror', dataSourceId: 'ds_tasks_alice', channel: 'todo', threadKey: 'AAMk-task-1', fields: { title: '雨漏りの見積', due: '2026-10-20', closed: false }, sourceRef: 'todo:1' });
+    expect(m).toMatchObject({ kind: 'mirrored', threadId: r.threadId, newThread: false });
+    if (m.kind === 'mirrored') log.push(m.events, T(9, 20));
+    p = log.state();
+    expect(p.threads[r.threadId]).toMatchObject({ title: '雨漏りの見積', source: { due: '2026-10-20' } });
+    // 宛先がないのはタスクのサービスだけ
+    expect(() => recordSent(log.state(), alice, ctx, sent({ to: [] }))).toThrow(/to/);
   });
 });
 

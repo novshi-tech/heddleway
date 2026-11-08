@@ -3,14 +3,14 @@
 ```
 fixtures/<scenario>/
   scenario.json    # タイトル・検証する仮説・状態（desk-checked / draft / stand-recorded）
-  seed.json        # User / Contact / Address / CredentialRef / DataSource（個人のメモを含む） / List / ListMember / AttributeDef
+  seed.json        # User / Contact / Address / CredentialRef / DataSource（タスクのリスト channel todo を含む） / List / ListMember
   signals.jsonl    # 時刻順のステップ（観測されたシグナル・スタンドの操作・Cron）。// で始まる行はコメント
   expected.json    # シグナルごとの区切りと「返事や対応を求めているか」の正解ラベル、各時点のスレッドの状態、可視性
   recordings/      # Claude 呼び出しの入出力（再生モード用）。npm run scenario verify <name> -- --ai record で作る
 ```
 
 seed.json は読み込み時に `seedProblems`（`src/domain/directory.ts`）で整合性を確かめる。データソース 1 つにリスト 1 つ、
-個人のメモの読者は本人だけ、個人の資格情報は読者 1 人（その本人）のデータソースにだけ使う（0013・0014）。
+個人の資格情報は読者 1 人（その本人）のデータソースにだけ使う（0013・0014・0039。タスクのリストも個人の資格情報の個人リスト）。
 
 ## signals.jsonl のステップ（ステップ 4 までの分）
 
@@ -19,14 +19,16 @@ seed.json は読み込み時に `seedProblems`（`src/domain/directory.ts`）で
 // bind で結果（threadId / signalId）に名前を付ける
 {"id":"s01","at":"2026-10-16T09:00:00.000Z","signal":{"dataSourceId":"ds_support", /* InboundSignal */ },"bind":{"custThread":"threadId"}}
 // スタンドの操作（HTTP API と同じ入力）。me / list_threads / get_thread / dismiss_thread / reopen_thread / move_signal / get_list
-// / add_note（thread_id?・title?・body）/ claim_thread（user_id は省略で自分、null で手放す）/ link_threads・unlink_threads（other_thread_id）/ set_attribute（name・value）
+// / add_note（thread_id・body・author?。個人リストのスレッドだけ）/ claim_thread（user_id は省略で自分、null で手放す）/ link_threads・unlink_threads（other_thread_id）
 {"id":"a01","at":"...","action":{"tool":"move_signal","as":"u_sato","input":{"signal_id":"$sig","new_thread_title":"別件","reason":"..."}},"bind":{"t":"thread.id"}}
-{"id":"a02","at":"...","action":{"tool":"add_note","as":"u_sato","input":{"title":"この件","body":"..."}},"bind":{"note":"thread.id"}}
+{"id":"a02","at":"...","action":{"tool":"add_note","as":"u_sato","input":{"thread_id":"$task","body":"..."}}}
+// タスクを作った記録（To Do。0039）。宛先は要らず、sent_ref（タスクの ID）がそのスレッドの区切り
+{"id":"a03","at":"...","action":{"tool":"record_sent","as":"u_sato","input":{"data_source":"ds_tasks_sato","subject":"この件","body":"...","sent_ref":"AAMkTask-1","source_thread_id":"$comp"}},"bind":{"task":"thread.id"}}
 // 送信の記録（record_sent。入力は POST /api/sent と同じ）。echo: true ならダミー上流が次の pull でその送信を観測された送信として返す（記録 → 観測の順）
 {"id":"o01","at":"...","action":{"tool":"record_sent","as":"u_sato","input":{"data_source":"ds_support","to":["ops@clean-toto.example"],"body":"...","sent_ref":"<u1@ubs.example>","source_thread_id":"$comp","reply_expected_by":"2026-10-16T22:00:00+09:00"}},"echo":true,"bind":{"partner":"thread.id"}}
 // Cron（取り込みのポーリングと期限の見回り）
 {"id":"c01","at":"...","cron":true}
-// 状態の写し（ダミーの Jira の課題の更新。ステップ 7・0031）。fields は決まった形の変わった項目（closed / holders / title / statusLabel / due。holders はそのチャネルのアカウント）。
+// 状態の写し（ダミーの Jira の課題・To Do のタスクの更新。ステップ 7・0031・0039）。bind で写したスレッド（threadId）に名前を付けられる。fields は決まった形の変わった項目（closed / holders / title / statusLabel / due。holders はそのチャネルのアカウント）。
 // 課題キー（threadKey）のスレッドに写す。スレッドはシグナル（課題の作成・起票の記録）で作られ、ID を使わないので AI の記録のキーは変わらない
 {"id":"m01","at":"...","mirror":{"dataSourceId":"ds_jira","channel":"jira","threadKey":"NVT-42","fields":{"statusLabel":"進行中","holders":["acct-kato"],"closed":false},"sourceRef":"jira:NVT-42:u1"}}
 ```
@@ -36,7 +38,7 @@ seed.json は読み込み時に `seedProblems`（`src/domain/directory.ts`）で
 - 送信は、スタンド経由なら `record_sent`（返事をしているなら `reply_to_thread_id`、元のスレッドがあれば `source_thread_id` で経路 sent に結ぶ）、
   メーラーなどから直接送ったものは観測された送信の signal の行で書く。観測 → 記録の順は、signal の行のあとに同じ `sent_ref` の `record_sent` を書く
 - 記録した送信は、観測された送信と同じ順で ID を使う（シグナル → 新しいスレッド）。観測された送信の行を `record_sent` に置き換えても、後の AI のプロンプトに入る id は変わらない
-- ID は連番（`thr_1`・`sig_2` …）。AI に渡すプロンプトには候補のスレッドの id が入るので、AI 判断の前に `add_note`（ID を使う）を足すと記録のキーが変わる。記録を取り直さないなら、メモは AI に聞くスレッドができたあとに書く
+- ID は連番（`thr_1`・`sig_2` …）。AI に渡すプロンプトには候補のスレッドの id が入るので、AI 判断の前に ID を使う操作（新しいスレッドを作る `record_sent`・写し・メモの `add_note`）を足すと記録のキーが変わる。記録を取り直さないなら、AI に聞くスレッドができたあとに書く
 
 ## expected.json
 

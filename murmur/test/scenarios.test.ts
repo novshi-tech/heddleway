@@ -107,7 +107,7 @@ function touches(e: DomainEvent, threadId: string, all: readonly DomainEvent[]):
     case 'ThreadDismissed':
     case 'ThreadReopened':
     case 'ThreadClaimed':
-    case 'ThreadAttributeSet':
+    case 'ThreadNoted':
     case 'ThreadMirrored':
     case 'ReplyOverdue':
     case 'AttentionAcknowledged':

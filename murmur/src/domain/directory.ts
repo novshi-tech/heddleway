@@ -1,4 +1,4 @@
-import type { Address, AttributeDef, Channel, CredentialRef, DataSource, List, Contact, Seed, User } from './entities';
+import type { Address, Channel, CredentialRef, DataSource, List, Contact, Seed, User } from './entities';
 import type { AddressRef } from './events';
 
 /**
@@ -55,12 +55,6 @@ export class Directory {
       .filter((c): c is Contact => c !== undefined);
   }
 
-  /** データソースの属性の定義。個人のメモには標準の定義（due）が付く（0031 の 4） */
-  attributeDefs(dataSourceId: string): AttributeDef[] {
-    const own = this.seed.attributeDefs.filter((d) => d.dataSourceId === dataSourceId);
-    return this.dataSource(dataSourceId)?.kind === 'notes' ? [...standardNoteAttributeDefs(dataSourceId), ...own] : own;
-  }
-
   address(addressId: string): Address | undefined {
     return this.seed.addresses.find((a) => a.id === addressId);
   }
@@ -102,17 +96,9 @@ function isValidAt(a: Address, at?: string): boolean {
  * マスタの整合性（H3 の前提）。問題の一覧を返す（空なら整合している）。
  * - User の Contact は 1 つまで（1 デプロイ = 1 チーム、0020・0021）
  * - データソース 1 つにリスト 1 つ
- * - 個人のメモのリストの読者は本人だけ
  * - 個人の資格情報は読者 1 人（その本人）のデータソースにしか使わない。共有のデータソースは組織の資格情報（0013）か、
  *   読者をソースから写す共有リスト（0037）。共有リストはスペースに 1 つ
  */
-/** 個人のメモに標準で付く属性（0031 の 4）。マスタには置かない */
-export const STANDARD_NOTE_ATTRIBUTES = ['due'] as const;
-
-export function standardNoteAttributeDefs(dataSourceId: string): AttributeDef[] {
-  return [{ dataSourceId, name: 'due', type: 'date', description: 'タスクの期日（本人が付ける）' }];
-}
-
 export function seedProblems(seed: Seed): string[] {
   const dir = new Directory(seed);
   const problems: string[] = [];
@@ -130,12 +116,6 @@ export function seedProblems(seed: Seed): string[] {
     const readers = dir.readersOfList(list.id);
     for (const r of readers) {
       if (!dir.user(r)) problems.push(`list ${list.id}: 読者 ${r} が User ではない`);
-    }
-    if (ds.kind === 'notes') {
-      if (readers.length !== 1 || readers[0] !== ds.ownerUserId) {
-        problems.push(`data source ${ds.id}: 個人のメモの読者は本人（${ds.ownerUserId}）だけ`);
-      }
-      continue;
     }
     const cred = seed.credentialRefs.find((c) => c.id === ds.credentialRefId);
     if (!cred) {
@@ -159,14 +139,6 @@ export function seedProblems(seed: Seed): string[] {
     const other = spaces.get(ds.shared.spaceKey);
     if (other) problems.push(`data source ${ds.id}: スペース ${ds.shared.spaceKey} の共有リストは ${other} がある`);
     else spaces.set(ds.shared.spaceKey, ds.id);
-  }
-  // 属性は個人のメモのスレッドだけのもの（0031）
-  for (const d of seed.attributeDefs) {
-    const ds = dir.dataSource(d.dataSourceId);
-    if (!ds) problems.push(`attribute ${d.dataSourceId}|${d.name}: data source がない`);
-    else if (ds.kind !== 'notes') problems.push(`attribute ${d.dataSourceId}|${d.name}: 属性を付けられるのは個人のメモのデータソースだけ`);
-    else if ((STANDARD_NOTE_ATTRIBUTES as readonly string[]).includes(d.name)) problems.push(`attribute ${d.dataSourceId}|${d.name}: 標準の属性と重なる`);
-    if (d.type === 'enum' && (d.options ?? []).length === 0) problems.push(`attribute ${d.dataSourceId}|${d.name}: enum の選択肢がない`);
   }
   for (const a of seed.contactAliases) {
     if (!seed.contacts.some((c) => c.id === a.contactId)) problems.push(`contact alias ${a.id}: まとめ先 ${a.contactId} がない`);
