@@ -79,7 +79,7 @@ curl -H "Authorization: Bearer $TOKEN" "https://<ゲートウェイ>/api/freee/a
 | | `board` | `board` | 販売管理 SaaS「board」の案件・見積・請求・発注・支払・顧客などの検索・登録・更新 |
 | | `gbizinfo` | `gbizinfo` | 経済産業省の法人情報(gBizINFO)の検索 |
 | | `serper` | `serper` | Serper 経由の Google 検索(ウェブ・画像・ニュース・地図・論文など) |
-| | `murmur` | `murmur` | Murmur(チームの仕事の記憶。このゲートウェイの機能)のスレッド・誰の番・個人のメモでのタスクの追跡・送信の記録。有効にする手順は上の「Murmur」 |
+| | `murmur` | `murmur` | Murmur(チームの仕事の記憶。このゲートウェイの機能)のスレッド・誰の番・To Do のタスクでの追跡と経過のメモ・送信の記録。有効にする手順は上の「Murmur」 |
 | `heddleway-microsoft` | `microsoft-graph` | `graph` | Outlook メール、OneDrive / SharePoint、Teams、予定表 |
 | `heddleway-google` | `gmail` | `gmail` | メールの検索・送信・返信・下書き、添付ファイル |
 | | `google-drive` | `drive` | ファイルの検索・ダウンロード・エクスポート・アップロード、共有ドライブ |
