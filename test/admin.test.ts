@@ -163,6 +163,13 @@ describe("admin screens", () => {
     expect(kept.config.auth).toMatchObject({ scope: "read write", authorize_params: { access_type: "offline" } });
     expect(await (await get(`/admin/services/${name}`)).text()).not.toContain("s1");
 
+    expect(kept.config.auth).not.toHaveProperty("client_auth");
+
+    expect((await post(`/admin/services/${name}`, { ...fields, client_auth_basic: "on" })).status).toBe(303);
+    forgetRegistry();
+    expect((await upstream(name)).config.auth).toMatchObject({ client_auth: "basic" });
+    expect(await (await get(`/admin/services/${name}`)).text()).toMatch(/name="client_auth_basic" checked/);
+
     expect(await (await post(`/admin/services/${name}`, { ...fields, client_id: "cid-2" })).text()).toContain("クライアントシークレットを入れてください");
     expect(await (await get("/admin/services/new")).text()).toContain(`<code>${BASE}/connect/callback</code>`);
     expect(await (await get("/connections/new", "user-3")).text()).toContain(`href="/connections/new/${name}"`);

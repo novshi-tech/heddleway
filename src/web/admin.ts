@@ -80,6 +80,7 @@ interface ServiceForm {
   token_url: string;
   scope: string;
   authorize_params: string;
+  client_auth_basic: boolean;
   client_id: string;
   client_secret: string;
   cc_token_url: string;
@@ -101,6 +102,7 @@ function emptyForm(): ServiceForm {
     token_url: "",
     scope: "",
     authorize_params: "",
+    client_auth_basic: false,
     client_id: "",
     client_secret: "",
     cc_token_url: "",
@@ -131,6 +133,7 @@ function formOf(name: string, config: ServiceConfig, client: OAuthClient | undef
       authorize_params: Object.entries(auth.authorize_params ?? {})
         .map(([k, v]) => `${k}=${v}`)
         .join("\n"),
+      client_auth_basic: auth.client_auth === "basic",
       client_id: client?.id ?? "",
     };
   }
@@ -163,6 +166,7 @@ function readForm(data: FormData): ServiceForm {
     token_url: field("token_url"),
     scope: field("scope"),
     authorize_params: field("authorize_params"),
+    client_auth_basic: data.get("client_auth_basic") === "on",
     ...clientFields(data, field("auth_type")),
     cc_token_url: field("cc_token_url"),
     cc_scope: field("cc_scope"),
@@ -214,6 +218,7 @@ function configOf(form: ServiceForm): ServiceConfig | string {
         token_url: form.token_url,
         ...(form.scope ? { scope: form.scope } : {}),
         ...(Object.keys(params).length > 0 ? { authorize_params: params } : {}),
+        ...(form.client_auth_basic ? { client_auth: "basic" as const } : {}),
       },
     };
   }
@@ -285,6 +290,7 @@ ${headerRows}
 <label>トークンの URL<input type="text" name="token_url" value="${form.token_url}" autocomplete="off"></label>
 <label>スコープ(空白区切り)<input type="text" name="scope" value="${form.scope}" autocomplete="off"></label>
 <label>認可の追加パラメータ(1 行に「名前=値」)<textarea name="authorize_params" rows="2">${form.authorize_params}</textarea></label>
+<label class="choice"><input type="checkbox" name="client_auth_basic"${form.client_auth_basic ? " checked" : ""}> トークンの要求で、クライアント ID とシークレットを <code>Authorization: Basic</code> で送る(X など。外すと本文で送る)</label>
 <label>クライアント ID<input type="text" name="client_id" value="${form.client_id}" autocomplete="off"></label>
 <label>クライアントシークレット${!creating && "(変えないときは空のまま)"}<input type="password" name="client_secret" autocomplete="off"></label>
 </fieldset>
