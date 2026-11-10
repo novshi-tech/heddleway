@@ -30,11 +30,18 @@ python3 $GW POST x /2/tweets --json '{"text": "こんにちは"}'
 
 v2 は、指定しないと最小限の項目(ポストなら `id`・`text` と編集履歴の ID)しか返さない。必要なものをクエリで頼む。
 
-X のドキュメントは「Tweet」から「Post」への改名の途中で、名前が 2 通りある。ガイドと changelog は `tweet.fields`・`referenced_tweets`・`note_tweet`・`edit_history_tweet_ids`、OpenAPI(とそこから作ったリファレンス)は `post.fields`・`referenced_posts`・`note_post`・`edit_history_post_ids` と書いている。**まず `tweet.fields` で頼み、400 でパラメータが不正と言われたら `post.fields` に替える。** レスポンスのキーも、どちらの名前で返ってきても読めるようにする。
+X は「Tweet」から「Post」への改名の途中で、パラメータの名前が 2 通りあり、**どちらも通る**(2026-11 に実物で確認)。レスポンスのキーは、使ったパラメータの名前に合わせて変わる。
 
-- `tweet.fields`(`post.fields`): `created_at`、`author_id`、`public_metrics`(いいね・リポスト・返信・表示の数)、`conversation_id`、`in_reply_to_user_id`、`referenced_tweets`(`referenced_posts`)、`entities`、`lang`、`note_tweet`(`note_post`。長文ポストの全文)
+| 頼み方 | レスポンスのキー |
+|---|---|
+| `tweet.fields`、`expansions=referenced_tweets.id` | `edit_history_tweet_ids`、`referenced_tweets`、`public_metrics.retweet_count`、`note_tweet`、`article.title` |
+| `post.fields`、`expansions=referenced_posts` | `edit_history_post_ids`、`referenced_posts`、`public_metrics.repost_count`、`note_post`、`article_title.title` |
+
+**このスキルでは `tweet.fields` の系統に揃える**(ガイドや例の多くがこちら)。1 回の呼び出しの中で 2 つの系統を混ぜない。
+
+- `tweet.fields`: `created_at`、`author_id`、`public_metrics`(いいね・リポスト・返信・引用・ブックマーク・表示の数)、`conversation_id`、`in_reply_to_user_id`、`referenced_tweets`、`entities`、`lang`、`note_tweet`(長文ポストの全文)。X の記事(Articles)を含むポストには `article.title` が付く
 - `user.fields`: `username`、`name`、`description`、`created_at`、`public_metrics`(フォロワー数など)、`verified`
-- `expansions`: 関連するオブジェクトを `includes` に入れる。`author_id`(投稿者のユーザー)、`referenced_tweets.id`(OpenAPI では `referenced_posts`。引用元・返信先)、`attachments.media_keys`(画像)。`includes.users` を `author_id` で引き当てて、`@username` を表示する。
+- `expansions`: 関連するオブジェクトを `includes` に入れる。`author_id`(投稿者のユーザー)、`referenced_tweets.id`(引用元・返信先)、`attachments.media_keys`(画像)。`includes.users` を `author_id` で引き当てて、`@username` を表示する。
 - `media.fields`: `url`、`preview_image_url`、`type`、`alt_text`(`expansions=attachments.media_keys` と一緒に)
 
 ## 主なエンドポイント
