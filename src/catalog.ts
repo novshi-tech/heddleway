@@ -84,7 +84,8 @@ const CONFLUENCE_SCOPE = [
   "offline_access",
 ].join(" ");
 
-// X API v2 as the connected user: reading and posting, likes, bookmarks, follows and lists, and
+// X API v2 as the connected user: reading and posting, likes, bookmarks, reading follows, reading
+// and managing lists, and
 // uploading media for a post. offline.access is what makes X issue a refresh token. Direct
 // messages are left out; a deployment that needs them overrides `x` in SERVICES with dm.read / dm.write.
 const X_SCOPE = [
@@ -97,6 +98,7 @@ const X_SCOPE = [
   "bookmark.read",
   "bookmark.write",
   "list.read",
+  "list.write",
   "media.write",
   "offline.access",
 ].join(" ");

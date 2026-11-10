@@ -287,7 +287,7 @@ describe("X token conventions", () => {
   it("asks X for a refresh token through offline.access", () => {
     const url = new URL(upstreamAuthorizationUrl(x, { id: "id", secret: "secret" }, params));
     expect(url.origin + url.pathname).toBe("https://x.com/i/oauth2/authorize");
-    expect(url.searchParams.get("scope")?.split(" ")).toEqual(expect.arrayContaining(["tweet.read", "tweet.write", "users.read", "offline.access"]));
+    expect(url.searchParams.get("scope")?.split(" ")).toEqual(expect.arrayContaining(["tweet.read", "tweet.write", "users.read", "list.read", "list.write", "offline.access"]));
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
   });
 

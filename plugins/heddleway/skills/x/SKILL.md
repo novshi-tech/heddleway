@@ -1,6 +1,6 @@
 ---
 name: x
-description: X(旧 Twitter)の API v2 を API ゲートウェイ経由で、接続したユーザー本人として呼び出す。ポストの検索(直近 7 日)・取得、ユーザーの検索とプロフィール・ポスト一覧・メンション、ホームタイムライン、ポストの投稿・返信・引用・削除、画像の添付、いいね・リポスト・ブックマーク、フォロー・フォロワーとリストの確認を扱う。「X で○○についてのポストを検索して」「このアカウントの最近のポストを見せて」「自分へのメンションを確認して」「X に投稿して」「このポストに返信して」「いいねして」「ブックマークを一覧して」などの依頼で使う。
+description: X(旧 Twitter)の API v2 を API ゲートウェイ経由で、接続したユーザー本人として呼び出す。ポストの検索(直近 7 日)・取得、ユーザーの検索とプロフィール・ポスト一覧・メンション、ホームタイムライン、ポストの投稿・返信・引用・削除、画像の添付、いいね・リポスト・ブックマーク、フォロー・フォロワーの確認、リストの作成・編集・削除とメンバーの追加・削除・フォロー・ピン留めを扱う。「X で○○についてのポストを検索して」「このアカウントの最近のポストを見せて」「自分へのメンションを確認して」「X に投稿して」「このポストに返信して」「いいねして」「ブックマークを一覧して」「リストを作って」「このアカウントをリストに追加して」などの依頼で使う。
 ---
 
 # X API v2
@@ -62,7 +62,11 @@ X は「Tweet」から「Post」への改名の途中で、パラメータの名
 | リポスト / 取り消し | `POST /2/users/{自分の id}/retweets`(`{"tweet_id": "..."}`) / `DELETE /2/users/{自分の id}/retweets/{tweet_id}` | |
 | ブックマーク | `GET`・`POST /2/users/{自分の id}/bookmarks`(`{"tweet_id": "..."}`)、`DELETE /2/users/{自分の id}/bookmarks/{tweet_id}` | 自分の ID のみ |
 | フォロー中・フォロワー | `GET /2/users/{id}/following`、`GET /2/users/{id}/followers` | 読み取りのみ(フォローする権限は付けていない) |
-| リスト | `GET /2/users/{id}/owned_lists`、`GET /2/lists/{id}/tweets` | 読み取りのみ |
+| 自分のリスト | `GET /2/users/{id}/owned_lists`、`GET /2/users/{id}/followed_lists`、`GET /2/users/{id}/pinned_lists`、`GET /2/users/{id}/list_memberships` | 作ったもの・フォロー中・ピン留め・メンバーとして入っているもの |
+| リストの中身 | `GET /2/lists/{id}`、`GET /2/lists/{id}/tweets`、`GET /2/lists/{id}/members`、`GET /2/lists/{id}/followers` | |
+| リストの作成・編集・削除 | `POST /2/lists`、`PUT /2/lists/{id}`、`DELETE /2/lists/{id}` | 下の「リストを管理する」 |
+| メンバーの追加・削除 | `POST /2/lists/{id}/members`(`{"user_id": "..."}`)、`DELETE /2/lists/{id}/members/{user_id}` | 自分のリストのみ |
+| リストのフォロー・ピン留め | `POST /2/users/{自分の id}/followed_lists`・`pinned_lists`(`{"list_id": "..."}`)、`DELETE /2/users/{自分の id}/followed_lists/{list_id}`・`pinned_lists/{list_id}` | |
 | 画像のアップロード | `POST /2/media/upload` | 下の「画像を添付する」 |
 
 ID はすべて文字列で扱う(64 ビットの整数なので、数値にすると丸まる)。ポストの URL `https://x.com/<username>/status/<id>` の末尾が ID。
@@ -97,6 +101,23 @@ python3 $GW POST x /2/tweets --json @post.json
 - 本文は 280 文字まで(日本語などの全角文字は 1 文字を 2 と数えるので、およそ 140 文字)。URL は長さに関係なく 23 文字分。長い文はスレッドに分け、2 つ目以降を直前のポストへの返信として投稿する。
 - 同じ本文を続けて投稿すると、重複として 403 で断られる。
 
+## リストを管理する
+
+```sh
+# 作る(name は必須。private: true で非公開)
+python3 $GW POST x /2/lists --json '{"name": "ビルメン業界", "description": "業界の情報源", "private": true}'
+# 名前・説明・公開範囲を変える(変えるものだけ)
+python3 $GW PUT x /2/lists/1234567890 --json '{"name": "ビルメン業界ニュース"}'
+# メンバーを足す(ユーザー ID は /2/users/by/username/{username} で調べる)
+python3 $GW POST x /2/lists/1234567890/members --json '{"user_id": "11875282"}'
+python3 $GW DELETE x /2/lists/1234567890/members/11875282
+```
+
+- 作成のレスポンスの `data.id` がリストの ID。リストの URL は `https://x.com/i/lists/<id>`。
+- 名前は 25 文字まで、説明は 100 文字まで。
+- 公開のリストにメンバーを足すと、足された人に通知が届くことがある。リストを作るとき、消すとき、メンバーを足すときは、ユーザーに確かめてから行う(「書き込みの前に」と同じ)。何人もまとめて足すときは、先に一覧を見せる。
+- メンバーの追加・削除には、15 分あたりの回数の制限がある。まとめて足すときは間をあけ、429 が返ったら `x-rate-limit-reset` まで待つ。
+
 ## 画像を添付する
 
 1. 画像をアップロードして、メディア ID を得る。
@@ -125,6 +146,6 @@ python3 $GW POST x /2/tweets --json @post.json
 
 - 401: 接続が切れている。ユーザーに Web 画面で X をつなぎ直してもらう。
 - 403 で `client-forbidden` や `client-not-enrolled`: X の開発者ポータルで、アプリがプロジェクトに入っていないか、プランでそのエンドポイントが使えない。管理者に確かめてもらう。
-- 403 で権限(scope)の不足: ゲートウェイが頼んでいない権限(DM・フォローする操作など)。README の「X」のとおり、デプロイの設定で `x` を上書きしてスコープを足し、つなぎ直す。
+- 403 で権限(scope)の不足: ゲートウェイが頼んでいない権限(DM・フォローする操作など)か、スコープを足す前につないだ接続(リストの書き込みは 2026-11 に足した。Web 画面で X をつなぎ直すと使えるようになる)。README の「X」のとおり、デプロイの設定で `x` を上書きしてスコープを足し、つなぎ直す。
 - 429: レート制限か、月間のクォータの使い切り。`x-rate-limit-reset` を見て待つか、ユーザーに伝える。
 - 200 でも `errors` が入っていることがある(一部のポストが削除済み・非公開など)。`data` と合わせて確かめる。
