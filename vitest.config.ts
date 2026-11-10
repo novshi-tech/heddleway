@@ -10,12 +10,23 @@ const CONFIG = "./wrangler.example.jsonc";
 // The built-in plugins the Worker bundles (src/plugins.ts imports dist/plugins.js).
 execFileSync("python3", ["tools/build-plugin-zip.py", "--bundle"], { stdio: ["ignore", "ignore", "inherit"] });
 // Services beyond the built-in catalog: the example's own, an OAuth service whose
-// client is never configured, and an upstream that trusts the gateway's sign-in.
+// client is never configured, two that share a client set from the admin screen, and an upstream that trusts the gateway's sign-in.
 const SERVICES = {
   ...(experimental_readRawConfig({ config: CONFIG }).rawConfig.vars?.SERVICES as object),
   unclient: {
     base_url: "https://api.unclient.example",
     auth: { type: "oauth2", authorization_url: "https://unclient.example/authorize", token_url: "https://unclient.example/token" },
+  },
+  // Two services sharing one client that only an admin sets, from the admin screen (test/admin.test.ts).
+  "shared-a": {
+    display_name: "Shared A",
+    base_url: "https://api.shared.example",
+    auth: { type: "oauth2", client: "shared-oauth", authorization_url: "https://shared.example/authorize", token_url: "https://shared.example/token" },
+  },
+  "shared-b": {
+    display_name: "Shared B",
+    base_url: "https://api.shared.example",
+    auth: { type: "oauth2", client: "shared-oauth", authorization_url: "https://shared.example/authorize", token_url: "https://shared.example/token" },
   },
   // Reached only through the Background entrypoint, with a token from the fake app sign-in below.
   "graph-app": {

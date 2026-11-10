@@ -2,6 +2,7 @@ import { parseServices, publicUrl, type HeaderField, type ServiceConfig } from "
 import { registryFor } from "../registry";
 import { forgetRegistry, getDirectory, type Directory, type ServiceSource } from "../services";
 import type { OAuthClient } from "../upstream-oauth";
+import { clientSection } from "./admin-clients";
 import { CONNECT_CALLBACK_PATH, masthead } from "./connections";
 import { html } from "./html";
 import { page } from "./layout";
@@ -49,7 +50,8 @@ export async function listServices(request: Request, env: Env): Promise<Response
         ? directory.client(name)
           ? "利用者には表示されません。Service Binding の Background の入口から使います"
           : "クライアントが未設定のため、Background の入口からも使えません"
-        : !directory.available(name) && "OAuth のクライアントが未設定のため、利用者には表示されていません";
+        : !directory.available(name) &&
+          (source === "admin" ? "OAuth のクライアントが未設定のため、利用者には表示されていません" : "OAuth のクライアントが未設定のため、利用者には表示されていません(下の「OAuth のクライアント」で設定できます)");
     return html`<li>
 <div class="row-main"><p class="row-title">${config.display_name}</p><p class="row-sub">${name} · ${AUTH_LABELS[config.auth.type]}${config.provider ? ` · ${config.provider}` : ""}${shadowed ? " · 設定ファイルの定義が優先されています" : ""}</p>${note && html`<p class="row-sub">${note}</p>`}</div>
 <div class="row-actions"><span class="badge">${SOURCE_LABELS[source]}</span>${action}</div>
@@ -62,7 +64,8 @@ export async function listServices(request: Request, env: Env): Promise<Response
 ${done && html`<p class="notice" role="status">「${done}」を${url.searchParams.has("saved") ? "保存" : "削除"}しました。</p>`}
 <div class="section-head"><h1>接続先の管理</h1><a class="button" href="/admin/services/new">接続先を追加</a></div>
 <p>ここで追加した接続先は、このゲートウェイの全員の「接続を追加」に出ます。組み込みと設定ファイルの接続先は、ソースか設定ファイルを変えてデプロイし直します。利用者に配るプラグインは<a href="/admin/plugins">プラグインの配布</a>で管理します。</p>
-<ul class="list">${rows}</ul>`,
+<ul class="list">${rows}</ul>
+${clientSection(directory)}`,
   );
 }
 

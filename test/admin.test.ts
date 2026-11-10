@@ -2,7 +2,7 @@ import { env, SELF } from "cloudflare:test";
 import { exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { publicUrl } from "../src/config";
-import { forgetRegistry } from "../src/services";
+import { forgetRegistry, getDirectory } from "../src/services";
 import { signToken } from "../src/tokens";
 import { vaultFor } from "../src/vault";
 import { upstream } from "./helpers";
@@ -227,5 +227,61 @@ describe("admin screens", () => {
     forgetRegistry();
     expect((await upstream("murmur")).config.auth.type).toBe("identity");
     expect(await (await get("/admin/services")).text()).toContain("設定ファイルの定義が優先されています");
+  });
+});
+
+describe("OAuth clients of built-in and SERVICES services", () => {
+  it("lists them, grouped by client, with where each comes from", async () => {
+    const page = await (await get("/admin/services")).text();
+    expect(page).toContain("OAuth のクライアント");
+    expect(page).toContain(`href="/admin/clients/google"`);
+    expect(page).toContain(`href="/admin/clients/x"`);
+    expect(page).toContain("Shared A、Shared B");
+    // Admin-registered services keep their own client on their own form.
+    expect(page).not.toMatch(/href="\/admin\/clients\/(acme|oauth)-/);
+    expect((await get("/admin/clients/google")).status).toBe(200);
+    expect((await get("/admin/clients/nope")).status).toBe(404);
+    expect((await get("/admin/clients/google", "someone")).status).toBe(404);
+  });
+
+  it("offers the services once an admin sets the client, keeps the secret, and removes it again", async () => {
+    expect(await (await get("/connections/new", "user-c1")).text()).not.toContain(`href="/connections/new/shared-a"`);
+    expect(await (await post("/admin/clients/shared-oauth", { client_id: "cid", client_secret: "" })).text()).toContain("クライアントシークレットを入れてください");
+    expect((await post("/admin/clients/shared-oauth", { client_id: "cid", client_secret: "s1" }, ADMIN, "https://evil.example")).status).toBe(403);
+
+    expect((await post("/admin/clients/shared-oauth", { client_id: "cid", client_secret: "s1" })).status).toBe(303);
+    forgetRegistry();
+    const directory = await getDirectory(env);
+    expect(directory.client("shared-a")).toEqual({ id: "cid", secret: "s1" });
+    expect(directory.client("shared-b")).toEqual({ id: "cid", secret: "s1" });
+    expect(directory.clientSource("shared-a")).toBe("admin");
+    const offered = await (await get("/connections/new", "user-c1")).text();
+    expect(offered).toContain(`href="/connections/new/shared-a"`);
+    expect(offered).toContain(`href="/connections/new/shared-b"`);
+
+    // An empty secret keeps the stored one for the same ID, but not for a new ID.
+    expect((await post("/admin/clients/shared-oauth", { client_id: "cid", client_secret: "" })).status).toBe(303);
+    forgetRegistry();
+    expect((await getDirectory(env)).client("shared-a")).toEqual({ id: "cid", secret: "s1" });
+    expect(await (await post("/admin/clients/shared-oauth", { client_id: "cid-2", client_secret: "" })).text()).toContain("クライアントシークレットを入れてください");
+    const form = await (await get("/admin/clients/shared-oauth")).text();
+    expect(form).toContain(`value="cid"`);
+    expect(form).not.toContain("s1");
+    expect(form).toContain(`${BASE}/connect/callback`);
+
+    expect((await post("/admin/clients/shared-oauth/delete", {})).status).toBe(303);
+    forgetRegistry();
+    expect((await getDirectory(env)).client("shared-a")).toBeNull();
+    expect(await (await get("/connections/new", "user-c1")).text()).not.toContain(`href="/connections/new/shared-a"`);
+    expect((await post("/admin/clients/shared-oauth/delete", {})).status).toBe(404);
+  });
+
+  it("leaves a client set by a deployment secret alone", async () => {
+    const page = await (await get("/admin/clients/freee")).text();
+    expect(page).toContain("OAUTH_FREEE_CLIENT_*");
+    expect(page).not.toContain(`name="client_id"`);
+    expect((await post("/admin/clients/freee", { client_id: "other", client_secret: "other" })).status).toBe(409);
+    forgetRegistry();
+    expect((await getDirectory(env)).clientSource("freee")).toBe("secret");
   });
 });
