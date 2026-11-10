@@ -40,7 +40,7 @@ wrangler は直接呼ばず、名前を付けてラッパーから呼ぶ。中�
    - 設定を `wrangler.example.jsonc` から作る。`$schema` と `main` のパスの先頭に `../` を付ける(README の `sed` のとおり)。そのうえで、`name`、`PUBLIC_URL`、`ORGANIZATION_NAME`、`IDP_TYPE`、`OIDC_ISSUER`、`OIDC_CLIENT_ID`、`ALLOWED_TENANTS` / `ALLOWED_DOMAINS` を書く。Microsoft Graph を使うなら `MICROSOFT_TENANT_ID`。`SERVICES` は組み込みにないサービスがあるときだけ。Google では `ALLOWED_DOMAINS` を必ず指定する(空だと誰でもサインインできてしまう)。
    - `npx wrangler kv namespace create OAUTH_KV` の結果の ID を `kv_namespaces` に書く。
    - シークレット: `OIDC_CLIENT_SECRET` はユーザーに対話で入れてもらう(`npm run secret -- <名前> put OIDC_CLIENT_SECRET`)。`SIGNING_KEY` と `ENCRYPTION_KEY` は `openssl rand -base64 32 | npm run secret -- <名前> put <KEY>` で作る。値を表示したり、ファイルに残したりしない。
-   - OAuth の連携先は、クライアントごとに `OAUTH_<CLIENT>_CLIENT_ID` / `_CLIENT_SECRET` が要る: `FREEE`、`GOOGLE`(Google の 6 サービスで共通)、`MICROSOFT`(Graph)。README の「連携先を設定する」に従う。
+   - OAuth の連携先は、クライアントごとに ID とシークレットが要る: `freee`、`google`(Google の 6 サービスで共通)、`microsoft`(Graph)、`slack`、`atlassian`(Jira・Confluence)、`x`。デプロイのあとに、管理者が Web 画面の「接続先の管理」→「OAuth のクライアント」で入れるのがおすすめ(デプロイし直さずに済む。`ADMINS` に管理者のユーザー ID が要る)。シークレット `OAUTH_<CLIENT>_CLIENT_ID` / `_CLIENT_SECRET` で入れてもよく、そちらが優先される。README の「連携先を設定する」に従う。
 5. デプロイする。
    - 先に `npm ci`、`npm run typecheck`、`npm test` を通す。
    - 設定の共通部分が、ひな形と合っているかを確かめる(下の「新しい版に上げるとき」)。

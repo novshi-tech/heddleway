@@ -184,12 +184,19 @@ git -c http.extraHeader="Authorization: Bearer $GW_TOKEN" clone https://<ゲー�
 
 Claude からは、組み込みのプラグイン `heddleway` の `git` スキルが、トークンを `.git/config` に残さずに git を呼びます。
 
-OAuth 2.0 のサービス(`auth.type` が `oauth2`)は、Web 画面から認可コード + PKCE で接続します。連携先にアプリを登録し、コールバック URL に `https://<ゲートウェイ>/connect/callback` を指定します。クライアント ID とシークレットは、クライアントの名前を大文字にした名前で登録します(ハイフンは `_` に)。組み込みのサービスのクライアントは `FREEE`・`GOOGLE`・`MICROSOFT` の 3 つで、Google の 6 つのサービスは 1 組を共有します。`SERVICES` に足したサービスは、`auth.client` に書いた名前か、なければサービス名がクライアントの名前です。
+OAuth 2.0 のサービス(`auth.type` が `oauth2`)は、Web 画面から認可コード + PKCE で接続します。連携先にアプリを登録し、コールバック URL に `https://<ゲートウェイ>/connect/callback` を指定します。クライアントは、組み込みのサービスでは `freee`・`google`・`microsoft`・`slack`・`atlassian`・`x` で、Google の 6 つのサービスは 1 組を共有します(Jira と Confluence も)。`SERVICES` に足したサービスは、`auth.client` に書いた名前か、なければサービス名がクライアントの名前です。
+
+クライアント ID とシークレットは、次のどちらかで登録します。
+
+- **管理画面**(おすすめ): 「接続先の管理」の「OAuth のクライアント」で、クライアントごとに入れます。デプロイし直す必要はなく、保存すると利用者の画面に出ます(反映まで最大 30 秒)。シークレットは `ENCRYPTION_KEY` で暗号化して保存します。管理画面を使うには、デプロイの設定の `ADMINS` に自分を入れておきます(下の「管理画面から接続先を足す」)。
+- **デプロイのシークレット**: クライアントの名前を大文字にした名前で登録します(ハイフンは `_` に)。こちらが登録されていれば、管理画面の値より優先されます。
 
 ```sh
 npm run secret -- <名前> put OAUTH_<CLIENT>_CLIENT_ID
 npm run secret -- <名前> put OAUTH_<CLIENT>_CLIENT_SECRET
 ```
+
+以下の連携先ごとの説明にある `OAUTH_..._CLIENT_ID` / `_CLIENT_SECRET` も、管理画面の同じ名前のクライアントで代わりに入れられます。
 
 クライアントが登録されていない OAuth のサービスは、Web 画面にも `list_credentials` にも出ません。以前のサービスごとの名前(`OAUTH_GMAIL_CLIENT_ID` など)は読まなくなったので、古いデプロイでは `OAUTH_GOOGLE_*` / `OAUTH_MICROSOFT_*` を登録し直してください。
 
@@ -330,7 +337,9 @@ Jira と同じ Atlassian のアプリ(`OAUTH_ATLASSIAN_CLIENT_ID` / `OAUTH_ATLAS
 - App permissions は「Read and write」、Type of App は「Web App, Automated App or Bot」(confidential client)にします。
 - Callback URI に `https://<ゲートウェイ>/connect/callback` を、Website URL にゲートウェイの URL を入れます。
 
-シークレットは `OAUTH_X_CLIENT_ID` / `OAUTH_X_CLIENT_SECRET`(Keys and tokens の「OAuth 2.0 Client ID and Client Secret」。API Key や Bearer Token ではありません)です。
+クライアントは `x`(管理画面の「OAuth のクライアント」、またはシークレット `OAUTH_X_CLIENT_ID` / `OAUTH_X_CLIENT_SECRET`)で、Keys and tokens の「OAuth 2.0 Client ID and Client Secret」を入れます(API Key や Bearer Token ではありません)。開発者アカウントの利用料は、このアプリにまとめてかかります。
+
+X は OAuth 1.0a のユーザー認証を 2027 年 1 月 31 日で終えるので、ゲートウェイは OAuth 2.0 だけを扱います。
 
 - X はトークンの要求で、クライアント ID とシークレットを `Authorization: Basic` で受け取ります。組み込みの定義には `"client_auth": "basic"` が入っています(ほかの OAuth のサービスも、`SERVICES` か管理画面で同じ指定ができます)。
 - スコープは `src/catalog.ts` の `X_SCOPE` です(ポストの読み書き、いいね・ブックマークの読み書き、フォローとリストの読み取り、画像のアップロード、リフレッシュトークンのための `offline.access`)。DM などを足すときは、デプロイの設定の `SERVICES` に同じ名前 `x` で定義を書いて上書きし、利用者はつなぎ直します。

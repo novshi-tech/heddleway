@@ -11,6 +11,7 @@ export interface Upstream {
 }
 
 export type ServiceSource = "catalog" | "admin" | "config";
+export type ClientSource = "secret" | "admin";
 
 // Every service this deployment knows, where each definition comes from, and the
 // OAuth clients. Built-in catalog first, then services admins registered, then
@@ -20,6 +21,11 @@ export interface Directory {
   sources: Record<string, ServiceSource>;
   registry: RegistrySnapshot;
   client(service: string): OAuthClient | null;
+  // Where a service's client comes from: a deployment secret, the admin screen, or nowhere.
+  clientSource(service: string): ClientSource | null;
+  // Clients of built-in and SERVICES services that admins can set, by client name, with
+  // the services that use each.
+  sharedClients(): Record<string, string[]>;
   // A service users can see: an OAuth service only once the gateway has its client, and
   // never a client_credentials one, which only the Background entrypoint uses.
   available(service: string): boolean;
@@ -59,19 +65,41 @@ export async function getDirectory(env: Env): Promise<Directory> {
       sources[name] = source;
     }
   }
-  const client = (service: string): OAuthClient | null => {
+  const oauthAuth = (service: string) => {
     if (!Object.hasOwn(services, service)) return null;
     const auth = services[service].auth;
-    if (auth.type !== "oauth2" && auth.type !== "client_credentials") return null;
-    if (sources[service] === "admin") return registry.clients[service] ?? null;
-    return oauthClient(env, service, auth.client);
+    return auth.type === "oauth2" || auth.type === "client_credentials" ? auth : null;
+  };
+  const resolve = (service: string): { client: OAuthClient; source: ClientSource } | null => {
+    const auth = oauthAuth(service);
+    if (!auth) return null;
+    if (sources[service] === "admin") {
+      const stored = registry.clients[service];
+      return stored ? { client: stored, source: "admin" } : null;
+    }
+    const secret = oauthClient(env, service, auth.client);
+    if (secret) return { client: secret, source: "secret" };
+    const name = auth.client ?? service;
+    const shared = Object.hasOwn(registry.sharedClients, name) ? registry.sharedClients[name] : undefined;
+    return shared ? { client: shared, source: "admin" } : null;
+  };
+  const client = (service: string) => resolve(service)?.client ?? null;
+  const clientSource = (service: string) => resolve(service)?.source ?? null;
+  const sharedClients = () => {
+    const byClient: Record<string, string[]> = {};
+    for (const service of Object.keys(services)) {
+      const auth = oauthAuth(service);
+      if (!auth || sources[service] === "admin") continue;
+      (byClient[auth.client ?? service] ??= []).push(service);
+    }
+    return byClient;
   };
   const available = (service: string) => {
     if (!Object.hasOwn(services, service)) return false;
     const type = services[service].auth.type;
     return type !== "client_credentials" && (type !== "oauth2" || client(service) !== null);
   };
-  return { services, sources, registry, client, available };
+  return { services, sources, registry, client, clientSource, sharedClients, available };
 }
 
 export async function getServices(env: Env): Promise<Services> {

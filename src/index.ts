@@ -18,6 +18,7 @@ import {
   deleteCredential,
   home,
 } from "./web/connections";
+import { deleteClient, editClient, saveClient } from "./web/admin-clients";
 import { confirmDeletePlugin, deletePlugin, listPluginsPage, uploadPlugin } from "./web/admin-plugins";
 import { consentPage, consentSubmit, disableFeature } from "./web/features";
 import { confirmRevoke, revoke } from "./web/grants";
@@ -69,6 +70,9 @@ const ROUTES: Route[] = [
   ["POST", /^\/admin\/services\/([a-z0-9][a-z0-9-]*)$/, (request, env, [name]) => saveService(request, env, name)],
   ["GET", /^\/admin\/services\/([a-z0-9][a-z0-9-]*)\/delete$/, (request, env, [name]) => confirmDeleteService(request, env, name)],
   ["POST", /^\/admin\/services\/([a-z0-9][a-z0-9-]*)\/delete$/, (request, env, [name]) => deleteService(request, env, name)],
+  ["GET", /^\/admin\/clients\/([a-z0-9][a-z0-9-]*)$/, (request, env, [name]) => editClient(request, env, name)],
+  ["POST", /^\/admin\/clients\/([a-z0-9][a-z0-9-]*)$/, (request, env, [name]) => saveClient(request, env, name)],
+  ["POST", /^\/admin\/clients\/([a-z0-9][a-z0-9-]*)\/delete$/, (request, env, [name]) => deleteClient(request, env, name)],
   ["GET", "/admin/plugins", listPluginsPage],
   ["POST", "/admin/plugins", uploadPlugin],
   ["GET", /^\/admin\/plugins\/([a-z0-9][a-z0-9-]*)\/delete$/, (request, env, [name]) => confirmDeletePlugin(request, env, name)],

@@ -13,6 +13,9 @@ export interface RegistrySnapshot {
   services: Record<string, RegistryEntry>;
   // OAuth clients of admin-registered services, by service name.
   clients: Record<string, OAuthClient>;
+  // OAuth clients that admins set for built-in and SERVICES services, by client name
+  // (`auth.client`, or the service name). OAUTH_<CLIENT>_* secrets take precedence.
+  sharedClients: Record<string, OAuthClient>;
 }
 
 // A plugin zip an admin uploaded for users to download (src/plugins.ts).
@@ -43,7 +46,19 @@ export class Registry extends DurableObject<Env> {
     for (const [key, sealed] of await this.ctx.storage.list<string>({ prefix: "client:" })) {
       clients[key.slice(7)] = await decryptJson<OAuthClient>(await this.key(), sealed, key);
     }
-    return { services, clients };
+    const sharedClients: Record<string, OAuthClient> = {};
+    for (const [key, sealed] of await this.ctx.storage.list<string>({ prefix: "oauthclient:" })) {
+      sharedClients[key.slice(12)] = await decryptJson<OAuthClient>(await this.key(), sealed, key);
+    }
+    return { services, clients, sharedClients };
+  }
+
+  // The client of built-in and SERVICES services named `name`; null removes it.
+  async putSharedClient(name: string, client: OAuthClient | null): Promise<boolean> {
+    const key = `oauthclient:${name}`;
+    if (client === null) return this.ctx.storage.delete(key);
+    await this.ctx.storage.put(key, await encryptJson(await this.key(), client, key));
+    return true;
   }
 
   // `client` undefined keeps the stored one; null removes it.
