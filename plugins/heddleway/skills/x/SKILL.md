@@ -28,11 +28,13 @@ python3 $GW POST x /2/tweets --json '{"text": "こんにちは"}'
 
 ## 返ってくる項目を指定する
 
-v2 は、指定しないと最小限の項目(ポストなら `id`・`text`・`edit_history_tweet_ids`)しか返さない。必要なものをクエリで頼む。
+v2 は、指定しないと最小限の項目(ポストなら `id`・`text` と編集履歴の ID)しか返さない。必要なものをクエリで頼む。
 
-- `tweet.fields`: `created_at`、`author_id`、`public_metrics`(いいね・リポスト・返信・表示の数)、`conversation_id`、`in_reply_to_user_id`、`referenced_tweets`、`entities`、`lang`、`note_tweet`(長文ポストの全文)
+X のドキュメントは「Tweet」から「Post」への改名の途中で、名前が 2 通りある。ガイドと changelog は `tweet.fields`・`referenced_tweets`・`note_tweet`・`edit_history_tweet_ids`、OpenAPI(とそこから作ったリファレンス)は `post.fields`・`referenced_posts`・`note_post`・`edit_history_post_ids` と書いている。**まず `tweet.fields` で頼み、400 でパラメータが不正と言われたら `post.fields` に替える。** レスポンスのキーも、どちらの名前で返ってきても読めるようにする。
+
+- `tweet.fields`(`post.fields`): `created_at`、`author_id`、`public_metrics`(いいね・リポスト・返信・表示の数)、`conversation_id`、`in_reply_to_user_id`、`referenced_tweets`(`referenced_posts`)、`entities`、`lang`、`note_tweet`(`note_post`。長文ポストの全文)
 - `user.fields`: `username`、`name`、`description`、`created_at`、`public_metrics`(フォロワー数など)、`verified`
-- `expansions`: 関連するオブジェクトを `includes` に入れる。`author_id`(投稿者のユーザー)、`referenced_tweets.id`(引用元・返信先)、`attachments.media_keys`(画像)。`includes.users` を `author_id` で引き当てて、`@username` を表示する。
+- `expansions`: 関連するオブジェクトを `includes` に入れる。`author_id`(投稿者のユーザー)、`referenced_tweets.id`(OpenAPI では `referenced_posts`。引用元・返信先)、`attachments.media_keys`(画像)。`includes.users` を `author_id` で引き当てて、`@username` を表示する。
 - `media.fields`: `url`、`preview_image_url`、`type`、`alt_text`(`expansions=attachments.media_keys` と一緒に)
 
 ## 主なエンドポイント
@@ -96,7 +98,7 @@ python3 $GW POST x /2/tweets --json @post.json
    python3 $GW POST x /2/media/upload -f media_category=tweet_image --file media=photo.png
    ```
 
-   レスポンスの `data.id` がメディア ID。画像は 5 MB まで(PNG・JPEG・WEBP。GIF は 15 MB)。代替テキストは `POST /2/media/metadata` に `{"id": "<メディア ID>", "metadata": {"alt_text": {"text": "..."}}}`。
+   レスポンスの `data.id` がメディア ID。`tweet_image` は JPG・PNG・GIF・WEBP で 5 MB まで。アニメーション GIF は `media_category=tweet_gif`。代替テキスト(1000 文字まで)は `POST /2/media/metadata` に `{"id": "<メディア ID>", "metadata": {"alt_text": {"text": "..."}}}`。
 
 2. ポストの `media.media_ids` に入れて投稿する(4 枚まで)。
 
@@ -104,7 +106,7 @@ python3 $GW POST x /2/tweets --json @post.json
    python3 $GW POST x /2/tweets --json '{"text": "今日の写真", "media": {"media_ids": ["1880000000000000000"]}}'
    ```
 
-動画や大きなファイルは、分割アップロード(`/2/media/upload/initialize` → `/2/media/upload/{id}/append` → `/2/media/upload/{id}/finalize`)が要る。必要になったら、X の公式ドキュメント(docs.x.com)で最新の手順を確かめてから行う。
+動画は分割アップロード(`POST /2/media/upload/initialize` → `POST /2/media/upload/{id}/append`(1 回 5 MB 以下、`segment_index` は 0 から) → `POST /2/media/upload/{id}/finalize`)が要る。finalize のあとは `processing_info` の状態が `succeeded` になるまで待ってから投稿する。細かい手順は docs.x.com の「Chunked media upload」(`/x-api/media/quickstart/media-upload-chunked.md`)で確かめる。
 
 ## 料金と制限
 
