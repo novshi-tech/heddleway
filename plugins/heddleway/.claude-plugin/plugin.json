@@ -1,7 +1,7 @@
 {
   "name": "heddleway",
   "displayName": "Heddleway",
-  "version": "0.23.1",
+  "version": "0.24.0",
   "description": "API ゲートウェイの共通手順(認証情報の確認、MCP のツールでの呼び出し、トークンの発行、REST の呼び出し)と、git(clone・push)・board・gBizINFO・Serper・X と トピック索引(やりとりをトピックにまとめ、誰の番かを追う Heddleway の機能)のスキル。ほかの heddleway-* プラグインの前提。コネクタ(Heddleway)はデプロイごとに別途追加する。",
   "author": {
     "name": "novshi-tech"
