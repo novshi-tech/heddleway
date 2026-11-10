@@ -50,7 +50,7 @@
         "url": "novshi-tech/heddleway",
         "path": "plugins/heddleway-freee"
       },
-      "version": "0.14.1",
+      "version": "0.15.0",
       "description": "API ゲートウェイ経由で freee(会計・人事労務・請求書・販売)を操作するスキル。heddleway プラグインと一緒に使う。",
       "dependencies": [
         "heddleway"
