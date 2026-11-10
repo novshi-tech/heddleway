@@ -5,7 +5,7 @@ description: API ゲートウェイに、新しい連携先サービス(外部�
 
 # サービスを足す
 
-freee、Microsoft Graph、Google(Gmail・Drive・Calendar・Docs・Analytics)、Slack、Jira、Confluence、board、gBizINFO、Serper は組み込み(`src/catalog.ts`)なので、足す必要はない。OAuth のものはクライアントのシークレットを登録すれば使える(README の「連携先を設定する」)。
+freee、Microsoft Graph、Google(Gmail・Drive・Calendar・Docs・Analytics)、Slack、Jira、Confluence、board、gBizINFO、Serper、X は組み込み(`src/catalog.ts`)なので、足す必要はない。OAuth のものはクライアントのシークレットを登録すれば使える(README の「連携先を設定する」)。
 
 それ以外のサービスを 1 つ足すには、次の 3 つをそろえる。
 
@@ -28,7 +28,7 @@ API の公式ドキュメントを読んで、次を確かめる。推測で書�
 | --- | --- |
 | 固定の API キーやトークンをヘッダーで送る | `headers`。ヘッダーごとに `name` と、Web 画面に出す `label`。`Authorization: Bearer <トークン>` なら `"prefix": "Bearer "` |
 | Basic 認証(ユーザー名とパスワード、ユーザー名とトークン) | `basic`。ユーザーが入れたユーザー名とパスワードから、ゲートウェイが `Authorization: Basic` を組み立てる。ユーザー名が決まっている上流(GitHub のトークンは `x-access-token`、Bitbucket のアクセストークンは `x-token-auth`)は `username` に書くと、ユーザーはパスワードだけを入れる。入力欄の名前は `username_label`・`password_label` |
-| OAuth 2.0 の認可コード | `oauth2`。`authorization_url`、`token_url`、必要なら `scope` と `authorize_params`。同じ OAuth アプリを複数のサービスで使うなら `client` に共通の名前 |
+| OAuth 2.0 の認可コード | `oauth2`。`authorization_url`、`token_url`、必要なら `scope` と `authorize_params`。トークンの要求でクライアントを Basic で送る上流は `"client_auth": "basic"`。同じ OAuth アプリを複数のサービスで使うなら `client` に共通の名前 |
 | 自社の API で、ゲートウェイのサインインを信頼する(ユーザーごとの認証情報がない) | `identity`。`audience` を書く。ゲートウェイがユーザー ID を Ed25519 で署名して `Authorization: Bearer` で送り、上流は `/.well-known/jwks.json` で検証する。署名鍵 `IDENTITY_SIGNING_KEY` が要る(README の「連携先を設定する」) |
 
 公開ルートを持たない Worker が上流なら、サービスに `"binding": "<BINDING 名>"` を書き、デプロイの設定の `services` に Service Binding を足す。
@@ -37,7 +37,7 @@ API の公式ドキュメントを読んで、次を確かめる。推測で書�
 
 - API キーをクエリパラメータで送る API(ヘッダーでも受け付けないかを先に調べる)
 - 署名が要る API(AWS Signature など)、mTLS
-- OAuth のクライアントクレデンシャルや、クライアント認証が `client_secret_post` 以外のもの(ゲートウェイはトークンエンドポイントにクライアント ID とシークレットをフォームで送り、PKCE も付ける)
+- OAuth のクライアント認証が `client_secret_post`・`client_secret_basic` 以外のもの(`private_key_jwt` など)。ゲートウェイはトークンエンドポイントにクライアント ID とシークレットをフォームで送り、PKCE も付ける。`Authorization: Basic` で送る上流(X など)は、`auth` に `"client_auth": "basic"` を書く
 
 ## 2. SERVICES に書く
 

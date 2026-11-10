@@ -40,7 +40,7 @@
     // Entra tenant ID for Microsoft Graph. Graph is offered only when this is set.
     "MICROSOFT_TENANT_ID": "",
     // Built-in services (src/catalog.ts): freee, Microsoft Graph, Gmail, Google Drive,
-    // Google Calendar, Google Docs, Google Analytics, Slack, Jira, board, gBizINFO and Serper.
+    // Google Calendar, Google Docs, Google Analytics, Slack, Jira, board, gBizINFO, Serper and X.
     // Add your own here; an entry with a built-in name replaces that service.
     "SERVICES": {
       // "example": {
@@ -52,8 +52,8 @@
   }
   // Secrets (wrangler secret put): OIDC_CLIENT_SECRET, SIGNING_KEY, ENCRYPTION_KEY, and
   // OAUTH_<CLIENT>_CLIENT_ID / _CLIENT_SECRET for each OAuth client you use: FREEE (freee),
-  // GOOGLE (Gmail, Drive, Calendar, Docs, Analytics), MICROSOFT (Graph), SLACK (Slack) and
-  // ATLASSIAN (Jira). For your own OAuth
+  // GOOGLE (Gmail, Drive, Calendar, Docs, Analytics), MICROSOFT (Graph), SLACK (Slack),
+  // ATLASSIAN (Jira, Confluence) and X (X). For your own OAuth
   // services, <CLIENT> is the service's "client", or its name.
   // IDENTITY_SIGNING_KEY (an Ed25519 private JWK) is needed only for services whose auth type is "identity".
   // Such a service may be reached through a Service Binding: add "binding": "<NAME>" to it and

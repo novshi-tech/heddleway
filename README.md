@@ -16,7 +16,7 @@ Claude ──MCP(OAuth でサインイン)──▶ ゲートウェイ ─┐
 小さい呼び出しは、MCP のツール `api_get`(読み取り。確認なしで呼べる)と `api_request`(POST・PUT・PATCH・DELETE。呼ぶたびに確認が出る)で、ゲートウェイが同じ中継を通して呼びます。返すのはテキストだけで、長いボディは切り詰め、ファイル(バイナリ)はスクリプトに任せます。
 
 - **Claude は認証情報を見ません。** API キーや OAuth のトークンは、ユーザーがゲートウェイの Web 画面で登録し、暗号化して保存されます。Claude が受け取るのは、寿命 15 分のゲートウェイのトークンだけです。
-- **よく使うサービスは組み込みです。** freee、Microsoft Graph、Google(Gmail・Drive・Calendar・Docs・Analytics)、Slack、Jira、Confluence、board、gBizINFO、Serper は `src/catalog.ts` にあり、OAuth のクライアントを登録すれば使えます。ほかのサービスは、デプロイの設定の `SERVICES` に書くか、管理画面から、ベース URL と認証方式(ヘッダーか OAuth 2.0)を書いて足します。OAuth のトークンの更新もゲートウェイが受け持ちます。
+- **よく使うサービスは組み込みです。** freee、Microsoft Graph、Google(Gmail・Drive・Calendar・Docs・Analytics)、Slack、Jira、Confluence、board、gBizINFO、Serper、X は `src/catalog.ts` にあり、OAuth のクライアントを登録すれば使えます。ほかのサービスは、デプロイの設定の `SERVICES` に書くか、管理画面から、ベース URL と認証方式(ヘッダーか OAuth 2.0)を書いて足します。OAuth のトークンの更新もゲートウェイが受け持ちます。
 - **使い方はスキルで配ります。** API の呼び方は、Claude のスキル(プラグイン)にまとめて配布します。コネクタの URL を含めていないので、どのデプロイでも同じプラグインを使えます。
 
 Claude の Cowork で動作を確認しています。MCP の OAuth に従っているので、ほかの Claude のクライアントや ChatGPT のコネクタにも対応する設計ですが、まだ確認していません。設計の詳細は [docs/concept.md](docs/concept.md) と [docs/auth-design.md](docs/auth-design.md) にあります。
@@ -79,6 +79,7 @@ curl -H "Authorization: Bearer $TOKEN" "https://<ゲートウェイ>/api/freee/a
 | | `board` | `board` | 販売管理 SaaS「board」の案件・見積・請求・発注・支払・顧客などの検索・登録・更新 |
 | | `gbizinfo` | `gbizinfo` | 経済産業省の法人情報(gBizINFO)の検索 |
 | | `serper` | `serper` | Serper 経由の Google 検索(ウェブ・画像・ニュース・地図・論文など) |
+| | `x` | `x` | X(旧 Twitter)のポストの検索・取得、投稿・返信・画像の添付、いいね・リポスト・ブックマーク(ユーザー本人として) |
 | | `topic-index` | `murmur` | トピック索引(このゲートウェイの機能)のトピック・誰の番・To Do のタスクでの追跡と経過のメモ・送信の記録。有効にする手順は上の「トピック索引(Murmur)」 |
 | `heddleway-microsoft` | `microsoft-graph` | `graph` | Outlook メール、OneDrive / SharePoint、Teams、予定表 |
 | `heddleway-google` | `gmail` | `gmail` | メールの検索・送信・返信・下書き、添付ファイル |
@@ -321,6 +322,21 @@ Jira と同じ Atlassian のアプリ(`OAUTH_ATLASSIAN_CLIENT_ID` / `OAUTH_ATLAS
 - ユーザーは Web 画面で、Jira とは別に Confluence をつなぎます(サービスごとに、そのスコープだけで同意します)。
 - 上流は `https://api.atlassian.com` です。Confluence の API はサイトごとに `/ex/confluence/<cloudid>/wiki/api/v2/...`(v2)と `/ex/confluence/<cloudid>/wiki/rest/api/...`(v1。CQL の検索など)の下にあります。
 - REST の呼び出し先の例: `/api/confluence/oauth/token/accessible-resources`、`/api/confluence/ex/confluence/<cloudid>/wiki/api/v2/pages/<pageId>?body-format=storage`
+
+#### X(`x`)
+
+[X の開発者ポータル](https://developer.x.com/en/portal/dashboard) で、プロジェクトの中にアプリを作り、User authentication settings で次を設定します。
+
+- App permissions は「Read and write」、Type of App は「Web App, Automated App or Bot」(confidential client)にします。
+- Callback URI に `https://<ゲートウェイ>/connect/callback` を、Website URL にゲートウェイの URL を入れます。
+
+シークレットは `OAUTH_X_CLIENT_ID` / `OAUTH_X_CLIENT_SECRET`(Keys and tokens の「OAuth 2.0 Client ID and Client Secret」。API Key や Bearer Token ではありません)です。
+
+- X はトークンの要求で、クライアント ID とシークレットを `Authorization: Basic` で受け取ります。組み込みの定義には `"client_auth": "basic"` が入っています(ほかの OAuth のサービスも、`SERVICES` か管理画面で同じ指定ができます)。
+- スコープは `src/catalog.ts` の `X_SCOPE` です(ポストの読み書き、いいね・ブックマークの読み書き、フォローとリストの読み取り、画像のアップロード、リフレッシュトークンのための `offline.access`)。DM などを足すときは、デプロイの設定の `SERVICES` に同じ名前 `x` で定義を書いて上書きし、利用者はつなぎ直します。
+- アクセストークンは 2 時間で切れ、ゲートウェイが更新します。リフレッシュトークンは使うたびに替わります。
+- API は従量課金かプランの上限つきです。使える量と料金は、開発者ポータルで確かめてください。
+- REST の呼び出し先の例: `/api/x/2/users/me`、`/api/x/2/tweets/search/recent?query=...`、`/api/x/2/tweets`(投稿)
 
 #### board(`board`)
 

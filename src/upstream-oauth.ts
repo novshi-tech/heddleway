@@ -1,4 +1,4 @@
-import type { ClientCredentialsAuth, OAuth2Auth } from "./config";
+import type { ClientAuthMethod, ClientCredentialsAuth, OAuth2Auth } from "./config";
 
 export interface OAuthClient {
   id: string;
@@ -42,12 +42,24 @@ export function upstreamAuthorizationUrl(
 // Codes meaning the refresh token is gone for good; Slack has its own.
 const INVALID_GRANT = new Set(["invalid_grant", "invalid_refresh_token"]);
 
-async function tokenRequest(auth: { token_url: string; token_key?: string }, client: OAuthClient, grant: Record<string, string>): Promise<TokenSet> {
-  const res = await fetch(auth.token_url, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-    body: new URLSearchParams({ ...grant, client_id: client.id, client_secret: client.secret }),
-  }).catch((error: unknown) => {
+// RFC 6749 2.3.1: the ID and secret are form-urlencoded before they are joined and base64-encoded.
+function basicClientAuthorization(client: OAuthClient): string {
+  const encode = (value: string) => encodeURIComponent(value).replace(/%20/g, "+");
+  const pair = new TextEncoder().encode(`${encode(client.id)}:${encode(client.secret)}`);
+  return `Basic ${btoa(String.fromCharCode(...pair))}`;
+}
+
+async function tokenRequest(
+  auth: { token_url: string; token_key?: string; client_auth?: ClientAuthMethod },
+  client: OAuthClient,
+  grant: Record<string, string>,
+): Promise<TokenSet> {
+  const headers: Record<string, string> = { "content-type": "application/x-www-form-urlencoded", accept: "application/json" };
+  // With Basic, the secret stays out of the body; client_id stays in it, which X's examples send too.
+  const form = new URLSearchParams({ ...grant, client_id: client.id });
+  if (auth.client_auth === "basic") headers.authorization = basicClientAuthorization(client);
+  else form.set("client_secret", client.secret);
+  const res = await fetch(auth.token_url, { method: "POST", headers, body: form }).catch((error: unknown) => {
     throw new UpstreamOAuthError(`token request failed: ${error}`);
   });
   const response = (await res.json().catch(() => ({}))) as Record<string, unknown>;

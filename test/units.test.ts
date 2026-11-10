@@ -74,6 +74,15 @@ describe("parseServices", () => {
     expect(ok.freee.auth.type).toBe("oauth2");
   });
 
+  it("accepts client_auth post or basic only", () => {
+    const oauth = { type: "oauth2", authorization_url: "https://a.example/authorize", token_url: "https://a.example/token" };
+    const parsed = parseServices({ x: { base_url: "https://api.example.com", auth: { ...oauth, client_auth: "basic" } } });
+    expect(parsed.x.auth).toMatchObject({ client_auth: "basic" });
+    expect(() => parseServices({ x: { base_url: "https://api.example.com", auth: { ...oauth, client_auth: "jwt" } } })).toThrow(/client_auth/);
+    const cc = { type: "client_credentials", token_url: "https://a.example/token", client_auth: "private_key_jwt" };
+    expect(() => parseServices({ app: { base_url: "https://api.example.com", auth: cc } })).toThrow(/client_auth/);
+  });
+
   it("rejects invalid names", () => {
     expect(() => parseServices({ "../x": { base_url: "https://api.example.com", auth } })).toThrow();
   });
@@ -265,6 +274,60 @@ describe("Slack and Atlassian token conventions", () => {
       const error = await refreshTokens(slack, client, { access_token: "a", refresh_token: "r" }).catch((e: unknown) => e);
       expect((error as UpstreamOAuthError).message).toBe("token request failed: invalid_refresh_token, status 200");
       expect((error as UpstreamOAuthError).invalidGrant).toBe(true);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+});
+
+describe("X token conventions", () => {
+  const x = catalog({} as Env).x.auth as OAuth2Auth;
+  const params = { redirectUri: "https://gw.example.com/connect/callback", state: "s", codeChallenge: "c" };
+
+  it("asks X for a refresh token through offline.access", () => {
+    const url = new URL(upstreamAuthorizationUrl(x, { id: "id", secret: "secret" }, params));
+    expect(url.origin + url.pathname).toBe("https://x.com/i/oauth2/authorize");
+    expect(url.searchParams.get("scope")?.split(" ")).toEqual(expect.arrayContaining(["tweet.read", "tweet.write", "users.read", "offline.access"]));
+    expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+  });
+
+  it("sends the client as Basic, keeping the secret out of the body", async () => {
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => Response.json({ token_type: "bearer", access_token: "a1", refresh_token: "r1", expires_in: 7200, scope: "tweet.read" }));
+    try {
+      // RFC 6749 2.3.1: each part is form-urlencoded before base64.
+      const client = { id: "client id", secret: "s:e/c" };
+      const tokens = await exchangeCode(x, client, { code: "c", verifier: "v", redirectUri: params.redirectUri });
+      expect(tokens).toMatchObject({ access_token: "a1", refresh_token: "r1" });
+      const [url, init] = fetch.mock.calls[0];
+      expect(url).toBe("https://api.x.com/2/oauth2/token");
+      expect((init!.headers as Record<string, string>).authorization).toBe(`Basic ${btoa("client+id:s%3Ae%2Fc")}`);
+      const body = new URLSearchParams(init!.body as URLSearchParams);
+      expect(body.get("client_id")).toBe("client id");
+      expect(body.has("client_secret")).toBe(false);
+      expect(body.get("code_verifier")).toBe("v");
+
+      await refreshTokens(x, client, { access_token: "a1", refresh_token: "r1" });
+      const refresh = fetch.mock.calls[1][1]!;
+      expect((refresh.headers as Record<string, string>).authorization).toMatch(/^Basic /);
+      const refreshBody = new URLSearchParams(refresh.body as URLSearchParams);
+      expect(refreshBody.get("grant_type")).toBe("refresh_token");
+      expect(refreshBody.has("scope")).toBe(false);
+      expect(refreshBody.has("client_secret")).toBe(false);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it("still puts the secret in the body by default", async () => {
+    const freee = catalog({} as Env).freee.auth as OAuth2Auth;
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ access_token: "a" }));
+    try {
+      await exchangeCode(freee, { id: "id", secret: "secret" }, { code: "c", verifier: "v", redirectUri: params.redirectUri });
+      const init = fetch.mock.calls[0][1]!;
+      expect((init.headers as Record<string, string>).authorization).toBeUndefined();
+      expect(new URLSearchParams(init.body as URLSearchParams).get("client_secret")).toBe("secret");
     } finally {
       fetch.mockRestore();
     }

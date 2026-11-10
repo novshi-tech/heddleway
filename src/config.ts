@@ -37,7 +37,13 @@ export interface OAuth2Auth {
   refresh_scope?: boolean;
   // A property of the token response that holds the user's tokens when present, e.g. Slack's `authed_user`.
   token_key?: string;
+  // How the token request authenticates the client: "post" (the default) puts the ID and secret in the
+  // form body (client_secret_post); "basic" sends them as `Authorization: Basic` (client_secret_basic),
+  // which X requires of confidential clients.
+  client_auth?: ClientAuthMethod;
 }
+
+export type ClientAuthMethod = "post" | "basic";
 
 // OAuth2 client credentials: the deployment, not a user, owns the access. The client
 // comes from Registry (admin-registered) or OAUTH_<CLIENT>_CLIENT_ID / _CLIENT_SECRET as
@@ -48,6 +54,7 @@ export interface ClientCredentialsAuth {
   client?: string;
   token_url: string;
   scope?: string;
+  client_auth?: ClientAuthMethod;
 }
 
 // For an upstream that trusts the gateway's sign-in: no stored credential, the
@@ -92,9 +99,11 @@ export function parseServices(raw: unknown): Services {
       for (const field of ["scope_param", "token_key"] as const) {
         if (auth[field] !== undefined && !PARAM_NAME.test(auth[field])) throw new Error(`service ${name}: invalid ${field}`);
       }
+      requireClientAuth(name, auth.client_auth);
     } else if (auth?.type === "client_credentials") {
       requireHttps(name, "token_url", auth.token_url);
       if (auth.client !== undefined && !SERVICE_NAME.test(auth.client)) throw new Error(`service ${name}: invalid client name`);
+      requireClientAuth(name, auth.client_auth);
     } else if (auth?.type === "basic") {
       if (auth.username !== undefined && !BASIC_USERNAME.test(auth.username)) throw new Error(`service ${name}: invalid basic username`);
     } else if (auth?.type === "identity") {
@@ -112,6 +121,10 @@ export function parseServices(raw: unknown): Services {
     };
   }
   return services;
+}
+
+function requireClientAuth(service: string, value: unknown): void {
+  if (value !== undefined && value !== "post" && value !== "basic") throw new Error(`service ${service}: client_auth must be "post" or "basic"`);
 }
 
 function requireHttps(service: string, field: string, value: string): void {

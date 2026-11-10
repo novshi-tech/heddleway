@@ -84,6 +84,23 @@ const CONFLUENCE_SCOPE = [
   "offline_access",
 ].join(" ");
 
+// X API v2 as the connected user: reading and posting, likes, bookmarks, follows and lists, and
+// uploading media for a post. offline.access is what makes X issue a refresh token. Direct
+// messages are left out; a deployment that needs them overrides `x` in SERVICES with dm.read / dm.write.
+const X_SCOPE = [
+  "tweet.read",
+  "tweet.write",
+  "users.read",
+  "follows.read",
+  "like.read",
+  "like.write",
+  "bookmark.read",
+  "bookmark.write",
+  "list.read",
+  "media.write",
+  "offline.access",
+].join(" ");
+
 export function catalog(env: Env): Services {
   const services: Services = {
     freee: {
@@ -173,6 +190,22 @@ export function catalog(env: Env): Services {
       display_name: "gBizINFO",
       base_url: "https://api.info.gbiz.go.jp",
       auth: { type: "headers", headers: [{ name: "X-hojinInfo-api-token", label: "gBizINFO の API トークン" }] },
+    },
+    // OAuth 2.0 with PKCE. X takes a confidential client's ID and secret only as Basic at the token
+    // endpoint. Access tokens last two hours; refresh tokens rotate on each use.
+    x: {
+      display_name: "X",
+      provider: "X",
+      base_url: "https://api.x.com",
+      auth: {
+        type: "oauth2",
+        client: "x",
+        authorization_url: "https://x.com/i/oauth2/authorize",
+        token_url: "https://api.x.com/2/oauth2/token",
+        scope: X_SCOPE,
+        client_auth: "basic",
+        refresh_scope: false,
+      },
     },
     serper: {
       display_name: "Serper",
