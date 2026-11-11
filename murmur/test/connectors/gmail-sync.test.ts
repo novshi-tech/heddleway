@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { GmailError } from '../../src/connectors/gmail/api';
-import { GatewayAuthError } from '../../src/ports/gateway';
+import { GatewayAuthError, GatewayError } from '../../src/ports/gateway';
+import { LlmApiError } from '../../src/ingest/llm';
 import { GoogleApiNotEnabled } from '../../src/connectors/google-error';
 import { GmailMessage } from '../../src/connectors/gmail/message';
 import { normalizeGmailMessage } from '../../src/connectors/gmail/normalize';
@@ -273,11 +274,13 @@ describe('H5 H6 Gmail の個人の箱の同期（偽の Gmail）', () => {
       await maintain(mailAt(30));
       expect(gmail.fetched).toEqual(['m0', 'm1', 'm2']);
       // 取り込んだ m0・m1 は外れ、m2 から残る（位置はまだ進まない）
-      expect(await cursor()).toMatchObject({ recovery: { listed: true, ids: ['m4', 'm3', 'm2'] }, blocked: { id: 'm2', count: 1 } });
+      expect(await cursor()).toMatchObject({ recovery: { listed: true, ids: ['m4', 'm3', 'm2'] } });
+      expect((await cursor())!.blocked ?? null).toBeNull();
       await maintain(mailAt(35));
       expect(gmail.fetched).toEqual(['m0', 'm1', 'm2', 'm2', 'm3', 'm4']);
       expect(await signals()).toHaveLength(5);
-      expect(await cursor()).toMatchObject({ historyId: String(gmail.head), recovery: null, blocked: null });
+      expect(await cursor()).toMatchObject({ historyId: String(gmail.head), recovery: null });
+      expect((await cursor())!.blocked ?? null).toBeNull();
     });
 
     it('集める ID が上限（MAX_RECOVERY_IDS）を超えたら、新しい方だけにして読み終える（古い方は諦め、記録に残す）', async () => {
@@ -374,11 +377,12 @@ describe('H5 H6 Gmail の個人の箱の同期（偽の Gmail）', () => {
       // メッセージの取得で上限に当たっても同じ
       gmail.failNext = { fn: 'message', error: new GmailError(429, 'RESOURCE_EXHAUSTED') };
       await maintain(mailAt(10));
-      // 位置は進まない。止まったメッセージの失敗の回数だけが残る
-      expect(await state.source(ctx.ds.id)).toEqual({ ...before, gmail: { ...before!.gmail, blocked: { id: 'q1', count: 1 } } });
+      // 位置は進まない。上限は失敗として数えない（回数も残さない）
+      expect(await state.source(ctx.ds.id)).toEqual(before);
       await maintain(mailAt(15));
       expect(await state.source(ctx.ds.id)).toMatchObject({ status: 'ok', reason: null });
-      expect(await cursor()).toMatchObject({ historyId: String(gmail.head), blocked: null });
+      expect(await cursor()).toMatchObject({ historyId: String(gmail.head) });
+      expect((await cursor())!.blocked ?? null).toBeNull();
       expect(await signals()).toHaveLength(1);
     });
 
@@ -471,7 +475,8 @@ describe('H5 H6 Gmail の個人の箱の同期（偽の Gmail）', () => {
       await maintain(mailAt(10));
       expect(gmail.fetched).toEqual(Array.from({ length: 15 }, (_, i) => `p${10 + i}`));
       expect(await signals()).toHaveLength(25);
-      expect(await cursor()).toMatchObject({ historyId: String(gmail.head), blocked: null });
+      expect(await cursor()).toMatchObject({ historyId: String(gmail.head) });
+      expect((await cursor())!.blocked ?? null).toBeNull();
     });
 
     it('履歴のレコードの途中までは進めない（1 つのレコードに SAVE_EVERY 通以上あっても、レコードの終わりでだけ書く）', async () => {
@@ -511,18 +516,18 @@ describe('H5 H6 Gmail の個人の箱の同期（偽の Gmail）', () => {
       expect((await threads()).map((t) => t.title).sort()).toEqual(['前', '後', '次']);
     });
 
-    it('上限・5xx は、同じ ID が 2 回続けて失敗するまでは run を止めて次の見回りで試し直す。3 回目の失敗で飛ばす。取れれば回数は消える', async () => {
+    it('種類の分からない失敗は、同じ ID が見回りごとに 2 回続けて失敗するまでは run を止めて試し直す。3 回目の失敗で飛ばす。取れれば回数は消える', async () => {
       await ctx.sync.handle({ kind: 'setup', dataSourceId: ctx.ds.id });
       gmail.deliver(gmailMessage({ from: from('a'), at: mailAt(1), id: 'ok1', subject: '前' }));
       gmail.deliver(gmailMessage({ from: from('b'), at: mailAt(2), id: 'flaky', subject: '不安定' }));
       gmail.deliver(gmailMessage({ from: from('c'), at: mailAt(3), id: 'ok2', subject: '後' }));
       let failing = true;
       gmail.beforeCall = (fn) => {
-        if (failing && fn === 'message' && gmail.calls.at(-1) === 'message flaky') throw new GmailError(503, 'UNAVAILABLE');
+        if (failing && fn === 'message' && gmail.calls.at(-1) === 'message flaky') throw new Error('boom');
       };
       const before = (await cursor())!.historyId;
       await maintain(mailAt(5));
-      expect(await cursor()).toMatchObject({ historyId: before, blocked: { id: 'flaky', count: 1 } });
+      expect(await cursor()).toMatchObject({ historyId: before, blocked: { id: 'flaky', count: 1, at: mailAt(5) } });
       expect((await threads()).map((t) => t.title)).toEqual(['前']);
       await maintain(mailAt(10));
       expect(await cursor()).toMatchObject({ historyId: before, blocked: { id: 'flaky', count: 2 } });
@@ -535,16 +540,16 @@ describe('H5 H6 Gmail の個人の箱の同期（偽の Gmail）', () => {
       expect(await cursor()).toMatchObject({ historyId: String(gmail.head), blocked: null });
       expect(await state.source(ctx.ds.id)).toMatchObject({ status: 'ok' });
 
-      // 2 回失敗してから取れれば、回数は消える（次に別の ID が失敗しても 1 から）
+      // 2 回失敗してから取れれば、回数は消える
       gmail.deliver(gmailMessage({ from: from('d'), at: mailAt(20), id: 'late', subject: '遅れ' }));
       gmail.beforeCall = (fn) => {
-        if (failing && fn === 'message' && gmail.calls.at(-1) === 'message late') throw new GmailError(503, 'UNAVAILABLE');
+        if (failing && fn === 'message' && gmail.calls.at(-1) === 'message late') throw new Error('boom');
       };
       await maintain(mailAt(21));
-      await maintain(mailAt(22));
+      await maintain(mailAt(26));
       expect(await cursor()).toMatchObject({ blocked: { id: 'late', count: 2 } });
       failing = false;
-      await maintain(mailAt(23));
+      await maintain(mailAt(31));
       expect((await threads()).map((t) => t.title)).toContain('遅れ');
       expect(await cursor()).toMatchObject({ blocked: null });
     });
@@ -554,7 +559,7 @@ describe('H5 H6 Gmail の個人の箱の同期（偽の Gmail）', () => {
       gmail.deliver(gmailMessage({ from: from('a'), at: mailAt(1), id: 'pre', subject: '前' }));
       gmail.deliver(gmailMessage({ from: from('b'), at: mailAt(2), id: 'flaky', subject: '不安定' }));
       gmail.beforeCall = (fn) => {
-        if (fn === 'message' && gmail.calls.at(-1) === 'message flaky') throw new GmailError(503, 'UNAVAILABLE');
+        if (fn === 'message' && gmail.calls.at(-1) === 'message flaky') throw new Error('boom');
       };
       // pre は毎回取り込み直し（位置がレコードの切れ目まで進まないため）、そのたびに成功する。回数は 3 まで届く
       await maintain(mailAt(5));
@@ -562,6 +567,101 @@ describe('H5 H6 Gmail の個人の箱の同期（偽の Gmail）', () => {
       expect(await cursor()).toMatchObject({ blocked: { id: 'flaky', count: 2 } });
       await maintain(mailAt(15));
       expect(logs).toContainEqual(expect.objectContaining({ msg: 'gmail_message_skipped', id: 'flaky' }));
+    });
+
+    describe('D1 一時的な失敗は、どれだけ続いても何も失わない（数えない）', () => {
+      let llmError: Error | null;
+      beforeEach(async () => {
+        llmError = null;
+        // LLM が落ちる世界を、setup で作った service の判断者に重ねる
+        const decider = ctx.decider as unknown as { answer: (req: unknown) => unknown };
+        const inner = decider.answer;
+        decider.answer = (req) => {
+          if (llmError) throw llmError;
+          return inner(req);
+        };
+      });
+
+      it('LLM の障害が 5 回の見回りにまたがっても、何も失わず、回復したら取り込む', async () => {
+        await ctx.sync.handle({ kind: 'setup', dataSourceId: ctx.ds.id });
+        gmail.deliver(gmailMessage({ from: from('a'), at: mailAt(1), id: 'm1', subject: '一通目' }));
+        gmail.deliver(gmailMessage({ from: from('b'), at: mailAt(2), id: 'm2', subject: '二通目' }));
+        const before = (await cursor())!.historyId;
+        llmError = new LlmApiError(529, 'overloaded_error', 'Overloaded');
+        for (let i = 1; i <= 5; i++) await maintain(mailAt(5 * i));
+        expect(await signals()).toHaveLength(0);
+        expect(await cursor()).toMatchObject({ historyId: before });
+        expect((await cursor())!.blocked ?? null).toBeNull();
+        expect(logs.some((l) => l.msg === 'gmail_message_skipped')).toBe(false);
+        // 残高切れ（400）も同じ
+        llmError = new LlmApiError(400, 'invalid_request_error', 'credit balance is too low');
+        for (let i = 6; i <= 8; i++) await maintain(mailAt(5 * i));
+        expect(await signals()).toHaveLength(0);
+        llmError = null;
+        await maintain(mailAt(45));
+        expect((await threads()).map((t) => t.title).sort()).toEqual(['一通目', '二通目']);
+        expect(await cursor()).toMatchObject({ historyId: String(gmail.head) });
+      });
+
+      it('ゲートウェイの 502 が 5 回の見回りにまたがっても、何も失わない', async () => {
+        await ctx.sync.handle({ kind: 'setup', dataSourceId: ctx.ds.id });
+        gmail.deliver(gmailMessage({ from: from('a'), at: mailAt(1), id: 'g1', subject: '件' }));
+        gmail.beforeCall = (fn) => {
+          if (gmailDown && fn === 'message') throw new GatewayError('could not refresh the upstream access token', 502);
+        };
+        let gmailDown = true;
+        for (let i = 1; i <= 5; i++) await maintain(mailAt(5 * i));
+        expect(await signals()).toHaveLength(0);
+        expect(logs.some((l) => l.msg === 'gmail_message_skipped')).toBe(false);
+        gmailDown = false;
+        await maintain(mailAt(30));
+        expect((await threads()).map((t) => t.title)).toEqual(['件']);
+      });
+
+      it('Gmail の 5xx・429 も、5 回の見回りで失わない', async () => {
+        await ctx.sync.handle({ kind: 'setup', dataSourceId: ctx.ds.id });
+        gmail.deliver(gmailMessage({ from: from('a'), at: mailAt(1), id: 'r1', subject: '件' }));
+        let n = 0;
+        gmail.beforeCall = (fn) => {
+          if (n++ < 10 && fn === 'message') throw new GmailError(n % 2 ? 503 : 429, 'X');
+        };
+        for (let i = 1; i <= 5; i++) await maintain(mailAt(5 * i));
+        expect(await signals()).toHaveLength(0);
+        await maintain(mailAt(30));
+        expect(await signals()).toHaveLength(1);
+      });
+
+      it('キューが再試行する setup が数秒のうちに 3 回失敗しても飛ばさない（回数は見回り 1 回に 1 つ）', async () => {
+        await ctx.sync.handle({ kind: 'setup', dataSourceId: ctx.ds.id });
+        gmail.deliver(gmailMessage({ from: from('a'), at: mailAt(1), id: 'q1', subject: '件' }));
+        gmail.expireHistory();
+        gmail.beforeCall = (fn) => {
+          if (fn === 'message') throw new Error('boom');
+        };
+        // 位置が残っている setup は poll を回す（キューが数秒おきに再試行する）
+        for (let i = 0; i < 4; i++) {
+          ctx.clock.set(mailAt(5, i * 5));
+          await expect(ctx.sync.handle({ kind: 'setup', dataSourceId: ctx.ds.id })).rejects.toThrow('boom');
+        }
+        expect(logs.some((l) => l.msg === 'gmail_message_skipped')).toBe(false);
+        expect(await cursor()).toMatchObject({ blocked: { id: 'q1', count: 1 } });
+      });
+    });
+
+    it('本当に毒のある 1 通（種類の分からない失敗が毎回）は 3 回目の見回りで飛ばし、あとのメールは流れる', async () => {
+      await ctx.sync.handle({ kind: 'setup', dataSourceId: ctx.ds.id });
+      gmail.deliver(gmailMessage({ from: from('a'), at: mailAt(1), id: 'poison', subject: '毒' }));
+      gmail.beforeCall = (fn) => {
+        if (fn === 'message' && gmail.calls.at(-1) === 'message poison') throw new Error('weird');
+      };
+      await maintain(mailAt(5));
+      await maintain(mailAt(10));
+      expect(logs.some((l) => l.msg === 'gmail_message_skipped')).toBe(false);
+      gmail.deliver(gmailMessage({ from: from('b'), at: mailAt(11), id: 'after', subject: '後続' }));
+      await maintain(mailAt(15));
+      expect(logs).toContainEqual(expect.objectContaining({ msg: 'gmail_message_skipped', id: 'poison', count: 3 }));
+      expect((await threads()).map((t) => t.title)).toEqual(['後続']);
+      expect(await cursor()).toMatchObject({ historyId: String(gmail.head), blocked: null });
     });
 
     it('同意の問題は飛ばさずに broken（メッセージの失敗として数えない）', async () => {

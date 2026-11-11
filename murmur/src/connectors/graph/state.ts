@@ -69,8 +69,11 @@ export interface GmailCursor {
    * 拾い直しが終わるまで historyId は進めない（読んでいないメールを飛ばさない）
    */
   recovery?: GmailRecovery | null;
-  /** 取り込みが止まっているメッセージ 1 通の失敗の回数（同じ ID が続けて失敗した回数。3 回目で飛ばす）。飛ばした・取れたら null */
-  blocked?: { id: string; count: number } | null;
+  /**
+   * 取り込みが止まっているメッセージ 1 通の失敗の回数。種類の分からない失敗だけを、見回りごとに 1 回と数える
+   * （at は最後に数えた時刻。3 回目で飛ばす）。上限・障害などの一時的な失敗は数えない。飛ばした・取れたら null
+   */
+  blocked?: { id: string; count: number; at?: string } | null;
 }
 
 /**

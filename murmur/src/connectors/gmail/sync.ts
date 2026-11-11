@@ -1,13 +1,13 @@
 import type { MurmurService } from '../../app/service';
 import { onceDirectory, type DirectoryLoader } from '../directory-once';
 import type { ServiceDataSource } from '../../domain';
-import { DomainError } from '../../domain';
 import { GatewayAuthError } from '../../ports/gateway';
 import { GoogleApiNotEnabled } from '../google-error';
 import type { ConnectorStateStore } from '../../store/connector-state';
 import type { SyncJob } from '../graph/jobs';
 import type { GmailCursor, SourceState } from '../graph/state';
 import { GmailError, type GmailApi } from './api';
+import { classifyMessageFailure } from './failure';
 import { GmailMessage } from './message';
 import { normalizeGmailMessage } from './normalize';
 import { appendRecoveryIds, MAX_FETCH_PER_RUN, MAX_HISTORY_PAGES, MAX_RECOVERY_IDS, MAX_RECOVERY_PAGES, nextFailure, planHistory, planPoll, planRecoveryChunk, recoveryAfter, SAVE_EVERY } from './plan';
@@ -18,8 +18,9 @@ import { appendRecoveryIds, MAX_FETCH_PER_RUN, MAX_HISTORY_PAGES, MAX_RECOVERY_I
 // 同じメールが 2 度来ても sourceRef の重複排除（prepareInbound）で 1 通になる。
 // 購読がないので、キューの仕事は maintain と setup だけ（外す仕事 disconnect は消すものがなく何もしない）。
 // 同意の問題と、Gmail API がゲートウェイのプロジェクトで有効でないことは broken にして止め、上限（429・クォータの 403）やそのほかの失敗は次の見回りが試し直す。
-// 1 通で見回りを止めない: 取り込めない 1 通（やり直しても直らない失敗）は ID だけ記録して飛ばし、上限・5xx などの一時的な失敗は
-// 同じ ID が 3 回続けて失敗するまで見回りを止めて試し直す（失敗の回数は源の状態の blocked）。
+// 1 通で見回りを止めない: そのメッセージ固有でやり直しても直らない失敗（Gmail の 400・404・410 など、本体が断った取り込み）は ID だけ記録して飛ばす。
+// 上限・5xx・ネットワーク・ゲートウェイや AI 判断の不調は、どれだけ続いても数えず見回りを止めて試し直す（障害のあいだにメールを失わない）。
+// 種類の分からない失敗だけ、見回り 1 回につき 1 回と数え、同じ ID が 3 回続いたら飛ばす（回数と時刻は源の状態の blocked。分類は failure.ts）。
 // 書き込みは、そのつど今のデータソースの状態を読み直して、見回りが持つ項目だけを重ねる。読んでいる間に外された・別の接続に
 // つなぎ直された場合は、何も書かずに止める（外したのを元に戻さない）
 
@@ -279,14 +280,16 @@ export class GmailSync {
       }
     } catch (err) {
       if (err instanceof SyncSuperseded || err instanceof GatewayAuthError || err instanceof GoogleApiNotEnabled) throw err;
-      const permanent = isPermanentFailure(err);
+      const kind = classifyMessageFailure(err);
+      // 一時的・基盤の失敗は数えない。見回りを止めて、次の見回りでいつまでも試し直す
+      if (kind === 'transient') throw err;
       const blocked = ctx.source.gmail?.blocked ?? null;
-      const failure = nextFailure(blocked, id);
-      if (!permanent && !failure.skip) {
-        await this.putGmail(ctx, { blocked: { id, count: failure.count } });
+      const failure = nextFailure(blocked, id, this.deps.now());
+      if (kind === 'count' && !failure.skip) {
+        if (failure.counted) await this.putGmail(ctx, { blocked: { id, count: failure.count, at: this.deps.now() } });
         throw err;
       }
-      this.deps.log?.({ msg: 'gmail_message_skipped', dataSourceId: ctx.ds.id, id, permanent, count: failure.count });
+      this.deps.log?.({ msg: 'gmail_message_skipped', dataSourceId: ctx.ds.id, id, permanent: kind === 'skip', count: failure.count });
       if (blocked?.id === id) await this.putGmail(ctx, { blocked: null });
       return;
     }
@@ -316,10 +319,4 @@ export class GmailSync {
     ctx.source = { ...latest, ...patch(latest) };
     await this.deps.state.putSource(ctx.source);
   }
-}
-
-/** やり直しても直らない失敗か。Gmail の 4xx（上限・タイムアウトを除く）と、本体が断った取り込み */
-function isPermanentFailure(err: unknown): boolean {
-  if (err instanceof DomainError) return true;
-  return err instanceof GmailError && err.status >= 400 && err.status < 500 && ![401, 403, 408, 429].includes(err.status);
 }

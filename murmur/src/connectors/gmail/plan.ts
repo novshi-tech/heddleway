@@ -11,8 +11,10 @@ export const MAX_FETCH_PER_RUN = 50;
 export const SAVE_EVERY = 10;
 /** 拾い直しで集める ID の上限。超えたら新しい方だけを拾い直す（古い方は諦める） */
 export const MAX_RECOVERY_IDS = 2000;
-/** 同じメッセージが続けて失敗したら飛ばす回数 */
+/** 種類の分からない失敗が同じメッセージで続いたら飛ばす回数（見回りごとに 1 回と数える） */
 export const MAX_MESSAGE_FAILURES = 3;
+/** 同じメッセージの失敗をもう一度数えるまでの間隔（分）。キューの再試行が数秒で回数を使い切らないように */
+export const FAILURE_COUNT_INTERVAL_MINUTES = 4;
 /** 1 回の見回りで読む history.list のページの上限（1 ページ最大 500 レコード） */
 export const MAX_HISTORY_PAGES = 5;
 /** cursor が切れたときの拾い直しで、1 回の見回りに読む messages.list のページの上限（1 ページ 100 通） */
@@ -117,8 +119,20 @@ export function appendRecoveryIds(ids: readonly string[], add: readonly string[]
   return { ids: out, truncated };
 }
 
-/** 止まっているメッセージの失敗の回数。同じ ID が続けば足し、違う ID なら 1 から。MAX_MESSAGE_FAILURES 回目で飛ばす */
-export function nextFailure(blocked: { id: string; count: number } | null | undefined, id: string): { count: number; skip: boolean } {
-  const count = blocked && blocked.id === id ? blocked.count + 1 : 1;
-  return { count, skip: count >= MAX_MESSAGE_FAILURES };
+/**
+ * 止まっているメッセージの失敗の回数（種類の分からない失敗だけ。failure.ts）。同じ ID が続けば足し、違う ID なら 1 から。
+ * MAX_MESSAGE_FAILURES 回目で飛ばす。前に数えてから FAILURE_COUNT_INTERVAL_MINUTES 以内なら数え直さない（counted: false）
+ */
+export function nextFailure(
+  blocked: { id: string; count: number; at?: string } | null | undefined,
+  id: string,
+  now: string,
+): { count: number; skip: boolean; counted: boolean } {
+  if (blocked && blocked.id === id) {
+    const since = blocked.at ? (Date.parse(now) - Date.parse(blocked.at)) / 60_000 : Infinity;
+    if (since < FAILURE_COUNT_INTERVAL_MINUTES) return { count: blocked.count, skip: blocked.count >= MAX_MESSAGE_FAILURES, counted: false };
+    const count = blocked.count + 1;
+    return { count, skip: count >= MAX_MESSAGE_FAILURES, counted: true };
+  }
+  return { count: 1, skip: 1 >= MAX_MESSAGE_FAILURES, counted: true };
 }

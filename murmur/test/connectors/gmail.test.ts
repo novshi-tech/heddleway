@@ -3,6 +3,11 @@ import { GatewayGmailApi, GmailError } from '../../src/connectors/gmail/api';
 import { GoogleApiNotEnabled } from '../../src/connectors/google-error';
 import { bodyText, charsetOf, decodeBase64Url, htmlToText, MAX_BODY_INPUT, partText } from '../../src/connectors/gmail/body';
 import { decodeEncodedWords, messageIdOf, parseAddressList } from '../../src/connectors/gmail/header';
+import { GatewayError, UpstreamRefused } from '../../src/ports/gateway';
+import { classifyMessageFailure, type FailureClass } from '../../src/connectors/gmail/failure';
+import { LlmApiError, LlmRefusalError, RecordingMissingError } from '../../src/ingest/llm';
+import { ConcurrencyError } from '../../src/store/types';
+import { DomainError } from '../../src/domain';
 import { gmailMe } from '../../src/connectors/gmail/identity';
 import { GmailMessage, type HistoryRecord } from '../../src/connectors/gmail/message';
 import { MAX_BODY_CHARS, normalizeGmailMessage } from '../../src/connectors/gmail/normalize';
@@ -484,11 +489,44 @@ describe('H5 拾い直しと失敗の計画（純関数）', () => {
     expect(MAX_RECOVERY_IDS).toBe(2000);
   });
 
-  it('失敗の回数: 同じ ID が続けば加算、違う ID なら 1 から。3 回目で飛ばす', () => {
-    expect(nextFailure(null, 'x')).toEqual({ count: 1, skip: false });
-    expect(nextFailure({ id: 'x', count: 1 }, 'x')).toEqual({ count: 2, skip: false });
-    expect(nextFailure({ id: 'x', count: 2 }, 'x')).toEqual({ count: 3, skip: true });
-    expect(nextFailure({ id: 'x', count: 2 }, 'y')).toEqual({ count: 1, skip: false });
+  it('失敗の回数: 同じ ID が続けば加算、違う ID なら 1 から。3 回目で飛ばす。4 分以内は数え直さない', () => {
+    const t = (min: number) => new Date(Date.parse('2026-11-11T00:00:00Z') + min * 60_000).toISOString();
+    expect(nextFailure(null, 'x', t(0))).toEqual({ count: 1, skip: false, counted: true });
+    expect(nextFailure({ id: 'x', count: 1, at: t(0) }, 'x', t(5))).toEqual({ count: 2, skip: false, counted: true });
+    expect(nextFailure({ id: 'x', count: 2, at: t(5) }, 'x', t(10))).toEqual({ count: 3, skip: true, counted: true });
+    expect(nextFailure({ id: 'x', count: 2, at: t(5) }, 'y', t(10))).toEqual({ count: 1, skip: false, counted: true });
+    // 数秒後の再試行は数えない
+    expect(nextFailure({ id: 'x', count: 2, at: t(5) }, 'x', t(5.05))).toEqual({ count: 2, skip: false, counted: false });
+    expect(nextFailure({ id: 'x', count: 1, at: t(0) }, 'x', t(3.9)).counted).toBe(false);
+    expect(nextFailure({ id: 'x', count: 1, at: t(0) }, 'x', t(4)).counted).toBe(true);
+    // 時刻のない古い行は数える
+    expect(nextFailure({ id: 'x', count: 1 }, 'x', t(0)).counted).toBe(true);
+  });
+
+  it.each<[string, unknown, FailureClass]>([
+    ['DomainError（本体が断った）', new DomainError('invalid', 'x'), 'skip'],
+    ['Gmail 400', new GmailError(400, 'FAILED_PRECONDITION'), 'skip'],
+    ['Gmail 404', new GmailError(404, 'NOT_FOUND'), 'skip'],
+    ['Gmail 410', new GmailError(410, 'GONE'), 'skip'],
+    ['Gmail 401', new GmailError(401, 'UNAUTHENTICATED'), 'transient'],
+    ['Gmail 403（クォータ）', new GmailError(403, 'RESOURCE_EXHAUSTED'), 'transient'],
+    ['Gmail 408', new GmailError(408, 'TIMEOUT'), 'transient'],
+    ['Gmail 429', new GmailError(429, 'RESOURCE_EXHAUSTED'), 'transient'],
+    ['Gmail 500', new GmailError(500, 'INTERNAL'), 'transient'],
+    ['Gmail 503', new GmailError(503, 'UNAVAILABLE'), 'transient'],
+    ['ゲートウェイの 502', new GatewayError('could not refresh the upstream access token', 502), 'transient'],
+    ['口が断った', new UpstreamRefused('GET', '/x'), 'transient'],
+    ['LLM の API（400 でも）', new LlmApiError(400, 'invalid_request_error', 'credit balance is too low'), 'transient'],
+    ['LLM の API（529）', new LlmApiError(529, 'overloaded_error', 'x'), 'transient'],
+    ['LLM の拒否', new LlmRefusalError('x'), 'transient'],
+    ['記録がない', new RecordingMissingError('x'), 'transient'],
+    ['保存の競合', new ConcurrencyError(1), 'transient'],
+    ['ネットワーク（fetch failed）', new TypeError('fetch failed'), 'transient'],
+    ['時間切れ', Object.assign(new Error('x'), { name: 'TimeoutError' }), 'transient'],
+    ['種類の分からない Error', new Error('boom'), 'count'],
+    ['文字列を投げた', 'boom', 'count'],
+  ])('失敗の分類: %s → %s', (_name, err, expected) => {
+    expect(classifyMessageFailure(err)).toBe(expected);
   });
 });
 
