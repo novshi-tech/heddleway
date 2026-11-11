@@ -11,8 +11,6 @@ export function parseAddressList(value: string | undefined): string[] {
   let bare = ''; // 引用符・括弧・山括弧の外の文字
   let angle: string | null = null; // 閉じた最初の山括弧の中
   let collecting: string | null = null; // 山括弧の中を読んでいる途中
-  let quoted = false;
-  let comment = 0;
   const flush = () => {
     const addr = (angle ?? bare.match(/[^\s<>(),;:"]+@[^\s<>(),;:"]+/)?.[0] ?? '').trim();
     if (addr.includes('@') && !/\s/.test(addr)) out.push(addr);
@@ -20,37 +18,60 @@ export function parseAddressList(value: string | undefined): string[] {
     angle = null;
     collecting = null;
   };
+  // 閉じない ( " < が残りの一覧を飲み込まないよう、対応する閉じを先に見つける。閉じがなければ、その 1 文字を捨てて続ける。
+  // どれも 1 回で読む（見つからなかった探索を繰り返さない）
+  const parenEnd = matchParens(value);
+  let noQuoteClose = false;
   for (let i = 0; i < value.length; i++) {
     const c = value[i]!;
-    if (quoted) {
-      if (c === '\\') i++;
-      else if (c === '"') quoted = false;
-      continue;
-    }
-    if (comment > 0) {
-      if (c === '\\') i++;
-      else if (c === '(') comment++;
-      else if (c === ')') comment--;
-      continue;
-    }
     if (collecting !== null) {
       if (c === '>') {
         angle ??= collecting;
         collecting = null;
-      } else collecting += c;
-      continue;
+        continue;
+      }
+      // 山括弧の中で別の区切りに当たったら、閉じていない < とみなして中身を山括弧の外の文字に戻す（読めるアドレスは bare から取る）
+      if (c !== '<' && c !== '"' && c !== ',' && c !== ';') {
+        collecting += c;
+        continue;
+      }
+      bare += collecting;
+      collecting = null;
     }
-    if (c === '"') quoted = true;
-    else if (c === '(') comment++;
-    else if (c === '<') collecting = '';
+    if (c === '"') {
+      let j = i + 1;
+      if (!noQuoteClose) {
+        while (j < value.length && value[j] !== '"') j += value[j] === '\\' ? 2 : 1;
+        if (j >= value.length) noQuoteClose = true;
+      }
+      if (j < value.length && !noQuoteClose) i = j; // 引用符の中は捨てる
+    } else if (c === '(') {
+      const end = parenEnd.get(i);
+      if (end !== undefined) i = end; // コメントは捨てる
+    } else if (c === '<') collecting = '';
     else if (c === ',' || c === ';') flush();
     else if (c === ':') {
       // グループの名前の終わり（山括弧の外のコロン）: ここまでは名前なので捨てる
       bare = '';
     } else bare += c;
   }
+  if (collecting !== null) bare += collecting;
   flush();
   return out;
+}
+
+/** ( に対応する ) の位置（入れ子・\\ の逃がしを読む）。対応する ) のない ( は含まない */
+function matchParens(value: string): Map<number, number> {
+  const ends = new Map<number, number>();
+  if (!value.includes('(')) return ends;
+  const stack: number[] = [];
+  for (let i = 0; i < value.length; i++) {
+    const c = value[i]!;
+    if (c === '\\') i++;
+    else if (c === '(') stack.push(i);
+    else if (c === ')' && stack.length > 0) ends.set(stack.pop()!, i);
+  }
+  return ends;
 }
 
 /** 折り返されたヘッダー値（改行 + 空白）を 1 行にする */
@@ -95,7 +116,10 @@ function qBytes(text: string): Uint8Array {
 
 function bBytes(text: string): Uint8Array | null {
   try {
-    const bin = atob(text.replace(/\s+/g, '').replace(/=+$/, '').replace(/[^A-Za-z0-9+/]/g, ''));
+    // 使えない文字や、長さが合わない（4 で割って 1 余る）ものは壊れた語。空に読まず、呼び出し側が元のまま残す
+    const b64 = text.replace(/\s+/g, '').replace(/=+$/, '');
+    if (/[^A-Za-z0-9+/]/.test(b64) || b64.length % 4 === 1) return null;
+    const bin = atob(b64);
     return Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
   } catch {
     return null;

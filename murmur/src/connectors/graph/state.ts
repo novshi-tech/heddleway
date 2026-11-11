@@ -68,7 +68,26 @@ export interface GmailCursor {
    * （読み終えたらこれから続ける）、after は検索の起点（エポック秒）、pageToken は次に読む検索のページ。
    * 拾い直しが終わるまで historyId は進めない（読んでいないメールを飛ばさない）
    */
-  recovery?: { nextHistoryId: string; after: number; pageToken: string | null } | null;
+  recovery?: GmailRecovery | null;
+  /** 取り込みが止まっているメッセージ 1 通の失敗の回数（同じ ID が続けて失敗した回数。3 回目で飛ばす）。飛ばした・取れたら null */
+  blocked?: { id: string; count: number } | null;
+}
+
+/**
+ * 拾い直しの途中の状態。2 段で進める: (1) 検索で ID を全部集める（新しい順。1 回の見回りで読むページに上限があり、続きは pageToken から。
+ * 集める ID の総数にも上限があり、超えたら新しい方だけにして集め終える）。(2) 集め終えたら、古い方（ids の末尾）から上限の通数ずつ取り込み、
+ * 取り込んだ ID を外す。ids が空になったら、nextHistoryId に位置を移す。ids・listed のない行（この形になる前）は (1) の途中として読む
+ */
+export interface GmailRecovery {
+  nextHistoryId: string;
+  after: number;
+  pageToken: string | null;
+  /** 集めた ID（検索の順 = 新しい順。まだ取り込んでいないもの） */
+  ids?: string[];
+  /** ID を集め終えたか */
+  listed?: boolean;
+  /** 拾い直しを始めた時刻（profile.historyId を読んだとき）。ここまでのメールは取り込み済みになるので、終えたら lastSyncAt にする */
+  startedAt?: string;
 }
 
 /** 実行時に作ったデータソースの取り込みの状態。kind がなければ Outlook（Jira より前の行） */

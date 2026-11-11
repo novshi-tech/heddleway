@@ -1,6 +1,7 @@
 import type { MurmurService } from '../../app/service';
 import { onceDirectory, type DirectoryLoader } from '../directory-once';
 import type { ServiceDataSource } from '../../domain';
+import { DomainError } from '../../domain';
 import { GatewayAuthError } from '../../ports/gateway';
 import { GoogleApiNotEnabled } from '../google-error';
 import type { ConnectorStateStore } from '../../store/connector-state';
@@ -9,7 +10,7 @@ import type { GmailCursor, SourceState } from '../graph/state';
 import { GmailError, type GmailApi } from './api';
 import { GmailMessage } from './message';
 import { normalizeGmailMessage } from './normalize';
-import { MAX_HISTORY_PAGES, MAX_RECOVERY_PAGES, planHistory, planPoll, recoveryAfter } from './plan';
+import { appendRecoveryIds, MAX_FETCH_PER_RUN, MAX_HISTORY_PAGES, MAX_RECOVERY_IDS, MAX_RECOVERY_PAGES, nextFailure, planHistory, planPoll, planRecoveryChunk, recoveryAfter, SAVE_EVERY } from './plan';
 
 // Gmail の取り込み（0041）。変更の通知はなく（Pub/Sub は使わない）、5 分ごとの見回り（maintain）で履歴（history.list）を読む。
 // つないだ直後（setup）は profile.historyId を位置にするだけで、過去のメールは取らない（Outlook と同じ）。
@@ -17,6 +18,8 @@ import { MAX_HISTORY_PAGES, MAX_RECOVERY_PAGES, planHistory, planPoll, recoveryA
 // 同じメールが 2 度来ても sourceRef の重複排除（prepareInbound）で 1 通になる。
 // 購読がないので、キューの仕事は maintain と setup だけ（外す仕事 disconnect は消すものがなく何もしない）。
 // 同意の問題と、Gmail API がゲートウェイのプロジェクトで有効でないことは broken にして止め、上限（429・クォータの 403）やそのほかの失敗は次の見回りが試し直す。
+// 1 通で見回りを止めない: 取り込めない 1 通（やり直しても直らない失敗）は ID だけ記録して飛ばし、上限・5xx などの一時的な失敗は
+// 同じ ID が 3 回続けて失敗するまで見回りを止めて試し直す（失敗の回数は源の状態の blocked）。
 // 書き込みは、そのつど今のデータソースの状態を読み直して、見回りが持つ項目だけを重ねる。読んでいる間に外された・別の接続に
 // つなぎ直された場合は、何も書かずに止める（外したのを元に戻さない）
 
@@ -151,74 +154,143 @@ export class GmailSync {
     }
 
     const plan = planHistory({ cursor: g.historyId, pages, exhausted });
-    await this.ingest(ctx, plan.fetch);
+    // 履歴のレコードの順に取り込み、SAVE_EVERY 通ごとに、そこまでのレコードの id へ位置を進める（落ちても全部は取り直さない）。
+    // 位置は、処理し終えたレコードまでしか進めない
+    let sinceSave = 0;
+    for (const record of plan.records) {
+      for (const id of record.ids) await this.processMessage(ctx, id);
+      sinceSave += record.ids.length;
+      if (sinceSave >= SAVE_EVERY) {
+        await this.putGmail(ctx, { historyId: record.id });
+        sinceSave = 0;
+      }
+    }
     await this.putGmail(ctx, { historyId: plan.nextCursor ?? g.historyId });
     if (plan.complete) await this.put(ctx, { lastSyncAt: startedAt });
     else this.deps.log?.({ msg: 'gmail_sync_paged_out', dataSourceId: ctx.ds.id });
   }
 
   /**
-   * 位置が切れたときの拾い直し。最初に profile.historyId（新しい位置）を読んで残し、最後に読めた時刻より重なりの分だけ手前から
-   * messages.list で検索して取り込む。1 回に読むのは MAX_RECOVERY_PAGES ページまで。続きがあれば検索の位置（pageToken）を残し、
-   * 次の見回りが続ける。読み切ってから新しい位置に移る（拾い直しの間に着いたメールは、新しい位置からの履歴が拾う）
+   * 位置が切れたときの拾い直し。2 段で進める。
+   * (1) 最初に profile.historyId（新しい位置）を読んで残し、最後に読めた時刻より重なりの分だけ手前から messages.list で検索して、
+   * ID を全部集める（新しい順。1 回に読むのは MAX_RECOVERY_PAGES ページまで、続きは pageToken から。総数は MAX_RECOVERY_IDS まで。
+   * 超えたら新しい方だけにして、記録に残す）。残した pageToken が使えなくなったら（4xx）、集めた ID を捨てて最初から読み直す。
+   * (2) 集め終えたら、古い方から（スレッドの順は取り込んだ順なので、新しい順に取り込まない）1 回に MAX_FETCH_PER_RUN 通ずつ取り込み、
+   * 取り込んだ ID を残りから外す。残りが空になってから新しい位置に移る（拾い直しの間に着いたメールは、新しい位置からの履歴が拾う）
    */
   private async recover(ctx: Ctx, startedAt: string): Promise<void> {
     const api = await this.api(ctx);
     let rec = ctx.source.gmail?.recovery;
     if (!rec) {
+      const began = this.deps.now();
       const profile = await api.profile();
-      rec = { nextHistoryId: profile.historyId, after: recoveryAfter(ctx.source.lastSyncAt, ctx.source.connectedAt), pageToken: null };
+      rec = { nextHistoryId: profile.historyId, after: recoveryAfter(ctx.source.lastSyncAt, ctx.source.connectedAt), pageToken: null, ids: [], listed: false, startedAt: began };
       // 途中で失敗しても、同じ起点・同じ新しい位置で続ける
       await this.putGmail(ctx, { recovery: rec });
     }
-    const ids: string[] = [];
-    let pageToken = rec.pageToken;
-    let done = false;
-    for (let i = 0; i < MAX_RECOVERY_PAGES; i++) {
-      const r = await api.list(rec.after, pageToken);
-      ids.push(...r.ids);
-      if (!r.nextPageToken) {
-        done = true;
-        pageToken = null;
-        break;
+    let ids = rec.ids ?? [];
+    if (!rec.listed) {
+      let pageToken = rec.pageToken;
+      let listed = false;
+      let restarted = false;
+      let budget = MAX_RECOVERY_PAGES;
+      while (budget > 0) {
+        budget--;
+        let page;
+        try {
+          page = await api.list(rec.after, pageToken);
+        } catch (err) {
+          // 残した位置が使えなくなった（古くなった）: 集めた ID を捨てて最初から読み直す。起点と新しい位置は変えない
+          if (pageToken !== null && !restarted && err instanceof GmailError && err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429) {
+            this.deps.log?.({ msg: 'gmail_recovery_restarted', dataSourceId: ctx.ds.id, status: err.status });
+            restarted = true;
+            pageToken = null;
+            ids = [];
+            budget = MAX_RECOVERY_PAGES;
+            continue;
+          }
+          throw err;
+        }
+        const added = appendRecoveryIds(ids, page.ids);
+        ids = added.ids;
+        if (added.truncated) {
+          this.deps.log?.({ msg: 'gmail_recovery_truncated', dataSourceId: ctx.ds.id, kept: MAX_RECOVERY_IDS });
+          pageToken = null;
+          listed = true;
+          break;
+        }
+        if (!page.nextPageToken) {
+          pageToken = null;
+          listed = true;
+          break;
+        }
+        pageToken = page.nextPageToken;
       }
-      pageToken = r.nextPageToken;
+      rec = { ...rec, pageToken, ids, listed };
+      await this.putGmail(ctx, { recovery: rec });
+      if (!listed) {
+        this.deps.log?.({ msg: 'gmail_recovery_paged_out', dataSourceId: ctx.ds.id });
+        return;
+      }
     }
-    await this.ingest(ctx, ids, 'byDate');
-    if (!done) {
-      await this.putGmail(ctx, { recovery: { ...rec, pageToken } });
+
+    const { chunk, remaining } = planRecoveryChunk(ids, MAX_FETCH_PER_RUN);
+    // 取り込んだ ID は、配列の末尾から外していく。失敗したら、そこまでの分を残して止める
+    const left = [...ids];
+    let sinceSave = 0;
+    try {
+      for (const id of chunk) {
+        await this.processMessage(ctx, id);
+        left.pop();
+        if (++sinceSave >= SAVE_EVERY) {
+          await this.putGmail(ctx, { recovery: { ...rec, ids: left } });
+          sinceSave = 0;
+        }
+      }
+    } catch (err) {
+      if (!(err instanceof SyncSuperseded)) await this.putGmail(ctx, { recovery: { ...rec, ids: left } }).catch(() => undefined);
+      throw err;
+    }
+    if (remaining.length > 0) {
+      await this.putGmail(ctx, { recovery: { ...rec, ids: remaining } });
       this.deps.log?.({ msg: 'gmail_recovery_paged_out', dataSourceId: ctx.ds.id });
       return;
     }
     await this.putGmail(ctx, { historyId: rec.nextHistoryId, recovery: null });
-    await this.put(ctx, { lastSyncAt: startedAt });
+    // 保証できるのは、拾い直しを始めたとき（profile.historyId を読んだとき）までのメール。終えた時刻にしない
+    await this.put(ctx, { lastSyncAt: rec.startedAt ?? startedAt });
     this.deps.log?.({ msg: 'gmail_recovered', dataSourceId: ctx.ds.id });
   }
 
   /**
-   * メッセージを取って取り込む。消えていたもの（404）・読めない形・取り込まないラベルのものは飛ばす。
-   * 履歴の順（時系列）のまま取り込む。byDate は検索の結果（新しい順）を internalDate の昇順にそろえる
+   * メッセージ 1 通を取って取り込む。消えていたもの（404）・読めない形・取り込まないものは飛ばす。
+   * 失敗したときは、やり直しても直らないもの（4xx、本体が断った）か、同じ ID が MAX_MESSAGE_FAILURES 回続けて失敗したものを、
+   * ID だけ記録して飛ばす。それ以外（上限・5xx など）は失敗の回数を残して見回りを止め、次の見回りが試し直す。
+   * 同意の問題（broken にする）と、外された・つなぎ直された（SyncSuperseded）は、メッセージの失敗として数えない
    */
-  private async ingest(ctx: Ctx, ids: readonly string[], order: 'asGiven' | 'byDate' = 'asGiven'): Promise<void> {
-    const api = await this.api(ctx);
-    const pending: GmailMessage[] = [];
-    const take = async (msg: GmailMessage) => {
-      const n = normalizeGmailMessage(ctx.ds.id, msg);
-      if (n.kind === 'signal') await this.deps.service.ingestItem(n.signal);
-    };
-    for (const id of new Set(ids)) {
-      const raw = await api.message(id);
-      if (!raw) continue;
-      const parsed = GmailMessage.safeParse(raw);
-      if (!parsed.success) {
-        this.deps.log?.({ msg: 'gmail_message_unreadable', dataSourceId: ctx.ds.id, id });
-        continue;
+  private async processMessage(ctx: Ctx, id: string): Promise<void> {
+    try {
+      const raw = await (await this.api(ctx)).message(id);
+      const parsed = raw ? GmailMessage.safeParse(raw) : null;
+      if (parsed && !parsed.success) this.deps.log?.({ msg: 'gmail_message_unreadable', dataSourceId: ctx.ds.id, id });
+      if (parsed?.success) {
+        const n = normalizeGmailMessage(ctx.ds.id, parsed.data);
+        if (n.kind === 'signal') await this.deps.service.ingestItem(n.signal);
       }
-      if (order === 'asGiven') await take(parsed.data);
-      else pending.push(parsed.data);
+    } catch (err) {
+      if (err instanceof SyncSuperseded || err instanceof GatewayAuthError || err instanceof GoogleApiNotEnabled) throw err;
+      const permanent = isPermanentFailure(err);
+      const blocked = ctx.source.gmail?.blocked ?? null;
+      const failure = nextFailure(blocked, id);
+      if (!permanent && !failure.skip) {
+        await this.putGmail(ctx, { blocked: { id, count: failure.count } });
+        throw err;
+      }
+      this.deps.log?.({ msg: 'gmail_message_skipped', dataSourceId: ctx.ds.id, id, permanent, count: failure.count });
+      if (blocked?.id === id) await this.putGmail(ctx, { blocked: null });
+      return;
     }
-    pending.sort((a, b) => Number(a.internalDate ?? 0) - Number(b.internalDate ?? 0));
-    for (const msg of pending) await take(msg);
+    if (ctx.source.gmail?.blocked?.id === id) await this.putGmail(ctx, { blocked: null });
   }
 
   private async api(ctx: Ctx): Promise<GmailApi> {
@@ -244,4 +316,10 @@ export class GmailSync {
     ctx.source = { ...latest, ...patch(latest) };
     await this.deps.state.putSource(ctx.source);
   }
+}
+
+/** やり直しても直らない失敗か。Gmail の 4xx（上限・タイムアウトを除く）と、本体が断った取り込み */
+function isPermanentFailure(err: unknown): boolean {
+  if (err instanceof DomainError) return true;
+  return err instanceof GmailError && err.status >= 400 && err.status < 500 && ![401, 403, 408, 429].includes(err.status);
 }

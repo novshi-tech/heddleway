@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { GatewayGmailApi, GmailError } from '../../src/connectors/gmail/api';
 import { GoogleApiNotEnabled } from '../../src/connectors/google-error';
-import { bodyText, charsetOf, decodeBase64Url, htmlToText } from '../../src/connectors/gmail/body';
+import { bodyText, charsetOf, decodeBase64Url, htmlToText, MAX_BODY_INPUT, partText } from '../../src/connectors/gmail/body';
 import { decodeEncodedWords, messageIdOf, parseAddressList } from '../../src/connectors/gmail/header';
 import { gmailMe } from '../../src/connectors/gmail/identity';
 import { GmailMessage, type HistoryRecord } from '../../src/connectors/gmail/message';
-import { normalizeGmailMessage } from '../../src/connectors/gmail/normalize';
-import { MAX_FETCH_PER_RUN, planHistory, planPoll, recoveryAfter, RECOVERY_OVERLAP_MINUTES } from '../../src/connectors/gmail/plan';
+import { MAX_BODY_CHARS, normalizeGmailMessage } from '../../src/connectors/gmail/normalize';
+import { appendRecoveryIds, MAX_FETCH_PER_RUN, MAX_RECOVERY_IDS, nextFailure, planHistory, planPoll, planRecoveryChunk, recoveryAfter, RECOVERY_OVERLAP_MINUTES } from '../../src/connectors/gmail/plan';
 import { GMAIL_SCOPE } from '../../src/connectors/gmail/scope';
 import { normalizeMessage } from '../../src/connectors/graph/normalize';
 import { GraphMessage } from '../../src/connectors/graph/message';
@@ -95,6 +95,29 @@ describe('H5 Gmail のヘッダーの符号化された語（RFC 2047）', () =>
   });
 });
 
+describe('H5 Gmail のヘッダーの壊れた入力', () => {
+  it('壊れた base64 の語（使えない文字・長さが合わない）は、空に読まず元のまま残す。ほかの語は読む', () => {
+    expect(decodeEncodedWords('=?UTF-8?B?!!!?=')).toBe('=?UTF-8?B?!!!?=');
+    expect(decodeEncodedWords('=?UTF-8?B?5?=')).toBe('=?UTF-8?B?5?=');
+    expect(decodeEncodedWords('Re: =?UTF-8?B?!!!?= と =?UTF-8?B?5LuK5pel?=')).toBe('Re: =?UTF-8?B?!!!?= と 今日');
+    // 空の語は空のまま（壊れてはいない）
+    expect(decodeEncodedWords('a=?UTF-8?B??=b')).toBe('ab');
+  });
+
+  it('閉じていない < や " が、残りの一覧を飲み込まない（読める分は取る。投げない・止まらない）', () => {
+    expect(parseAddressList('Taro <taro@ex.com, b@c.com')).toEqual(['taro@ex.com', 'b@c.com']);
+    expect(parseAddressList('"Taro <taro@ex.com>, b@c.com')).toEqual(['taro@ex.com', 'b@c.com']);
+    expect(parseAddressList('Taro (memo, b@c.com')).toEqual(['b@c.com']);
+    // 閉じていても今までどおり
+    expect(parseAddressList('"Last, First" <a@b.example>, c@d.example')).toEqual(['a@b.example', 'c@d.example']);
+    // 長い・壊れた入力でも長さに比例する
+    const started = Date.now();
+    expect(parseAddressList('<'.repeat(200_000))).toEqual([]);
+    expect(parseAddressList('"<'.repeat(100_000) + 'x@y.example')).toEqual(['x@y.example']);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+});
+
 describe('H5 Gmail の本文（MIME・base64url・文字コード）', () => {
   it('base64url をパディングなしでも・あっても・改行まじりでも読む。日本語（UTF-8）を壊さない', () => {
     const text = 'ご確認ください。見積は ¥1,000 です 🙂';
@@ -118,6 +141,64 @@ describe('H5 Gmail の本文（MIME・base64url・文字コード）', () => {
     const html = '<html><head><title>題</title><style>p{color:red}</style></head><body><script>alert(1)</script><p>お世話になっております。</p><div>1行目<br>2行目</div><p>A &amp; B &lt;c&gt; &quot;d&quot; &#39;e&#39; &#x3042; &nbsp;f</p><ul><li>一</li><li>二</li></ul></body></html>';
     expect(bodyText(part('text/html', html))).toBe('お世話になっております。\n1行目\n2行目\nA & B <c> "d" \'e\' あ f\n一\n二');
     expect(htmlToText('&amp;lt; &unknown; &#0; &#xD800;')).toBe('&lt; &unknown; &#0; &#xD800;');
+  });
+
+  it('<title> の文字は落とす。属性値の引用符の中の > でタグを終わらせず、断片を本文に漏らさない', () => {
+    expect(htmlToText('<html><head><title>題</title></head><body><title>これも</title>本文</body></html>')).toBe('本文');
+    expect(htmlToText('<a title="x>y">t</a>')).toBe('t');
+    expect(htmlToText("<a title='x>y' href=\"u>v\">t</a>後")).toBe('t後');
+    // 引用符が閉じていなければ、最初の > で終わる
+    expect(htmlToText('<a title="x>y</a>後')).toBe('y後');
+    // タグでない < は文字として残す
+    expect(htmlToText('a < b and 3<4 <3 &lt; c')).toBe('a < b and 3<4 <3 < c');
+    // doctype・処理命令・コメント
+    expect(htmlToText('<!DOCTYPE html><?xml version="1.0"?><!-- c -->本文<!-- 閉じない')).toBe('本文');
+  });
+
+  it('同じ階層に text/plain が並んでいたら、順に改行でつなぐ（Apple Mail はインライン画像の前後で分ける）。入れ子の先頭の text/plain だけのときは今までどおり', () => {
+    const split = part('multipart/mixed', null, {
+      parts: [part('text/plain', '前半'), part('image/jpeg', null, { filename: 'a.jpg' }), part('text/plain', '後半')],
+    });
+    expect(bodyText(split)).toBe('前半\n後半');
+    // 添付（ファイル名あり）の text/plain は混ぜない
+    expect(bodyText(part('multipart/mixed', null, { parts: [part('text/plain', '本文'), part('text/plain', 'メモ', { filename: 'm.txt' }), part('text/plain', '続き')] }))).toBe('本文\n続き');
+    expect(bodyText(part('multipart/mixed', null, { parts: [part('multipart/alternative', null, { parts: [part('text/plain', '入れ子')] }), part('text/plain', '後ろ')] }))).toBe('入れ子');
+  });
+
+  describe('1 通で見回りが止まらない（変換の前に切り、1 回で読む）', () => {
+    const fast = (name: string, input: string, check: (out: string) => void) => {
+      const started = performance.now();
+      const out = htmlToText(input);
+      const ms = performance.now() - started;
+      console.info(`htmlToText ${name}: ${ms.toFixed(1)} ms`);
+      expect(ms).toBeLessThan(1000);
+      check(out);
+    };
+
+    it('閉じていないコメント・script・< を並べた入力（400 KB・350 KB・50 KB）も 1 秒以内。閉じていないものは終わりまで捨てる', () => {
+      fast('<!-- x100000', '<!--'.repeat(100_000), (out) => expect(out).toBe(''));
+      fast('<script x50000', '<script'.repeat(50_000), (out) => expect(out).toBe(''));
+      fast('< x50000', '<'.repeat(50_000), (out) => expect(out).toBe('<'.repeat(50_000)));
+      // ほかの形でも同じ
+      fast('<style x', '本文<style>'.repeat(50_000), (out) => expect(out).toBe('本文'));
+      fast('<a x=" x', '<a x="'.repeat(60_000), (out) => expect(out).toBe(''));
+      fast('<b> unclosed x', '<b '.repeat(80_000), (out) => expect(out).toBe(''));
+      fast('<head x', '<head>'.repeat(50_000) + '本文', (out) => expect(out).toBe(''));
+      fast('<p>x', '<p>あ</p>'.repeat(25_000), (out) => expect(out.split('\n')).toHaveLength(25_000));
+    });
+
+    it('本文の部分は先頭の MAX_BODY_INPUT（256 KB）までしか読まない（plain も HTML も。切るだけで飛ばさない）', () => {
+      const big = 'a'.repeat(MAX_BODY_INPUT + 5000);
+      expect(partText(part('text/plain', big))).toHaveLength(MAX_BODY_INPUT);
+      expect(bodyText(part('text/plain', big))).toHaveLength(MAX_BODY_INPUT);
+      expect(bodyText(part('text/html', `<p>${big}</p>`)).startsWith('aaaa')).toBe(true);
+      expect(bodyText(part('text/html', `<p>${big}</p>`))).toHaveLength(MAX_BODY_INPUT - 3);
+      // 並んだ plain の合計も切る
+      const two = part('multipart/mixed', null, { parts: [part('text/plain', big), part('text/plain', big)] });
+      expect(bodyText(two)).toHaveLength(MAX_BODY_INPUT);
+      // 取り込むのは先頭。HTML の変換も、切った先頭だけ
+      expect(htmlToText('先頭' + 'x'.repeat(MAX_BODY_INPUT) + '<script>')).toHaveLength(MAX_BODY_INPUT);
+    });
   });
 
   it('multipart/mixed の中の multipart/alternative と添付: 入れ子の text/plain を取り、添付（ファイル名あり）は本文にしない', () => {
@@ -165,6 +246,37 @@ describe('H5 引用の履歴の除去（Outlook と共有）', () => {
     expect(stripQuoted('承知しました。\n\nOn Tue, Nov 10, 2026 at 10:00 AM 山田 太郎 <\ntaro@example.com> wrote:\n\n> 見積をお願いします')).toBe('承知しました。\n');
     expect(stripQuoted('承知しました。\n\n2026年11月10日(火) 10:00 山田太郎 <taro@example.com>:\n\n> 見積をお願いします\n> お願いします')).toBe('承知しました。\n');
     expect(stripQuoted('承知しました。\n2026年11月10日(火) 10:00 山田太郎 <taro@example.com>:\n> 見積')).toBe('承知しました。');
+  });
+
+  it('引用の間に答えを書いた返信（インライン返信）は、見出しで切らない。> の行だけ落とす', () => {
+    const inline = stripQuoted('ご質問への回答です。\n\n2026年11月10日のお問い合わせ:\n> 納期はいつですか\n12月1日です。\n> 価格は?\n10万円です。');
+    expect(inline).toContain('ご質問への回答です。');
+    expect(inline).toContain('12月1日です。');
+    expect(inline).toContain('10万円です。');
+    expect(inline).not.toContain('>');
+    expect(inline).not.toContain('納期はいつですか');
+    // 英語の折り返した見出しの形でも、あとの答えは残す
+    expect(stripQuoted('Hi,\nOn Monday we will meet; as Bob\nwrote:\n> agenda\nSee you.')).toContain('See you.');
+    // 1 行の On ... wrote: でも、> の間の答えは残す
+    const english = stripQuoted('Hi\nOn Tue, Nov 10, 2026 at 10:00 AM Taro <taro@example.com> wrote:\n> Q1?\nA1.\n> Q2?\nA2.');
+    expect(english).toContain('A1.');
+    expect(english).toContain('A2.');
+    expect(english).not.toContain('Q1');
+    // 日本語の日時の見出しの 1 行（書きました）も同じ
+    expect(stripQuoted('了解。\n2026/11/10 10:00 山田が書きました:\n> 質問\n回答です')).toContain('回答です');
+  });
+
+  it('日本語の Gmail の見出しが < のところで折り返されても、下に引用だけが続くなら切る。答えが混ざるなら切らない', () => {
+    expect(stripQuoted('承知しました。\n\n2026年11月10日(火) 10:00 山田 太郎 <\ntaro@example.com>:\n\n> 見積をお願いします\n> お願いします')).toBe('承知しました。\n');
+    const mixed = stripQuoted('承知しました。\n2026年11月10日(火) 10:00 山田 太郎 <\ntaro@example.com>:\n> 見積は?\n10万円です。');
+    expect(mixed).toContain('10万円です。');
+    expect(mixed).not.toContain('見積は?');
+  });
+
+  it('下に引用だけが続く普通の Gmail の返信は、今までどおり見出しから切る（空行・最後の空行まで）', () => {
+    expect(stripQuoted('承知しました。\n\nOn Tue, Nov 10, 2026 at 10:00 AM Taro <taro@example.com> wrote:\n\n> a\n>\n> b\n\n')).toBe('承知しました。\n');
+    expect(stripQuoted('承知しました。\n\n2026年11月10日のお問い合わせ:\n> a\n\n> b')).toBe('承知しました。\n');
+    expect(stripQuoted('了解\nOn Tue Taro wrote:\n前の本文（> なしの引用）\nもう 1 行')).toBe('了解');
   });
 
   it('引用の行が続かない日付の行は本文として残す（誤って切らない）', () => {
@@ -240,6 +352,25 @@ describe('H5 Gmail の message の正規化', () => {
     expect(skip(gmailMessage({ from: 'a@b.example', at, labels: ['INBOX', 'STARRED', 'IMPORTANT', 'UNREAD', 'SENT'] })).kind).toBe('signal');
   });
 
+  it('受信トレイか送信済みにあるメールだけ取る（Outlook の inbox・sentitems と同じ）。フィルタでアーカイブされたもの（INBOX がない）は理由つきで飛ばす', () => {
+    const at = '2026-11-10T01:00:00.000Z';
+    const skip = (m: unknown) => normalizeGmailMessage('d', parse(m));
+    expect(skip(gmailMessage({ from: 'a@b.example', at, labels: ['CATEGORY_UPDATES', 'UNREAD'] }))).toEqual({ kind: 'skip', reason: 'not in inbox or sent' });
+    expect(skip({ ...gmailMessage({ from: 'a@b.example', at }), labelIds: undefined })).toEqual({ kind: 'skip', reason: 'not in inbox or sent' });
+    expect(skip(gmailMessage({ from: 'a@b.example', at, labels: ['SENT'] })).kind).toBe('signal');
+    expect(skip(gmailMessage({ from: 'a@b.example', at, labels: ['INBOX', 'CATEGORY_PROMOTIONS', 'IMPORTANT'] })).kind).toBe('signal');
+    // 取らないラベルが先（下書きは SENT でなくても理由は draft）
+    expect(skip(gmailMessage({ from: 'a@b.example', at, labels: ['DRAFT', 'SENT'] }))).toEqual({ kind: 'skip', reason: 'draft' });
+  });
+
+  it('本文は MAX_BODY_CHARS（10 万文字）で切る（サロゲートペアの途中では切らない）', () => {
+    const at = '2026-11-10T01:00:00.000Z';
+    expect(signalOf(gmailMessage({ from: 'a@b.example', at, body: 'a'.repeat(MAX_BODY_CHARS + 10) })).body).toHaveLength(MAX_BODY_CHARS);
+    expect(signalOf(gmailMessage({ from: 'a@b.example', at, body: '短い' })).body).toBe('短い');
+    const emoji = signalOf(gmailMessage({ from: 'a@b.example', at, body: 'a'.repeat(MAX_BODY_CHARS - 1) + '🙂🙂' })).body;
+    expect(emoji).toHaveLength(MAX_BODY_CHARS - 1);
+  });
+
   it('From がなければ Sender を使う。本文も件名もないメールは空の本文で取り込む', () => {
     const m = gmailMessage({ from: 'x@y.example', at: '2026-11-10T01:00:00.000Z', html: '' });
     m.payload.headers = m.payload.headers.filter((h) => h.name !== 'From' && h.name !== 'Subject').concat({ name: 'Sender', value: 'sender@y.example' });
@@ -255,19 +386,20 @@ describe('H5 Gmail の message の正規化', () => {
 });
 
 describe('H5 つないだメールボックスの本人（profile と sendAs）', () => {
-  it('主のアドレスが先頭。送信元として使える別名（主か確認済み）を足し、保留中・拒否は足さない。大文字小文字の重複は 1 つ', () => {
+  it('本人のアドレスは主のアドレス（profile）だけ。sendAs の別名（確認済みでも、グループや外部の共有のアドレスでも）は入れない。表示名は主の sendAs から', () => {
     const me = gmailMe({ emailAddress: 'bob@gws.example' }, [
       { sendAsEmail: 'Bob@gws.example', displayName: 'Bob Tanaka', isPrimary: true },
       { sendAsEmail: 'sales@gws.example', verificationStatus: 'accepted' },
       { sendAsEmail: 'pending@gws.example', verificationStatus: 'pending' },
       { sendAsEmail: 'other@elsewhere.example' },
     ]);
-    expect(me).toEqual({ addresses: ['bob@gws.example', 'sales@gws.example'], displayName: 'Bob Tanaka' });
+    expect(me).toEqual({ addresses: ['bob@gws.example'], displayName: 'Bob Tanaka' });
   });
 
   it('sendAs がなくても profile のアドレスは使える。表示名がなければ空', () => {
     expect(gmailMe({ emailAddress: ' bob@gws.example ' }, [])).toEqual({ addresses: ['bob@gws.example'], displayName: '' });
     expect(gmailMe({ emailAddress: 'bob@gws.example' }, [{ sendAsEmail: 'bob@gws.example', isPrimary: true, displayName: '  ' }]).displayName).toBe('');
+    expect(gmailMe({ emailAddress: 'not-an-address' }, []).addresses).toEqual([]);
   });
 });
 
@@ -280,53 +412,83 @@ describe('H5 履歴の計画（純関数。cursor は未処理の履歴を飛ば
 
   it('全部処理したら、最後のページの historyId（箱の最新）まで進める。複数ページでも同じ', () => {
     const pages = [page([rec(11, 'a'), rec(12, 'b')], '20', 'next'), page([rec(13, 'c')], '20')];
-    expect(planHistory({ cursor: '10', pages, exhausted: true })).toEqual({ fetch: ['a', 'b', 'c'], nextCursor: '20', complete: true });
+    expect(planHistory({ cursor: '10', pages, exhausted: true })).toMatchObject({ fetch: ['a', 'b', 'c'], nextCursor: '20', complete: true });
   });
 
   it('履歴が空（history なし）でも、historyId まで進める（cursor が古くなって切れるのを避ける）', () => {
-    expect(planHistory({ cursor: '10', pages: [page([], '15')], exhausted: true })).toEqual({ fetch: [], nextCursor: '15', complete: true });
+    expect(planHistory({ cursor: '10', pages: [page([], '15')], exhausted: true })).toMatchObject({ fetch: [], nextCursor: '15', complete: true });
     // メッセージを足さないレコード（messagesAdded なし）だけでも同じ
-    expect(planHistory({ cursor: '10', pages: [page([{ id: '11' }], '15')], exhausted: true })).toEqual({ fetch: [], nextCursor: '15', complete: true });
+    expect(planHistory({ cursor: '10', pages: [page([{ id: '11' }], '15')], exhausted: true })).toMatchObject({ fetch: [], nextCursor: '15', complete: true });
   });
 
   it('上限に達したら、最後に処理し終えたレコードの id で止める（そのレコードの分は全部入る・次のレコードは入らない）', () => {
     const pages = [page([rec(11, 'a', 'b'), rec(12, 'c'), rec(13, 'd', 'e'), rec(14, 'f')], '99')];
-    expect(planHistory({ cursor: '10', pages, exhausted: true, maxFetch: 3 })).toEqual({ fetch: ['a', 'b', 'c'], nextCursor: '12', complete: false });
-    expect(planHistory({ cursor: '10', pages, exhausted: true, maxFetch: 5 })).toEqual({ fetch: ['a', 'b', 'c', 'd', 'e'], nextCursor: '13', complete: false });
-    expect(planHistory({ cursor: '10', pages, exhausted: true, maxFetch: 6 })).toEqual({ fetch: ['a', 'b', 'c', 'd', 'e', 'f'], nextCursor: '99', complete: true });
+    expect(planHistory({ cursor: '10', pages, exhausted: true, maxFetch: 3 })).toMatchObject({ fetch: ['a', 'b', 'c'], nextCursor: '12', complete: false });
+    expect(planHistory({ cursor: '10', pages, exhausted: true, maxFetch: 5 })).toMatchObject({ fetch: ['a', 'b', 'c', 'd', 'e'], nextCursor: '13', complete: false });
+    expect(planHistory({ cursor: '10', pages, exhausted: true, maxFetch: 6 })).toMatchObject({ fetch: ['a', 'b', 'c', 'd', 'e', 'f'], nextCursor: '99', complete: true });
   });
 
   it('先頭のレコード 1 つが上限より多くても、そのレコードは取って進む（進まなくなるのを避ける）', () => {
     const pages = [page([rec(11, 'a', 'b', 'c'), rec(12, 'd')], '99')];
-    expect(planHistory({ cursor: '10', pages, exhausted: true, maxFetch: 2 })).toEqual({ fetch: ['a', 'b', 'c'], nextCursor: '11', complete: false });
+    expect(planHistory({ cursor: '10', pages, exhausted: true, maxFetch: 2 })).toMatchObject({ fetch: ['a', 'b', 'c'], nextCursor: '11', complete: false });
   });
 
   it('続きのページがあるのに打ち切ったら、historyId ではなく最後のレコードの id まで（historyId は箱の最新なので、飛ばしてしまう）', () => {
     const pages = [page([rec(11, 'a'), rec(12, 'b')], '99', 'more')];
-    expect(planHistory({ cursor: '10', pages, exhausted: false })).toEqual({ fetch: ['a', 'b'], nextCursor: '12', complete: false });
+    expect(planHistory({ cursor: '10', pages, exhausted: false })).toMatchObject({ fetch: ['a', 'b'], nextCursor: '12', complete: false });
   });
 
   it('同じメッセージは 1 回（レコードをまたいでも）。取り込まないラベル（DRAFT・SPAM・TRASH・CHAT）は取らない', () => {
     const pages = [
       page([rec(11, 'a', 'a', ['d', ['DRAFT']]), rec(12, 'a', ['s', ['INBOX', 'SPAM']]), rec(13, ['t', ['TRASH']], ['c', ['CHAT']], 'b')], '20'),
     ];
-    expect(planHistory({ cursor: '10', pages, exhausted: true })).toEqual({ fetch: ['a', 'b'], nextCursor: '20', complete: true });
+    expect(planHistory({ cursor: '10', pages, exhausted: true })).toMatchObject({ fetch: ['a', 'b'], nextCursor: '20', complete: true });
     // 最初に見たときに下書きでも、あとのレコードで下書きでなくなっていれば取る
     expect(planHistory({ cursor: '10', pages: [page([rec(11, ['x', ['DRAFT']]), rec(12, ['x', ['SENT']])], '20')], exhausted: true }).fetch).toEqual(['x']);
   });
 
   it('上限は取るものの数で数える（落としたものは数えない）', () => {
     const records = [rec(11, ['d', ['DRAFT']]), rec(12, 'a'), rec(13, ['s', ['SPAM']]), rec(14, 'b')];
-    expect(planHistory({ cursor: '10', pages: [page(records, '99')], exhausted: true, maxFetch: 1 })).toEqual({ fetch: ['a'], nextCursor: '13', complete: false });
+    expect(planHistory({ cursor: '10', pages: [page(records, '99')], exhausted: true, maxFetch: 1 })).toMatchObject({ fetch: ['a'], nextCursor: '13', complete: false });
   });
 
   it('cursor と同じ id のレコードは処理済みとして飛ばす（startHistoryId を含めて返す場合でも、同じレコードで止まり続けない）', () => {
     const pages = [page([rec(10, 'a', 'b', 'c'), rec(11, 'd')], '99')];
-    expect(planHistory({ cursor: '10', pages, exhausted: true, maxFetch: 1 })).toEqual({ fetch: ['d'], nextCursor: '99', complete: true });
+    expect(planHistory({ cursor: '10', pages, exhausted: true, maxFetch: 1 })).toMatchObject({ fetch: ['d'], nextCursor: '99', complete: true });
   });
 
-  it('1 回の見回りの上限は 200 通', () => {
-    expect(MAX_FETCH_PER_RUN).toBe(200);
+  it('レコードごとの取る ID も返す（取るものがないレコードも入る。重複・落としたものは入らない）。取り込みの途中で位置を書くための切れ目', () => {
+    const pages = [page([rec(11, 'a', 'b'), { id: '12' }, rec(13, 'a', ['d', ['DRAFT']], 'c')], '20')];
+    expect(planHistory({ cursor: '10', pages, exhausted: true }).records).toEqual([
+      { id: '11', ids: ['a', 'b'] },
+      { id: '12', ids: [] },
+      { id: '13', ids: ['c'] },
+    ]);
+  });
+
+  it('1 回の見回りの上限は 50 通', () => {
+    expect(MAX_FETCH_PER_RUN).toBe(50);
+  });
+});
+
+describe('H5 拾い直しと失敗の計画（純関数）', () => {
+  it('拾い直しの取り込みは古い方（検索の ID 配列の末尾）から。残りは新しい順のまま', () => {
+    expect(planRecoveryChunk(['n3', 'n2', 'n1', 'o2', 'o1'], 2)).toEqual({ chunk: ['o1', 'o2'], remaining: ['n3', 'n2', 'n1'] });
+    expect(planRecoveryChunk(['a', 'b'], 5)).toEqual({ chunk: ['b', 'a'], remaining: [] });
+    expect(planRecoveryChunk([], 5)).toEqual({ chunk: [], remaining: [] });
+  });
+
+  it('集める ID は重ねない。上限を超えたら新しい方（先に来た方）だけ残して truncated', () => {
+    expect(appendRecoveryIds(['a', 'b'], ['b', 'c'])).toEqual({ ids: ['a', 'b', 'c'], truncated: false });
+    expect(appendRecoveryIds(['a', 'b'], ['c', 'd'], 3)).toEqual({ ids: ['a', 'b', 'c'], truncated: true });
+    expect(MAX_RECOVERY_IDS).toBe(2000);
+  });
+
+  it('失敗の回数: 同じ ID が続けば加算、違う ID なら 1 から。3 回目で飛ばす', () => {
+    expect(nextFailure(null, 'x')).toEqual({ count: 1, skip: false });
+    expect(nextFailure({ id: 'x', count: 1 }, 'x')).toEqual({ count: 2, skip: false });
+    expect(nextFailure({ id: 'x', count: 2 }, 'x')).toEqual({ count: 3, skip: true });
+    expect(nextFailure({ id: 'x', count: 2 }, 'y')).toEqual({ count: 1, skip: false });
   });
 });
 

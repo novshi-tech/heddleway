@@ -4,6 +4,23 @@
 
 ## いまの状態
 
+**2026-11-11（5）: Gmail のコネクタのレビュー指摘を直した（`docs/adr/0041` の決定 2 の範囲。ADR は変えていない）。**
+- 本文の変換（`gmail/body.ts`）は 1 回で前から読む形にした（閉じていないコメント・script・`<` を並べた 400 KB の入力で 50 秒かかっていた。いまは数 ms）。本文の部分は先頭の 256 KB（plain も HTML も）で切り、`<title>` は捨て、属性値の引用符の中の `>` でタグを終わらせない。正規化後の本文は 10 万文字で切る。同じ階層に並んだ text/plain（Apple Mail がインライン画像の前後で分ける）は順に改行でつなぐ。壊れた base64 の符号化された語は元のまま残し、閉じていない `<` `"` `(` はアドレスの一覧の残りを飲み込まない。
+- 本人のアイデンティティにするのはメールボックス自身のアドレス（profile）だけにした。sendAs の別名（グループや外部の共有のアドレス）は本人の Contact に付けない（共有のアドレスのメールが本人の送信になり、2 人目がつなげなくなっていた）。別名はあとから Contact の API で付ける。sendAs は主の表示名にだけ使う。
+- ゲートウェイの接続を消して足し直して資格情報の ID が変わっても、同じ本人・同じ種類・同じ主のアドレスのメールボックスとして付け替えてつなぎ直す（`connectMailbox`。Outlook も同じ。Outlook はつなぎ直しのとき、フォルダの位置とつないだ時刻を残すようにもなった）。つなぎ直しの呼び出しが setup の前にもう一度来ても、残した位置とつないだ時刻を捨てない。
+- 位置が切れたときの拾い直しは、(1) ID を全部集めて（最大 2,000 通。超えたら新しい方だけにして `gmail_recovery_truncated` を記録）、(2) 古い方から 50 通ずつ取り込む 2 段にした（取り込んだ順がスレッドの順なので、新しい順に取り込むと逆になっていた）。集めた ID は源の状態（`recovery.ids`）に残し、取り込んだものから外す。残した検索の pageToken が 4xx になったら、集めた ID を捨てて最初から読み直す。終えたときの `lastSyncAt` は拾い直しを始めた時刻にした。
+- 1 回の見回りの取得は 50 通まで。取り込みの途中でも、履歴のレコードの切れ目で 10 通ごとに位置を書く。取り込めない 1 通（4xx・本体が断った）は ID だけ記録して飛ばし、上限・5xx は同じ ID が 3 回続けて失敗するまで止めて試し直す（失敗の回数は `gmail.blocked`）。
+- 取り込むのは、取ったメールのラベルに INBOX か SENT があるものだけ（Outlook の inbox・sentitems と同じ。フィルタでアーカイブされたものは飛ばす）。
+- `stripQuoted` の Gmail の見出し（`On … wrote:`、日本語の日時の見出し。日本語は `<` での折り返しも）は、下が引用（`>`）の行だけ（または `>` が 1 つもない）ときだけ切る。引用の間に答えを書いたインライン返信は、`>` の行だけを落として答えを残す。Outlook の見出しの規則は変えていない。
+
+実物の Gmail で確かめること:
+- 下書きを送信したとき（web の画面と API の両方）、`messagesAdded` のレコードに新しいメッセージ ID が `SENT` つきで出るか。
+- スパムから戻したメールが、`messageAdded` だけを読んでいて拾えるか（`labelAdded` を読む必要があるか）。
+- `history.list` が返すメッセージのラベルは、追加された時点のものか、いまのものか。
+- `messages.list` の pageToken が、見回りをまたいで（5 分後でも）使えるか。何分・何時間で 4xx になるか。
+- POP や Gmailify で取り込んだ古い `internalDate` のメールが、`after:` の窓の外になって拾い直しで落ちないか。
+- 大きな text/plain の部分が、`body.data` なしで `attachmentId` だけで返ってくることがあるか（あれば本文が空になる）。
+
 **2026-11-11（4）: 読める口のパスのすり抜けを塞ぎ、Gmail・Google Tasks のレビュー指摘を直した（全コネクタに効く）。** 読める口の照合（`inScope`）は生の文字列を見ていたが、ゲートウェイの中核が送るのは WHATWG で正規化したパスで、`\`・`..`・`%2e%2e`・`#` で口の外へ出られた。照合と送るパスを 1 つの関数 `scopeTarget`（`src/ports/gateway.ts`）に寄せ、パスの `\`・全体の `#`・`.` と `..` の区間・符号化された `.` `/` `\`（`%2e %2f %5c`）・正規化でパスが変わるものを断り、正規表現は正規化後のパスに当てる。`src/feature-port.ts` は `scopeTarget` が返した URL だけを送り、`X-HTTP-Method-Override` 系のヘッダーは落とす。**ID は `encodeURIComponent` で符号化して組み立てる前提で、`/` を含む ID（`%2F`）と `..` の ID は断る**（Graph・Teams・Jira・Google の実際の ID は通ることをテストで確認）。そのほか Google Tasks の cursor は読み始めの 1 分前で頭打ちにし（読んでいる間の更新を取りこぼさない）、読みかけは問い合わせ（mode と updatedMin）つきで残し、つないだ直後の取り込みの二重読みをなくした。Gmail・Google Tasks の見回りは、書くたびに今の状態を読み直して見回りの項目だけ重ね、外された・つなぎ直されたら書かずに止まる（Outlook・To Do・Jira・Teams の同期は同じ形のまま。次の作業）。Google のエラーは構造（429・403 の reason）で分類し、API が有効でないものは broken（同意の問題と書かない）にする
 
 **2026-11-11（3）: Gmail のコネクタを `docs/adr/0041` に沿って実装した。** 経路 `gmail`（チャネル `email`）、`POST /api/connections/gmail`（Outlook と同じ流れと状態。本文は `{credential_id?}`）、`GET /api/connections` の `kind: 'gmail'`。メールボックスのアドレスは `profile`、別名は `settings/sendAs`（主か確認済みのもの）で、Outlook と同じ `connectMailbox` に渡す（別の人のアドレスなら `conflict`）。5 分ごとの見回り（maintain）で `history.list`（`messageAdded`）の差分を読み、増えたメールを `messages.get` で取る。つないだ直後は `profile.historyId` を位置にするだけで過去のメールは取らない。位置は取り込みの状態の JSON（`SourceState.gmail`。マイグレーションなし）。位置は処理し終えた履歴のレコードまでしか進めない（1 回の上限は 200 通。超えたら最後に処理し終えたレコードの id で止めて次の見回りが続ける）。位置が切れたら（404）、`profile.historyId` を先に読んで残し、最後に読めた時刻の 10 分前から `messages.list` の検索で拾い直し、読み切ってから新しい位置に移る（1 回に 2 ページ。続きは検索の pageToken を残す）。重なって取ったメールは `sourceRef` の重複排除で 1 通になる。`stripQuoted` は共有の `connectors/strip-quoted.ts` に移し、Gmail の見出し（折り返し・日本語）を足した。残り: スキル（topic-index の書き直し・Google Tasks と Gmail のスキル。Gmail で送ったあとの `record_sent` の `sent_ref` は、送ったメッセージのヘッダーの Message-ID）、Google Workspace の組織のデプロイでの実物の確認（履歴が startHistoryId を含めて返すか、ヘッダー値が復号済みか、本文の文字コード、Workers の `TextDecoder` が ISO-2022-JP・Shift_JIS を読めるか、下書きの送信が `messageAdded` に出るか）

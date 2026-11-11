@@ -57,6 +57,40 @@ describe('H3 connectMailbox', () => {
     expect(() => connect(outlook.after, { ...outlookInput, service: 'gmail', gatewayCredentialId: 'gw_gmail' }, newId)).toThrow(/already reads/);
   });
 
+  it.each([
+    ['Outlook', undefined, ['bob@ubs.example', 'b.alias@ubs.example']],
+    ['Gmail', 'gmail' as const, ['bob@gws.example']],
+  ])('H3 %s: ゲートウェイの接続を消して足し直し、資格情報の ID が変わっても、同じ本人・同じ種類・同じアドレスのメールボックスとして付け替える（作り直さない）', (_label, service, addresses) => {
+    const base: MailboxInput = { ...input, addresses, ...(service ? { service } : {}) };
+    const newId = counterIds();
+    const first = connect(seed, base, newId);
+    const ds = first.plan.dataSource;
+    const again = connect(first.after, { ...base, gatewayCredentialId: 'gw_new' }, newId);
+    expect(again.plan).toEqual({ kind: 'exists', dataSource: ds });
+    const dir = new Directory(again.after);
+    expect(dir.credentialRef(ds.credentialRefId)).toMatchObject({ gatewayCredentialId: 'gw_new', address: { channel: 'email', value: addresses[0] } });
+    // データソースもリストも増えない。Contact のアドレスも変わらない
+    expect(again.after.dataSources).toHaveLength(first.after.dataSources.length);
+    expect(again.after.lists).toEqual(first.after.lists);
+    expect(again.after.credentialRefs).toHaveLength(first.after.credentialRefs.length);
+    // 大文字小文字の違うアドレスでも同じ箱
+    const upper = connect(again.after, { ...base, gatewayCredentialId: 'gw_newer', addresses: addresses.map((a) => a.toUpperCase()) }, newId);
+    expect(upper.plan).toEqual({ kind: 'exists', dataSource: ds });
+    expect(new Directory(upper.after).credentialRef(ds.credentialRefId)?.gatewayCredentialId).toBe('gw_newer');
+    // 別のアドレスの箱なら、新しい資格情報でも別のデータソースになる
+    expect(connect(first.after, { ...base, gatewayCredentialId: 'gw_other', addresses: ['bob.other@elsewhere.example'] }, newId).plan.kind).toBe('created');
+  });
+
+  it('H3 付け替えるのは同じ種類の箱だけ。Gmail をつなぎ直しても Outlook の箱の資格情報は変わらない', () => {
+    const newId = counterIds();
+    const outlook = connect(seed, { ...input, addresses: ['bob@ubs.example'] }, newId);
+    const gmail = connect(outlook.after, { ...input, addresses: ['bob@gws.example'], service: 'gmail', gatewayCredentialId: 'gw_g' }, newId);
+    const again = connect(gmail.after, { ...input, addresses: ['bob@gws.example'], service: 'gmail', gatewayCredentialId: 'gw_g2' }, newId);
+    const dir = new Directory(again.after);
+    expect(dir.credentialRef(outlook.plan.dataSource.credentialRefId)?.gatewayCredentialId).toBe('gw_bob');
+    expect(dir.credentialRef(gmail.plan.dataSource.credentialRefId)?.gatewayCredentialId).toBe('gw_g2');
+  });
+
   it('別の人のアドレスなら断る', () => {
     expect(() => connect(seed, { ...input, addresses: ['bob@ubs.example', 'alice@ubs.example'] })).toThrow(/another user's address/);
   });

@@ -236,7 +236,10 @@ export class Connections {
 
     const ds = plan.dataSource;
     const current = await this.deps.state.source(ds.id);
-    if (!current || current.status !== 'ok') {
+    // 動いていても、ゲートウェイの接続が付け替わった（消して足し直した）なら、新しい接続でつなぎ直す
+    if (!current || current.status !== 'ok' || current.gatewayCredentialId !== chosen.id) {
+      // 外していないものは、フォルダの位置とつないだ時刻を残す（つなぎ直しの間のメールを飛ばさない）。外したあとは、その時点から取る
+      const keep = current && current.status !== 'disconnected' ? current : null;
       await this.deps.state.putSource({
         kind: 'outlook',
         dataSourceId: ds.id,
@@ -244,9 +247,8 @@ export class Connections {
         gatewayCredentialId: chosen.id,
         status: 'setup',
         reason: null,
-        // 外したあとのつなぎ直しも、その時点から取る（間の分は取らない）
-        folders: current?.status === 'broken' ? current.folders : {},
-        connectedAt: current?.status === 'broken' ? current.connectedAt : this.deps.now(),
+        folders: keep ? keep.folders : {},
+        connectedAt: keep ? keep.connectedAt : this.deps.now(),
         lastSyncAt: current?.lastSyncAt ?? null,
         lastRetryAt: null,
       });
@@ -257,14 +259,19 @@ export class Connections {
 
   private async connectGmailWith(userId: string, credentialId: string): Promise<ConnectResult> {
     const api = this.deps.gmailFor(await this.deps.gateway.upstream(userId, credentialId, 'gmail'));
-    // メールボックスのアドレス（profile）と、送信元として使える別名（sendAs）が本人のアイデンティティになる。別の人のアドレスなら conflict
+    // 本人のアイデンティティになるのはメールボックス自身のアドレス（profile）だけ。sendAs の別名は共有のアドレス（グループなど）かもしれないので
+    // 本人のものにしない（表示名にだけ使う）。主のアドレスが別の人のものなら conflict
     const me = gmailMe(await api.profile(), await api.sendAs());
     const { result: plan } = await this.deps.service.changeMaster(userId, 'Gmail をつなぐ', (d, ctx) =>
       connectMailbox(d, ctx, { userId, gatewayCredentialId: credentialId, displayName: me.displayName, addresses: me.addresses, service: 'gmail' }),
     );
     const ds = plan.dataSource;
     const current = await this.deps.state.source(ds.id);
-    if (!current || current.status !== 'ok') {
+    // 動いていても、ゲートウェイの接続が付け替わった（消して足し直した）なら、新しい接続でつなぎ直す
+    if (!current || current.status !== 'ok' || current.gatewayCredentialId !== credentialId) {
+      // 外していないもので、位置（historyId）を持つものは、位置・つないだ時刻を残す。つなぎ直しの呼び出しが setup の前にもう一度来ても
+      // （setup は broken と別の状態）、止まっていた間のメールを飛ばさない。外したあとは、その時点から取る
+      const keep = current && current.status !== 'disconnected' && current.gmail?.historyId ? current : null;
       await this.deps.state.putSource({
         kind: 'gmail',
         dataSourceId: ds.id,
@@ -273,9 +280,9 @@ export class Connections {
         status: 'setup',
         reason: null,
         folders: {},
-        // 外したあとのつなぎ直しは、その時点から取る（間の分は取らない）。broken からの戻りは位置を残す（切れていれば見回りが拾い直す）
-        gmail: current?.status === 'broken' && current.gmail ? current.gmail : { historyId: null, recovery: null },
-        connectedAt: current?.status === 'broken' ? current.connectedAt : this.deps.now(),
+        // 位置を残したものは、切れていれば見回りが拾い直す
+        gmail: keep?.gmail ?? { historyId: null, recovery: null },
+        connectedAt: keep ? keep.connectedAt : this.deps.now(),
         lastSyncAt: current?.lastSyncAt ?? null,
         lastRetryAt: null,
       });

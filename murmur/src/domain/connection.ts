@@ -16,7 +16,7 @@ export interface MailboxInput {
   gatewayCredentialId: string;
   /** メールボックスの持ち主の表示名（データソースの名前に使う） */
   displayName: string;
-  /** 本人のアドレスとエイリアス。先頭が主のアドレスで、リストでのアイデンティティになる */
+  /** 本人のアドレスとエイリアス。先頭が主のアドレスで、リストでのアイデンティティになる（Gmail は主のアドレスだけを渡す。0041 の決定 2） */
   addresses: string[];
   /** 個人の箱のサービス（経路）。省けば Outlook（0041 で Gmail を足した。作り方は同じ） */
   service?: MailboxService;
@@ -31,7 +31,9 @@ export type MailboxPlan =
   | { kind: 'created'; dataSource: ServiceDataSource; identity: IdentityOutcome };
 
 /**
- * 同じ本人・同じゲートウェイの接続のメールボックスがあればそれを返し、なければマスタの下書き（draft）に作る。
+ * 同じ本人・同じ種類のメールボックスがあればそれを返し、なければマスタの下書き（draft）に作る。
+ * 同じメールボックスは、同じゲートウェイの接続か、同じ主のアドレスで見つける。ゲートウェイの接続を消して足し直すと
+ * 資格情報の ID が変わるので、主のアドレスが同じなら、データソースは作り直さず資格情報を新しい ID に付け替える（つなぎ直し）。
  * エイリアスも本人の Contact に付ける（別の人のアドレスなら conflict）
  */
 export function connectMailbox(draft: Seed, ctx: CoreContext, input: MailboxInput): MailboxPlan {
@@ -40,14 +42,20 @@ export function connectMailbox(draft: Seed, ctx: CoreContext, input: MailboxInpu
   const user = draft.users.find((u) => u.id === input.userId);
   if (!user) throw new DomainError('forbidden', `user ${input.userId} はまだサインインしていない`);
 
-  const existing = draft.dataSources.find((ds): ds is ServiceDataSource => {
-    if (ds.kind !== 'service' || ds.connector?.kind !== service) return false;
-    const cred = draft.credentialRefs.find((c) => c.id === ds.credentialRefId);
-    return cred?.principal.kind === 'user' && cred.principal.userId === input.userId && cred.gatewayCredentialId === input.gatewayCredentialId;
-  });
-  if (existing) return { kind: 'exists', dataSource: existing };
-
   const values = dedupe(input.addresses.map((a) => a.trim()).filter((a) => a.includes('@')));
+  const mine = draft.dataSources.flatMap((ds) => {
+    if (ds.kind !== 'service' || ds.connector?.kind !== service) return [];
+    const cred = draft.credentialRefs.find((c) => c.id === ds.credentialRefId);
+    return cred?.principal.kind === 'user' && cred.principal.userId === input.userId ? [{ ds, cred }] : [];
+  });
+  const found =
+    mine.find((m) => m.cred.gatewayCredentialId === input.gatewayCredentialId) ??
+    (values[0] ? mine.find((m) => sameAddress(m.cred.address, { channel: 'email', value: values[0]! })) : undefined);
+  if (found) {
+    found.cred.gatewayCredentialId = input.gatewayCredentialId;
+    return { kind: 'exists', dataSource: found.ds };
+  }
+
   if (values.length === 0) throw new DomainError('invalid', 'メールボックスのアドレスがわからない');
   const name = input.displayName || user.name || values[0]!;
 
