@@ -30,6 +30,7 @@ GMAIL_ALL = os.path.join(SKILLS["gmail"], "scripts", "gmail_all.py")
 GMAIL_MIME = os.path.join(SKILLS["gmail"], "scripts", "gmail_mime.py")
 DRIVE_ALL = os.path.join(SKILLS["google-drive"], "scripts", "drive_all.py")
 CALENDAR_ALL = os.path.join(SKILLS["google-calendar"], "scripts", "calendar_all.py")
+TASKS_ALL = os.path.join(SKILLS["google-tasks"], "scripts", "tasks_all.py")
 DOCS_TEXT = os.path.join(SKILLS["google-docs"], "scripts", "docs_text.py")
 BOARD_ALL = os.path.join(SKILLS["board"], "scripts", "board_all.py")
 GW_GIT = os.path.join(SKILLS["git"], "scripts", "gw_git.py")
@@ -136,12 +137,12 @@ class FakeGateway(http.server.BaseHTTPRequestHandler):
             self.send(200, json.dumps(body).encode())
         elif url.path == "/api/graph/v1.0/me/elsewhere":
             self.send(200, json.dumps({"value": [], "@odata.nextLink": "https://evil.example.com/v1.0/x"}).encode())
-        elif url.path in ("/api/gmail/gmail/v1/users/me/messages", "/api/drive/drive/v3/files", "/api/calendar/calendar/v3/calendars/primary/events", "/api/calendar/calendar/v3/users/me/calendarList", "/api/calendar/calendar/v3/calendars/primary/events/series1/instances"):
+        elif url.path in ("/api/gmail/gmail/v1/users/me/messages", "/api/drive/drive/v3/files", "/api/calendar/calendar/v3/calendars/primary/events", "/api/calendar/calendar/v3/users/me/calendarList", "/api/calendar/calendar/v3/calendars/primary/events/series1/instances", "/api/tasks/tasks/v1/users/@me/lists", "/api/tasks/tasks/v1/lists/L1/tasks"):
             if query.get("throttle") and not FakeGateway.throttled:
                 FakeGateway.throttled = True
                 self.send(429, b"{}", headers={"Retry-After": "0"})
                 return
-            key = "items" if "/api/calendar/" in url.path else ("messages" if "/api/gmail/" in url.path else "files")
+            key = "items" if "/api/calendar/" in url.path or "/api/tasks/" in url.path else ("messages" if "/api/gmail/" in url.path else "files")
             start = int(query.get("pageToken", 0))
             rows = [{"id": i, "name": f"file{i}", "threadId": f"thread{i}"} for i in range(start, min(start + 100, TOTAL_ITEMS))]
             if query.get("empty") and start == 100:
@@ -389,6 +390,27 @@ class SkillScriptsTest(unittest.TestCase):
                 self.assertEqual(len(rows), 101)
                 self.assertIn("more items remain", out.stderr.decode())
 
+    def test_tasks_lists_and_tasks_use_items_array(self):
+        for path in ("/tasks/v1/users/@me/lists", "/tasks/v1/lists/L1/tasks"):
+            with self.subTest(path=path):
+                out = self.run_script(TASKS_ALL, path, "--csv", "id", "--max-pages", "1")
+                rows = list(csv.reader(io.StringIO(out.stdout.decode())))
+                self.assertEqual(rows[:2], [["id"], ["0"]])
+                self.assertEqual(len(rows), 101)
+                self.assertIn("more items remain", out.stderr.decode())
+
+    def test_tasks_keep_filters_and_gateway_auth_on_every_page(self):
+        params = {"showCompleted": "true", "showHidden": "true", "updatedMin": "2026-11-01T00:00:00Z", "maxResults": "100"}
+        args = [arg for key, value in params.items() for arg in ("-q", f"{key}={value}")]
+        out = self.run_script(TASKS_ALL, "/tasks/v1/lists/L1/tasks", *args, "-q", "fields=items(id,title)")
+        self.assertEqual([row["id"] for row in json.loads(out.stdout)], list(range(TOTAL_ITEMS)))
+        self.assertEqual(len(FakeGateway.requests), 3)
+        for req in FakeGateway.requests:
+            query = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(req["path"]).query))
+            self.assertEqual({key: query[key] for key in params}, params)
+            self.assertIn("nextPageToken", query["fields"])
+            self.assertEqual(req["headers"]["Authorization"], "Bearer tok")
+
     def test_calendar_preserves_period_and_timezone_on_every_page(self):
         params = {"timeMin": "2026-10-01T00:00:00+09:00", "timeMax": "2026-10-08T00:00:00+09:00", "timeZone": "Asia/Tokyo", "singleEvents": "true", "orderBy": "startTime"}
         args = [arg for key, value in params.items() for arg in ("-q", f"{key}={value}")]
@@ -488,6 +510,7 @@ class SkillScriptsTest(unittest.TestCase):
             ("gmail", "gmail_all.py", ["/gmail/v1/users/me/messages", "--max-pages", "1"]),
             ("google-drive", "drive_all.py", ["/drive/v3/files", "--max-pages", "1"]),
             ("google-calendar", "calendar_all.py", ["/calendar/v3/users/me/calendarList", "--max-pages", "1"]),
+            ("google-tasks", "tasks_all.py", ["/tasks/v1/lists/L1/tasks", "--max-pages", "1"]),
             ("google-docs", "docs_text.py", ["doc-1"]),
         ]
         for skill, script, args in scripts:

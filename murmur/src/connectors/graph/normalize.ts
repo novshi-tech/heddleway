@@ -1,4 +1,5 @@
 import type { AddressRef, InboundSignal } from '../../domain';
+import { stripQuoted } from '../strip-quoted';
 import type { GraphMessage } from './message';
 
 // Graph の message → InboundSignal（純関数）。向きはコアが selfAddressIds で決めるので、ここでは決めない。
@@ -45,24 +46,4 @@ function header(msg: GraphMessage, name: string): string | undefined {
   const raw = msg.internetMessageHeaders?.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value;
   if (!raw) return undefined;
   return raw.match(/<[^>]+>/)?.[0] ?? raw.trim();
-}
-
-/**
- * uniqueBody が取れないときの代わり: 引用の履歴を落とす。
- * Outlook の「From: / 差出人:」の見出し、「On ... wrote:」「... 様 wrote:」、> の行から先を捨てる
- */
-export function stripQuoted(text: string): string {
-  const lines = text.replace(/\r\n/g, '\n').split('\n');
-  const out: string[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    const t = line.trim();
-    if (/^-{2,}\s*(Original Message|元のメッセージ)\s*-{2,}$/i.test(t)) break;
-    if (/^_{8,}$/.test(t) && /^(From|差出人):/i.test(lines[i + 1]?.trim() ?? '')) break;
-    if (/^(From|差出人):\s/i.test(t) && /^(Sent|送信日時|Date|日付):\s/i.test(lines[i + 1]?.trim() ?? '')) break;
-    if (/^On .+wrote:$/i.test(t) || /^\d{4}[/年].+(wrote|書きました)[:：]$/.test(t)) break;
-    if (t.startsWith('>')) continue;
-    out.push(line);
-  }
-  return out.join('\n');
 }

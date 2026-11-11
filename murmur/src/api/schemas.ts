@@ -83,7 +83,7 @@ export const RenameBody = z.object({ name: z.string().min(1) });
 
 /** 個人のリスト。スタンドはゲートウェイで目的のサービスがつながっているかを確かめてから作る */
 export const CreateDataSourceBody = z.object({
-  /** タスクのサービス（todo）は POST /connections/todo でつなぐ（経路のないタスクのリストは写しが来ない。0039） */
+  /** タスクのサービス（todo）は POST /connections/todo・/connections/google-tasks でつなぐ（経路のないタスクのリストは写しが来ない。0039・0041） */
   channel: Channel.exclude(['todo']),
   name: z.string().min(1),
   description: z.string().optional(),
@@ -153,6 +153,9 @@ export const InboundItemBody = z.union([InboundMirrorBody, InboundSignalBody]);
 /** POST /api/connections/outlook。credential_id はゲートウェイの Graph の接続（複数あるときに選ぶ） */
 export const ConnectOutlookBody = z.object({ credential_id: z.string().min(1).optional() });
 
+/** POST /api/connections/gmail。credential_id はゲートウェイの Gmail の接続（複数あるときに選ぶ。0041） */
+export const ConnectGmailBody = z.object({ credential_id: z.string().min(1).optional() });
+
 /** Jira をつなぐ（0034）。site はサイトの cloudId（choose_site で返したもの）、jql は範囲（省けば担当・起票・ウォッチ） */
 /** Teams のチャネルを共有リストとしてつなぐ（0036・0037）。team・channel を省くと一覧（choose_team・choose_channel）を返す */
 export const ConnectTeamsBody = z.object({
@@ -163,6 +166,12 @@ export const ConnectTeamsBody = z.object({
 
 /** To Do のタスクのリストを個人リストとしてつなぐ（0039）。list を省くと一覧（choose_list）を返す */
 export const ConnectTodoBody = z.object({
+  credential_id: z.string().min(1).optional(),
+  list: z.string().min(1).optional(),
+});
+
+/** Google Tasks のタスクのリストを個人リストとしてつなぐ（0041）。list を省くと一覧（choose_list）を返す */
+export const ConnectGoogleTasksBody = z.object({
   credential_id: z.string().min(1).optional(),
   list: z.string().min(1).optional(),
 });

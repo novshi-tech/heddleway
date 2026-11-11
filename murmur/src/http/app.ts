@@ -15,7 +15,8 @@ import {
   AcknowledgeBody,
   AcknowledgeManyBody,
   ClaimBody,
-  ConnectJiraBody, ConnectOutlookBody, ConnectTeamsBody, ConnectTodoBody,
+  ConnectGmailBody,
+  ConnectGoogleTasksBody, ConnectJiraBody, ConnectOutlookBody, ConnectTeamsBody, ConnectTodoBody,
   DismissBody,
   GetThreadQuery,
   InboundItemBody,
@@ -266,6 +267,11 @@ export function createApp(opts: HttpOptions) {
     return c.json(await (await connectors(c)).connections.connectOutlook(c.var.userId, b.credential_id));
   });
 
+  api.post('/connections/gmail', async (c) => {
+    const b = ConnectGmailBody.parse(await json(c));
+    return c.json(await (await connectors(c)).connections.connectGmail(c.var.userId, b.credential_id));
+  });
+
   api.post('/connections/teams', async (c) => {
     const b = ConnectTeamsBody.parse(await json(c));
     return c.json(await (await connectors(c)).connections.connectTeams(c.var.userId, { credentialId: b.credential_id, teamId: b.team, channelId: b.channel }));
@@ -274,6 +280,11 @@ export function createApp(opts: HttpOptions) {
   api.post('/connections/todo', async (c) => {
     const b = ConnectTodoBody.parse(await json(c));
     return c.json(await (await connectors(c)).connections.connectTodo(c.var.userId, { credentialId: b.credential_id, listId: b.list }));
+  });
+
+  api.post('/connections/google-tasks', async (c) => {
+    const b = ConnectGoogleTasksBody.parse(await json(c));
+    return c.json(await (await connectors(c)).connections.connectGoogleTasks(c.var.userId, { credentialId: b.credential_id, listId: b.list }));
   });
 
   api.post('/connections/jira', async (c) => {

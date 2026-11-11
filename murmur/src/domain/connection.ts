@@ -16,30 +16,46 @@ export interface MailboxInput {
   gatewayCredentialId: string;
   /** メールボックスの持ち主の表示名（データソースの名前に使う） */
   displayName: string;
-  /** 本人のアドレスとエイリアス。先頭が主のアドレスで、リストでのアイデンティティになる */
+  /** 本人のアドレスとエイリアス。先頭が主のアドレスで、リストでのアイデンティティになる（Gmail は主のアドレスだけを渡す。0041 の決定 2） */
   addresses: string[];
+  /** 個人の箱のサービス（経路）。省けば Outlook（0041 で Gmail を足した。作り方は同じ） */
+  service?: MailboxService;
 }
+
+export type MailboxService = 'graph-mail' | 'gmail';
+
+const MAILBOX_LABEL: Record<MailboxService, string> = { 'graph-mail': 'Outlook', gmail: 'Gmail' };
 
 export type MailboxPlan =
   | { kind: 'exists'; dataSource: ServiceDataSource }
   | { kind: 'created'; dataSource: ServiceDataSource; identity: IdentityOutcome };
 
 /**
- * 同じ本人・同じゲートウェイの接続のメールボックスがあればそれを返し、なければマスタの下書き（draft）に作る。
+ * 同じ本人・同じ種類のメールボックスがあればそれを返し、なければマスタの下書き（draft）に作る。
+ * 同じメールボックスは、同じゲートウェイの接続か、同じ主のアドレスで見つける。ゲートウェイの接続を消して足し直すと
+ * 資格情報の ID が変わるので、主のアドレスが同じなら、データソースは作り直さず資格情報を新しい ID に付け替える（つなぎ直し）。
  * エイリアスも本人の Contact に付ける（別の人のアドレスなら conflict）
  */
 export function connectMailbox(draft: Seed, ctx: CoreContext, input: MailboxInput): MailboxPlan {
+  const service = input.service ?? 'graph-mail';
+  const label = MAILBOX_LABEL[service];
   const user = draft.users.find((u) => u.id === input.userId);
   if (!user) throw new DomainError('forbidden', `user ${input.userId} はまだサインインしていない`);
 
-  const existing = draft.dataSources.find((ds): ds is ServiceDataSource => {
-    if (ds.kind !== 'service' || ds.connector?.kind !== 'graph-mail') return false;
-    const cred = draft.credentialRefs.find((c) => c.id === ds.credentialRefId);
-    return cred?.principal.kind === 'user' && cred.principal.userId === input.userId && cred.gatewayCredentialId === input.gatewayCredentialId;
-  });
-  if (existing) return { kind: 'exists', dataSource: existing };
-
   const values = dedupe(input.addresses.map((a) => a.trim()).filter((a) => a.includes('@')));
+  const mine = draft.dataSources.flatMap((ds) => {
+    if (ds.kind !== 'service' || ds.connector?.kind !== service) return [];
+    const cred = draft.credentialRefs.find((c) => c.id === ds.credentialRefId);
+    return cred?.principal.kind === 'user' && cred.principal.userId === input.userId ? [{ ds, cred }] : [];
+  });
+  const found =
+    mine.find((m) => m.cred.gatewayCredentialId === input.gatewayCredentialId) ??
+    (values[0] ? mine.find((m) => sameAddress(m.cred.address, { channel: 'email', value: values[0]! })) : undefined);
+  if (found) {
+    found.cred.gatewayCredentialId = input.gatewayCredentialId;
+    return { kind: 'exists', dataSource: found.ds };
+  }
+
   if (values.length === 0) throw new DomainError('invalid', 'メールボックスのアドレスがわからない');
   const name = input.displayName || user.name || values[0]!;
 
@@ -48,7 +64,7 @@ export function connectMailbox(draft: Seed, ctx: CoreContext, input: MailboxInpu
     input.userId,
     {
       channel: 'email',
-      name: `${name} の Outlook`,
+      name: `${name} の ${label}`,
       description: `${name} の個人のメールボックス。本人の同意で取り込む（読者は本人だけ）`,
       identity: values[0]!,
       gatewayCredentialId: input.gatewayCredentialId,
@@ -57,7 +73,7 @@ export function connectMailbox(draft: Seed, ctx: CoreContext, input: MailboxInpu
   );
   for (const alias of values.slice(1)) bindIdentity(draft, input.userId, { channel: 'email', value: alias }, ctx);
   const dataSource = draft.dataSources.find((d) => d.id === created.dataSourceId) as ServiceDataSource;
-  dataSource.connector = { kind: 'graph-mail', mailbox: 'me', folders: ['inbox', 'sentitems'] };
+  dataSource.connector = service === 'gmail' ? { kind: 'gmail', mailbox: 'me' } : { kind: 'graph-mail', mailbox: 'me', folders: ['inbox', 'sentitems'] };
   return { kind: 'created', dataSource, identity: created.identity };
 }
 
@@ -73,10 +89,16 @@ export interface TaskListInput {
   address: string;
   listId: string;
   listName: string;
+  /** タスクのサービス（経路）。省けば To Do（0041 で Google Tasks を足した。作り方は同じ） */
+  service?: TaskService;
 }
 
+export type TaskService = 'graph-todo' | 'google-tasks';
+
+const TASK_SERVICE_LABEL: Record<TaskService, string> = { 'graph-todo': 'To Do', 'google-tasks': 'Google Tasks' };
+
 /**
- * 本人の To Do のタスクのリストを個人リストとして作る（同じリストがあればそれを返す）。
+ * 本人の To Do・Google Tasks のタスクのリストを個人リストとして作る（同じリストがあればそれを返す）。
  * To Do のリスト 1 つが Murmur のリスト 1 つで、いくつでもつなげる（0039 の未決 2）。どのリストも同じ扱いで、特別なリストは置かない。
  * 同じアカウントの 2 つめからは、最初のリストの資格情報を使い回す（資格情報はアカウントに 1 つ）
  */
@@ -85,21 +107,23 @@ export function connectTaskList(draft: Seed, ctx: CoreContext, input: TaskListIn
   if (!user) throw new DomainError('forbidden', `user ${input.userId} はまだサインインしていない`);
   const address = input.address.trim();
   if (!address.includes('@')) throw new DomainError('invalid', 'アカウントのアドレスがわからない');
-  // 本人のそのアカウントの資格情報（To Do のリストで共有する）。ゲートウェイの接続を足し直して ID が変わったら付け替える
+  const service = input.service ?? 'graph-todo';
+  const label = TASK_SERVICE_LABEL[service];
+  // 本人のそのアカウントの資格情報（同じアカウントのリストで共有する）。ゲートウェイの接続を足し直して ID が変わったら付け替える
   const cred = draft.credentialRefs.find(
     (c) => c.principal.kind === 'user' && c.principal.userId === input.userId && sameAddress(c.address, { channel: 'todo', value: address }),
   );
   if (cred) cred.gatewayCredentialId = input.gatewayCredentialId;
   const same = draft.dataSources.find(
-    (ds): ds is ServiceDataSource => ds.kind === 'service' && ds.connector?.kind === 'graph-todo' && ds.connector.listId === input.listId && ds.credentialRefId === cred?.id,
+    (ds): ds is ServiceDataSource => ds.kind === 'service' && (ds.connector?.kind === 'graph-todo' || ds.connector?.kind === 'google-tasks') && ds.connector.kind === service && ds.connector.listId === input.listId && ds.credentialRefId === cred?.id,
   );
   if (same) {
-    if (same.connector?.kind === 'graph-todo') same.connector.listName = input.listName;
+    if (same.connector?.kind === 'graph-todo' || same.connector?.kind === 'google-tasks') same.connector.listName = input.listName;
     return { kind: 'exists', dataSource: same };
   }
   const name = input.displayName || user.name || address;
-  const connector = { kind: 'graph-todo' as const, listId: input.listId, listName: input.listName };
-  const naming = { name: `${name} の To Do（${input.listName}）`, description: `${name} の To Do のタスクのリスト「${input.listName}」。本人の同意で取り込む（読者は本人だけ。0039）` };
+  const connector = { kind: service, listId: input.listId, listName: input.listName };
+  const naming = { name: `${name} の ${label}（${input.listName}）`, description: `${name} の ${label} のタスクのリスト「${input.listName}」。本人の同意で取り込む（読者は本人だけ。0039・0041）` };
   if (cred) {
     const identity = bindIdentity(draft, input.userId, { channel: 'todo', value: address }, ctx);
     const dataSource: ServiceDataSource = { kind: 'service', id: ctx.newId('ds'), channel: 'todo', ...naming, credentialRefId: cred.id, selfAddresses: [], group: false, connector };
@@ -120,14 +144,16 @@ export function connectTaskList(draft: Seed, ctx: CoreContext, input: TaskListIn
   return { kind: 'created', dataSource, identity: created.identity };
 }
 
-/** To Do の側でリストの名前が変わった（見回りで気づく）。データソースの名前と、写しの statusLabel に使う名前を直す */
+/** タスクのサービスの側でリストの名前が変わった（見回りで気づく）。データソースの名前と、写しの statusLabel に使う名前を直す */
 export function renameTaskList(draft: Seed, dataSourceId: string, listName: string): boolean {
   const ds = draft.dataSources.find((d) => d.id === dataSourceId);
-  if (!ds || ds.connector?.kind !== 'graph-todo' || ds.connector.listName === listName || !listName.trim()) return false;
-  const displayName = ds.name.split(' の To Do（')[0] || ds.name;
+  const kind = ds?.connector?.kind;
+  if (!ds || (kind !== 'graph-todo' && kind !== 'google-tasks') || ds.connector?.kind !== kind || ds.connector.listName === listName || !listName.trim()) return false;
+  const label = TASK_SERVICE_LABEL[kind];
+  const displayName = ds.name.split(` の ${label}（`)[0] || ds.name;
   ds.connector.listName = listName;
-  ds.name = `${displayName} の To Do（${listName}）`;
-  ds.description = `${displayName} の To Do のタスクのリスト「${listName}」。本人の同意で取り込む（読者は本人だけ。0039）`;
+  ds.name = `${displayName} の ${label}（${listName}）`;
+  ds.description = `${displayName} の ${label} のタスクのリスト「${listName}」。本人の同意で取り込む（読者は本人だけ。0039・0041）`;
   return true;
 }
 

@@ -21,7 +21,12 @@ import { GatewayTeamsApi } from './connectors/teams/api';
 import { TeamsSync } from './connectors/teams/sync';
 import { GatewayTodoApi } from './connectors/todo/api';
 import { TodoSync } from './connectors/todo/sync';
+import { GatewayGtasksApi } from './connectors/gtasks/api';
+import { GtasksSync } from './connectors/gtasks/sync';
+import { GatewayGmailApi } from './connectors/gmail/api';
+import { GmailSync } from './connectors/gmail/sync';
 import { randomHex, sha256Hex } from './connectors/secrets';
+import { onceDirectory } from './connectors/directory-once';
 import { D1ConnectorState } from './store/connector-state';
 
 // Murmur の組み立て（0023）。env を読まず、入口が渡す設定とゲートウェイの口だけで組み立てる。
@@ -42,6 +47,11 @@ export interface MurmurConfig {
   queue?: Queue<SyncJob>;
   /** 共有リストを許すサービス（0037 の決定 4。管理者がデプロイの設定で決める。既定は許さない） */
   sharedServices?: readonly string[];
+  /**
+   * Google Tasks の見回りの間隔（分。0041 の決定 1）。Tasks は変更の通知がなく、1 日の API の上限があるので、
+   * Gmail と別に延ばせるようにする。なければ見回りのたび（Cron の間隔）。Tasks のコネクタが使う
+   */
+  tasksPollMinutes?: number;
   /** 外部コネクタ（0024）。なければ /api/connections と Webhook の口は 404 */
   connectors?: {
     /** Murmur の公開 URL（Webhook の受け口の URL になる） */
@@ -83,7 +93,7 @@ function build(config: MurmurConfig): MurmurService {
 }
 
 interface ConnectorShell extends ConnectorHttp {
-  /** キューの仕事を Outlook・Jira・Teams・To Do に渡す（それぞれ自分の経路のデータソースだけ扱う） */
+  /** キューの仕事を Outlook・Gmail・Jira・Teams・To Do・Google Tasks に渡す（それぞれ自分の経路のデータソースだけ扱う） */
   sync: { handle(job: SyncJob): Promise<void> };
 }
 
@@ -99,6 +109,8 @@ function buildConnectors(config: MurmurConfig, service: MurmurService, waitUntil
   const jiraFor = (call: UpstreamCall) => new GatewayJiraApi(call);
   const teamsFor = (call: UpstreamCall) => new GatewayTeamsApi(call);
   const todoFor = (call: UpstreamCall) => new GatewayTodoApi(call);
+  const gtasksFor = (call: UpstreamCall) => new GatewayGtasksApi(call);
+  const gmailFor = (call: UpstreamCall) => new GatewayGmailApi(call);
   // Jira の Webhook の受け口の秘密（本人ごと。S0: REST の Webhook の URL は本人ごとに 1 つ）。鍵から導くので保管しない
   const jiraSecret = (userId: string) => sha256Hex(`${c.webhookKey}:jira-webhook:${userId}`);
 
@@ -149,15 +161,36 @@ function buildConnectors(config: MurmurConfig, service: MurmurService, waitUntil
     hash: sha256Hex,
     log,
   });
+  // Google Tasks は変更の通知がなく、見回りで読む（キューの仕事は maintain と setup だけ。0041）
+  const gtasks = new GtasksSync({
+    service,
+    state,
+    gtasksFor: async (source) => gtasksFor(await gateway.upstream(source.userId, source.gatewayCredentialId, 'gtasks')),
+    now,
+    pollMinutes: config.tasksPollMinutes,
+    log,
+  });
+  // Gmail も変更の通知を使わず、見回りで履歴を読む（キューの仕事は maintain と setup だけ。0041）
+  const gmail = new GmailSync({
+    service,
+    state,
+    gmailFor: async (source) => gmailFor(await gateway.upstream(source.userId, source.gatewayCredentialId, 'gmail')),
+    now,
+    log,
+  });
   sync = {
     async handle(job) {
-      await graph.handle(job);
-      await jira.handle(job);
-      await teams.handle(job);
-      await todo.handle(job);
+      // 見回りは、マスタを 1 回だけ読んで全コネクタの全データソースで使い回す
+      const directory = job.kind === 'maintain' ? onceDirectory(() => service.directory()) : undefined;
+      await graph.handle(job, directory);
+      await jira.handle(job, directory);
+      await teams.handle(job, directory);
+      await todo.handle(job, directory);
+      await gtasks.handle(job, directory);
+      await gmail.handle(job, directory);
     },
   };
-  const connections = new Connections({ gateway, service, queue, newId: randomIds, graphFor, jiraFor, teamsFor, todoFor, state, now, sharedServices: config.sharedServices ?? [] });
+  const connections = new Connections({ gateway, service, queue, newId: randomIds, graphFor, jiraFor, teamsFor, todoFor, gtasksFor, gmailFor, state, now, sharedServices: config.sharedServices ?? [] });
   return {
     sync,
     connections,

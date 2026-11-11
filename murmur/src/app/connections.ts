@@ -2,6 +2,11 @@ import { canDisconnect, connectJiraProject, connectorOwner, connectTaskList, con
 import { jiraMembers } from '../connectors/jira/readers';
 import type { TeamRef, TeamsApi } from '../connectors/teams/api';
 import type { TodoApi } from '../connectors/todo/api';
+import type { GtasksApi } from '../connectors/gtasks/api';
+import { listDisplayName } from '../connectors/gtasks/task';
+import { GoogleApiNotEnabled } from '../connectors/google-error';
+import type { GmailApi } from '../connectors/gmail/api';
+import { gmailMe } from '../connectors/gmail/identity';
 import type { TodoTaskList } from '../connectors/todo/task';
 import { teamsMembers } from '../connectors/teams/plan';
 import { ConsentRequired, GatewayAuthError, type GatewayCredential, type GatewayPort, type UpstreamCall, type UpstreamKind } from '../ports/gateway';
@@ -16,6 +21,7 @@ import type { MurmurService } from './service';
 // 本人がスタンドから頼み、ゲートウェイの同意の画面で本体を許可すると、
 // 本体はデータソースを実行時に作り（読者は本人 1 人）、キューにサブスクリプションと初回の delta を頼む。
 // Jira（0034）も同じ同意で、ゲートウェイの jira の接続からサイトを選び、本人の JQL の範囲を個人リストにする。
+// Gmail（0041）も同じ同意で、ゲートウェイの gmail の接続から本人のメールボックスを個人リストにする（Outlook と同じ流れ）。
 // To Do（0039）も同じ同意で、ゲートウェイの graph の接続からタスクのリストを 1 つ選んで個人リストにする。
 
 /** 認可の途中の state の寿命 */
@@ -30,6 +36,8 @@ export interface ConnectionsDeps {
   jiraFor(call: UpstreamCall): JiraApi;
   teamsFor(call: UpstreamCall): TeamsApi;
   todoFor(call: UpstreamCall): TodoApi;
+  gtasksFor(call: UpstreamCall): GtasksApi;
+  gmailFor(call: UpstreamCall): GmailApi;
   state: ConnectorStateStore;
   now: () => string;
   /** 共有リストを許すサービス（0037 の決定 4。管理者がデプロイの設定で決める） */
@@ -74,17 +82,23 @@ export interface ConnectTodoInput {
   listId?: string;
 }
 
+export interface ConnectGoogleTasksInput {
+  credentialId?: string;
+  /** タスクのリストの ID（省けば一覧を返す） */
+  listId?: string;
+}
+
 export interface ConnectionView {
   data_source: string;
   name: string;
-  kind: 'outlook' | 'jira' | 'teams' | 'todo';
+  kind: 'outlook' | 'gmail' | 'jira' | 'teams' | 'todo' | 'google-tasks';
   /** Jira: サイトとプロジェクト */
   site?: string;
   project?: string;
   /** Teams: チームとチャネルの ID */
   team?: string;
   channel?: string;
-  /** To Do: タスクのリストの名前 */
+  /** To Do・Google Tasks: タスクのリストの名前 */
   list?: string;
   /** 共有リスト（0037）。読者はソースから写す */
   shared?: boolean;
@@ -104,6 +118,11 @@ export class Connections {
     return this.connect(userId, credentialId ?? null, { kind: 'outlook' });
   }
 
+  /** Gmail のメールボックスを個人リストとしてつなぐ（0041。同意は同じもの。ゲートウェイの Gmail の接続で読む。流れは Outlook と同じ） */
+  async connectGmail(userId: string, credentialId?: string): Promise<ConnectResult> {
+    return this.connect(userId, credentialId ?? null, { kind: 'gmail' });
+  }
+
   /** Jira のプロジェクトを共有リストとしてつなぐ（0037。同意は Outlook と同じもの） */
   async connectJira(userId: string, input: ConnectJiraInput = {}): Promise<ConnectResult> {
     return this.connect(userId, input.credentialId ?? null, { kind: 'jira', cloudId: input.cloudId, projectKey: input.projectKey });
@@ -119,6 +138,11 @@ export class Connections {
     return this.connect(userId, input.credentialId ?? null, { kind: 'todo', listId: input.listId });
   }
 
+  /** Google Tasks のタスクのリストを個人リストとしてつなぐ（0041。同意は同じもの。ゲートウェイの Google Tasks（tasks）の接続で読む） */
+  async connectGoogleTasks(userId: string, input: ConnectGoogleTasksInput = {}): Promise<ConnectResult> {
+    return this.connect(userId, input.credentialId ?? null, { kind: 'google-tasks', listId: input.listId });
+  }
+
   private async connect(userId: string, credentialId: string | null, request: NonNullable<PendingAuthorization['request']>): Promise<ConnectResult> {
     const dir = await this.deps.service.directory();
     if (!dir.seed.users.some((u) => u.id === userId)) throw new DomainError('forbidden', `user ${userId} はまだサインインしていない`);
@@ -129,6 +153,8 @@ export class Connections {
       if (err instanceof ConsentRequired) return this.authorize(userId, credentialId, request);
       // 同意は有効で、選んだ接続そのものがゲートウェイでつなぎ直しを要る。Murmur の同意を取り直しても直らない
       if (err instanceof GatewayAuthError) throw new DomainError('conflict', `ゲートウェイでこの接続をつなぎ直してから、もう一度頼んでください（${err.message}）`);
+      // Google の API がゲートウェイのプロジェクトで有効でない: つなぎ直しでは直らない（管理者の作業）
+      if (err instanceof GoogleApiNotEnabled) throw new DomainError('conflict', err.message);
       throw err;
     }
   }
@@ -152,7 +178,7 @@ export class Connections {
 
     const request = pending.request ?? { kind: 'outlook' };
     const kind = this.kindOf(request);
-    const label = kind === 'jira' ? 'Jira' : 'Microsoft Graph';
+    const label = kind === 'jira' ? 'Jira' : kind === 'gtasks' ? 'Google Tasks' : kind === 'gmail' ? 'Gmail' : 'Microsoft Graph';
     const done = await this.deps.gateway.consent.complete({ userId: pending.userId, code: input.code, secret: pending.verifier, kind });
     if (done === 'no_credential') return { ok: false, message: `ゲートウェイに ${label} の接続がありません。ゲートウェイでつないでから、もう一度頼んでください。` };
     if (done === 'wrong_user') {
@@ -166,7 +192,7 @@ export class Connections {
           message:
             request.kind === 'jira'
               ? `${result.data_source.name} をつなぎました。これから更新される課題を取り込みます（過去のコメントは取りません）。`
-              : request.kind === 'todo'
+              : request.kind === 'todo' || request.kind === 'google-tasks'
                 ? `${result.data_source.name} をつなぎました。リストの開いているタスクと、これから変わるタスクを取り込みます。`
                 : `${result.data_source.name} をつなぎました。これから届くメールを取り込みます（過去のメールは取りません）。`,
         };
@@ -175,14 +201,14 @@ export class Connections {
       case 'choose_site':
         return { ok: true, message: 'Jira のサイトが複数あります。エージェント（Claude など）に戻って、どのサイトをつなぐか選んでください。' };
       case 'choose_list':
-        return { ok: true, message: 'To Do のタスクのリストを選んでください。エージェント（Claude など）に戻って、どのリストをつなぐか選んでください。' };
+        return { ok: true, message: `${label} のタスクのリストを選んでください。エージェント（Claude など）に戻って、どのリストをつなぐか選んでください。` };
       default:
         return { ok: false, message: 'つなげませんでした。エージェント（Claude など）からもう一度頼んでください。' };
     }
   }
 
   private kindOf(request: NonNullable<PendingAuthorization['request']>): UpstreamKind {
-    return request.kind === 'jira' ? 'jira' : request.kind === 'teams' ? 'teams' : 'graph';
+    return request.kind === 'jira' ? 'jira' : request.kind === 'teams' ? 'teams' : request.kind === 'google-tasks' ? 'gtasks' : request.kind === 'gmail' ? 'gmail' : 'graph';
   }
 
   private async connectWithGrant(
@@ -200,6 +226,8 @@ export class Connections {
     if (request.kind === 'jira') return this.connectJiraWith(userId, chosen.id, request);
     if (request.kind === 'teams') return this.connectTeamsWith(userId, chosen.id, request);
     if (request.kind === 'todo') return this.connectTodoWith(userId, chosen.id, request);
+    if (request.kind === 'google-tasks') return this.connectGoogleTasksWith(userId, chosen.id, request);
+    if (request.kind === 'gmail') return this.connectGmailWith(userId, chosen.id);
 
     const me = await this.deps.graphFor(await this.deps.gateway.upstream(userId, chosen.id, 'graph')).me();
     const { result: plan } = await this.deps.service.changeMaster(userId, 'Outlook をつなぐ', (d, ctx) =>
@@ -208,7 +236,10 @@ export class Connections {
 
     const ds = plan.dataSource;
     const current = await this.deps.state.source(ds.id);
-    if (!current || current.status !== 'ok') {
+    // 動いていても、ゲートウェイの接続が付け替わった（消して足し直した）なら、新しい接続でつなぎ直す
+    if (!current || current.status !== 'ok' || current.gatewayCredentialId !== chosen.id) {
+      // 外していないものは、フォルダの位置とつないだ時刻を残す（つなぎ直しの間のメールを飛ばさない）。外したあとは、その時点から取る
+      const keep = current && current.status !== 'disconnected' ? current : null;
       await this.deps.state.putSource({
         kind: 'outlook',
         dataSourceId: ds.id,
@@ -216,9 +247,42 @@ export class Connections {
         gatewayCredentialId: chosen.id,
         status: 'setup',
         reason: null,
-        // 外したあとのつなぎ直しも、その時点から取る（間の分は取らない）
-        folders: current?.status === 'broken' ? current.folders : {},
-        connectedAt: current?.status === 'broken' ? current.connectedAt : this.deps.now(),
+        folders: keep ? keep.folders : {},
+        connectedAt: keep ? keep.connectedAt : this.deps.now(),
+        lastSyncAt: current?.lastSyncAt ?? null,
+        lastRetryAt: null,
+      });
+      await this.deps.queue.send({ kind: 'setup', dataSourceId: ds.id });
+    }
+    return { status: 'connected', data_source: { id: ds.id, name: ds.name }, created: plan.kind === 'created' };
+  }
+
+  private async connectGmailWith(userId: string, credentialId: string): Promise<ConnectResult> {
+    const api = this.deps.gmailFor(await this.deps.gateway.upstream(userId, credentialId, 'gmail'));
+    // 本人のアイデンティティになるのはメールボックス自身のアドレス（profile）だけ。sendAs の別名は共有のアドレス（グループなど）かもしれないので
+    // 本人のものにしない（表示名にだけ使う）。主のアドレスが別の人のものなら conflict
+    const me = gmailMe(await api.profile(), await api.sendAs());
+    const { result: plan } = await this.deps.service.changeMaster(userId, 'Gmail をつなぐ', (d, ctx) =>
+      connectMailbox(d, ctx, { userId, gatewayCredentialId: credentialId, displayName: me.displayName, addresses: me.addresses, service: 'gmail' }),
+    );
+    const ds = plan.dataSource;
+    const current = await this.deps.state.source(ds.id);
+    // 動いていても、ゲートウェイの接続が付け替わった（消して足し直した）なら、新しい接続でつなぎ直す
+    if (!current || current.status !== 'ok' || current.gatewayCredentialId !== credentialId) {
+      // 外していないもので、位置（historyId）を持つものは、位置・つないだ時刻を残す。つなぎ直しの呼び出しが setup の前にもう一度来ても
+      // （setup は broken と別の状態）、止まっていた間のメールを飛ばさない。外したあとは、その時点から取る
+      const keep = current && current.status !== 'disconnected' && current.gmail?.historyId ? current : null;
+      await this.deps.state.putSource({
+        kind: 'gmail',
+        dataSourceId: ds.id,
+        userId,
+        gatewayCredentialId: credentialId,
+        status: 'setup',
+        reason: null,
+        folders: {},
+        // 位置を残したものは、切れていれば見回りが拾い直す
+        gmail: keep?.gmail ?? { historyId: null, recovery: null },
+        connectedAt: keep ? keep.connectedAt : this.deps.now(),
         lastSyncAt: current?.lastSyncAt ?? null,
         lastRetryAt: null,
       });
@@ -391,6 +455,48 @@ export class Connections {
     return { status: 'connected', data_source: { id: ds.id, name: ds.name }, created: plan.kind === 'created' };
   }
 
+  private async connectGoogleTasksWith(userId: string, credentialId: string, request: { kind: 'google-tasks'; listId?: string }): Promise<ConnectResult> {
+    const api = this.deps.gtasksFor(await this.deps.gateway.upstream(userId, credentialId, 'gtasks'));
+    const lists = await api.lists();
+    if (!request.listId) return { status: 'choose_list', lists: lists.map((l) => ({ id: l.id, name: listDisplayName(l.title), wellknown: null })) };
+    const list = lists.find((l) => l.id === request.listId);
+    if (!list) throw new DomainError('not_found', `task list ${request.listId} はこの接続から見えない`);
+    // つないだアカウントのアドレス（userinfo）。確認済みのメールアドレスがわからなければ、To Do が Graph の /me で
+    // 本人を特定できないときと同じく、つながない（connectTaskList が invalid にする）
+    const address = await api.account();
+    const { result: plan } = await this.deps.service.changeMaster(userId, 'Google Tasks のタスクのリストをつなぐ', (d, ctx) =>
+      connectTaskList(d, ctx, { userId, gatewayCredentialId: credentialId, displayName: '', address, listId: list.id, listName: listDisplayName(list.title), service: 'google-tasks' }),
+    );
+    const ds = plan.dataSource;
+    // ゲートウェイの接続を足し直した（ID が変わった）: 同じアカウントのほかのリストも新しい接続で読む
+    const dir = await this.deps.service.directory();
+    for (const s of await this.deps.state.sources()) {
+      if (s.kind !== 'gtasks' || s.dataSourceId === ds.id || s.userId !== userId || s.gatewayCredentialId === credentialId) continue;
+      if (dir.dataSource(s.dataSourceId)?.credentialRefId !== ds.credentialRefId || s.status === 'disconnected') continue;
+      await this.deps.state.putSource({ ...s, gatewayCredentialId: credentialId, ...(s.status === 'broken' ? { status: 'setup' as const, reason: null, gtasks: { updatedMin: null, ...s.gtasks, setupAt: this.deps.now() } } : {}) });
+      if (s.status === 'broken') await this.deps.queue.send({ kind: 'setup', dataSourceId: s.dataSourceId });
+    }
+    const current = await this.deps.state.source(ds.id);
+    if (!current || current.status !== 'ok' || current.gatewayCredentialId !== credentialId) {
+      await this.deps.state.putSource({
+        kind: 'gtasks',
+        dataSourceId: ds.id,
+        userId,
+        gatewayCredentialId: credentialId,
+        status: 'setup',
+        reason: null,
+        // つなぎ直しもリストを最初から読む（写しは冪等なので、変わっていないタスクは何もしない）
+        folders: {},
+        gtasks: { updatedMin: null, resume: null, listCheckedAt: null, setupAt: this.deps.now() },
+        connectedAt: current?.connectedAt ?? this.deps.now(),
+        lastSyncAt: current?.lastSyncAt ?? null,
+        lastRetryAt: null,
+      });
+      await this.deps.queue.send({ kind: 'setup', dataSourceId: ds.id });
+    }
+    return { status: 'connected', data_source: { id: ds.id, name: ds.name }, created: plan.kind === 'created' };
+  }
+
   /** 自分がつないだもの（個人のリストと、自分の委任で読んでいる共有リスト）と、読者になっている共有リスト */
   async list(userId: string): Promise<ConnectionView[]> {
     const dir = await this.deps.service.directory();
@@ -404,11 +510,11 @@ export class Connections {
       const ds = dir.dataSource(s.dataSourceId) as ServiceDataSource | undefined;
       const jira = ds?.connector?.kind === 'jira' ? ds.connector : undefined;
       const teams = ds?.connector?.kind === 'teams' ? ds.connector : undefined;
-      const todo = ds?.connector?.kind === 'graph-todo' ? ds.connector : undefined;
+      const todo = ds?.connector?.kind === 'graph-todo' || ds?.connector?.kind === 'google-tasks' ? ds.connector : undefined;
       return {
         data_source: s.dataSourceId,
         name: ds?.name ?? s.dataSourceId,
-        kind: s.kind ?? ('outlook' as const),
+        kind: s.kind === 'gtasks' ? ('google-tasks' as const) : (s.kind ?? ('outlook' as const)),
         ...(jira ? { site: jira.site, ...(jira.projectKey ? { project: jira.projectKey } : {}) } : {}),
         ...(teams ? { team: teams.teamId, channel: teams.channelId } : {}),
         ...(todo ? { list: todo.listName } : {}),

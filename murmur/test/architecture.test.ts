@@ -86,7 +86,7 @@ describe('vertical slice: ゲートウェイの側（0023 の段取り 3）', ()
   });
 
   it('ゲートウェイの入口が Murmur から読むのは、組み立て（feature.ts）と、入口で固定する読める口と取り決めだけ', () => {
-    const allowed = /murmur\/src\/(feature|ports\/gateway|connectors\/graph\/scope|connectors\/jira\/api|connectors\/teams\/scope|connectors\/graph\/jobs)$/;
+    const allowed = /murmur\/src\/(feature|ports\/gateway|connectors\/graph\/scope|connectors\/jira\/api|connectors\/teams\/scope|connectors\/gmail\/scope|connectors\/gtasks\/scope|connectors\/graph\/jobs)$/;
     const offenders = gatewaySources
       .filter((s) => GATEWAY_ENTRY.includes(s.rel))
       .flatMap((s) => gatewayImports(s.code).filter((spec) => spec.includes('murmur/') && !allowed.test(spec)).map((spec) => `${s.rel}: ${spec}`));

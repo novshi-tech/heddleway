@@ -5,7 +5,10 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ConsentRequired, UpstreamRefused } from "../murmur/src/ports/gateway";
 import { GRAPH_SCOPE } from "../murmur/src/connectors/graph/scope";
 import { JIRA_SCOPE } from "../murmur/src/connectors/jira/api";
+import { GMAIL_SCOPE } from "../murmur/src/connectors/gmail/scope";
+import { GTASKS_SCOPE } from "../murmur/src/connectors/gtasks/scope";
 import { TEAMS_SCOPE } from "../murmur/src/connectors/teams/scope";
+import { parsePollMinutes } from "../src/murmur-feature";
 import { publicUrl } from "../src/config";
 import { featurePort } from "../src/feature-port";
 import { features } from "../src/features";
@@ -111,7 +114,7 @@ describe("Murmur on", () => {
   });
 
   it("does not accept another user's consent code", async () => {
-    const port = featurePort(on, { feature: "murmur", kinds: { graph: { service: "board", scope: GRAPH_SCOPE }, jira: { service: "jira", scope: JIRA_SCOPE }, teams: { service: "board", scope: TEAMS_SCOPE } } });
+    const port = featurePort(on, { feature: "murmur", kinds: { graph: { service: "board", scope: GRAPH_SCOPE }, jira: { service: "jira", scope: JIRA_SCOPE }, teams: { service: "board", scope: TEAMS_SCOPE }, gmail: { service: "gmail", scope: GMAIL_SCOPE }, gtasks: { service: "tasks", scope: GTASKS_SCOPE } } });
     await vaultFor(env, mallory).setConsent("murmur", true);
     const code = (await signToken(env.SIGNING_KEY, BASE, "consent", mallory, { feature: "murmur" }, 60)).token;
     expect(await port.consent.complete({ userId: bob, code, secret: "", kind: "graph" })).toBe("wrong_user");
@@ -145,7 +148,7 @@ describe("Murmur on", () => {
 
 describe("the gateway's port for Murmur", () => {
   // `board` stands in for Graph here: an API key service, so no OAuth flow is needed.
-  const port = () => featurePort(on, { feature: "murmur", kinds: { graph: { service: "board", scope: GRAPH_SCOPE }, jira: { service: "jira", scope: JIRA_SCOPE }, teams: { service: "board", scope: TEAMS_SCOPE } } });
+  const port = () => featurePort(on, { feature: "murmur", kinds: { graph: { service: "board", scope: GRAPH_SCOPE }, jira: { service: "jira", scope: JIRA_SCOPE }, teams: { service: "board", scope: TEAMS_SCOPE }, gmail: { service: "gmail", scope: GMAIL_SCOPE }, gtasks: { service: "tasks", scope: GTASKS_SCOPE } } });
 
   async function addBoard(userId: string) {
     const result = await vaultFor(env, userId).add(await upstream("board"), { "x-api-key": "the-key", authorization: "board-token" });
@@ -177,7 +180,7 @@ describe("the gateway's port for Murmur", () => {
     if ("error" in jiraCred) throw new Error(jiraCred.error);
     await vaultFor(env, bob).setConsent("murmur", true);
     // `board` stands in for Jira here (the scope is Jira's).
-    const p = featurePort(on, { feature: "murmur", kinds: { graph: { service: "board", scope: GRAPH_SCOPE }, jira: { service: "board", scope: JIRA_SCOPE }, teams: { service: "board", scope: TEAMS_SCOPE } } });
+    const p = featurePort(on, { feature: "murmur", kinds: { graph: { service: "board", scope: GRAPH_SCOPE }, jira: { service: "board", scope: JIRA_SCOPE }, teams: { service: "board", scope: TEAMS_SCOPE }, gmail: { service: "gmail", scope: GMAIL_SCOPE }, gtasks: { service: "tasks", scope: GTASKS_SCOPE } } });
     const read = await p.upstream(bob, jiraCred.id, "jira");
     const res = await read("GET", "/ex/jira/cloud-1/rest/api/3/search/jql?jql=project%20%3D%20SPW&fields=summary");
     expect(res.status).toBe(200);
@@ -191,6 +194,35 @@ describe("the gateway's port for Murmur", () => {
     const read = await port().upstream(bob, cred.id, "graph");
     await expect(read("POST", "/v1.0/me/sendMail", { body: {} })).rejects.toBeInstanceOf(UpstreamRefused);
     await expect(read("DELETE", "/v1.0/me/messages/1")).rejects.toBeInstanceOf(UpstreamRefused);
+  });
+
+  it("refuses paths that would be sent as a different path (traversal, backslash, encoded dots) and sends the checked path", async () => {
+    const cred = await addBoard(bob);
+    await vaultFor(env, bob).setConsent("murmur", true);
+    const gmail = featurePort(on, { feature: "murmur", kinds: { graph: { service: "board", scope: GRAPH_SCOPE }, jira: { service: "jira", scope: JIRA_SCOPE }, teams: { service: "board", scope: TEAMS_SCOPE }, gmail: { service: "board", scope: GMAIL_SCOPE }, gtasks: { service: "tasks", scope: GTASKS_SCOPE } } });
+    const read = await gmail.upstream(bob, cred.id, "gmail");
+    for (const path of [
+      "/gmail/v1/users/me/messages/..\\..\\..\\..\\..\\gmail\\v1\\users\\me\\drafts",
+      "/gmail/v1/users/me/messages/%2e%2e",
+      "/gmail/v1/users/me/messages/%2E%2E",
+      "/gmail/v1/users/me/messages/a%2Fb",
+      "/gmail/v1/users/me/messages/x#/../../drafts",
+    ]) await expect(read("GET", path), path).rejects.toBeInstanceOf(UpstreamRefused);
+    const ok = (await (await read("GET", "/gmail/v1/users/me/messages/18c0ffee?x=1")).json()) as { url: string };
+    expect(ok.url).toBe("https://api.the-board.jp/gmail/v1/users/me/messages/18c0ffee?x=1");
+  });
+
+  it("does not forward method override headers", async () => {
+    const cred = await addBoard(bob);
+    await vaultFor(env, bob).setConsent("murmur", true);
+    const read = await port().upstream(bob, cred.id, "graph");
+    const res = await read("GET", "/v1.0/me", { headers: { "X-HTTP-Method-Override": "DELETE", "x-http-method": "DELETE", "X-Method-Override": "DELETE", prefer: "x" } });
+    const echoed = (await res.json()) as { method: string; headers: Record<string, string> };
+    expect(echoed.method).toBe("GET");
+    expect(echoed.headers["x-http-method-override"]).toBeUndefined();
+    expect(echoed.headers["x-http-method"]).toBeUndefined();
+    expect(echoed.headers["x-method-override"]).toBeUndefined();
+    expect(echoed.headers.prefer).toBe("x");
   });
 
   it("reads Teams with the Graph credential through the narrower Teams scope (no mail)", async () => {
@@ -209,7 +241,7 @@ describe("the gateway's port for Murmur", () => {
   });
 
   it("tells Murmur who the gateway's admins are (ADMINS)", async () => {
-    const p = featurePort({ ...on, ADMINS: `x,${bob}` } as unknown as Env, { feature: "murmur", kinds: { graph: { service: "board", scope: GRAPH_SCOPE }, jira: { service: "jira", scope: JIRA_SCOPE }, teams: { service: "board", scope: TEAMS_SCOPE } } });
+    const p = featurePort({ ...on, ADMINS: `x,${bob}` } as unknown as Env, { feature: "murmur", kinds: { graph: { service: "board", scope: GRAPH_SCOPE }, jira: { service: "jira", scope: JIRA_SCOPE }, teams: { service: "board", scope: TEAMS_SCOPE }, gmail: { service: "gmail", scope: GMAIL_SCOPE }, gtasks: { service: "tasks", scope: GTASKS_SCOPE } } });
     expect(await p.isAdmin(bob)).toBe(true);
     expect(await p.isAdmin(mallory)).toBe(false);
   });
@@ -218,5 +250,13 @@ describe("the gateway's port for Murmur", () => {
     expect(await port().authenticate(await apiToken(bob, { murmur: "identity" }))).toBe(bob);
     expect(await port().authenticate(await apiToken(bob, { board: "x" }))).toBeNull();
     expect(await port().authenticate("not-a-token")).toBeNull();
+  });
+});
+
+describe("MURMUR_TASKS_POLL_MINUTES", () => {
+  it("reads a positive integer; unset or invalid means every tick", () => {
+    expect(parsePollMinutes("15")).toBe(15);
+    expect(parsePollMinutes(" 30 ")).toBe(30);
+    for (const bad of [undefined, "", "0", "-5", "1.5", "abc", "10m", "1e3", "Infinity"]) expect(parsePollMinutes(bad), String(bad)).toBeUndefined();
   });
 });

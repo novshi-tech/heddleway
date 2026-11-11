@@ -332,7 +332,7 @@ describe("mcp tools", () => {
     const client = await connect(alice);
     const listed = JSON.parse(text(await client.callTool({ name: "list_credentials", arguments: {} })));
     // "unclient" has no OAuth client in the tests, so it is not offered.
-    expect(listed.services).toEqual(["freee", "gmail", "drive", "calendar", "docs", "analytics", "analytics-admin", "board", "gbizinfo", "serper", "graph", "git-host", "basic-free", "murmur"]);
+    expect(listed.services).toEqual(["freee", "gmail", "drive", "calendar", "docs", "analytics", "analytics-admin", "tasks", "board", "gbizinfo", "serper", "graph", "git-host", "basic-free", "murmur"]);
     expect(listed.credentials).toEqual([
       expect.objectContaining({ id: cred.id, service: "board" }),
       { id: "identity:murmur", service: "murmur", label: "トピック索引(サインイン中のユーザー)" },

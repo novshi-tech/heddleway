@@ -16,9 +16,11 @@ export interface PendingAuthorization {
   /** 何をつなぐ途中か。なければ Outlook（Jira より前の行）。Jira はサイトと範囲の JQL も持ち越す（0034） */
   request?:
     | { kind: 'outlook' }
+    | { kind: 'gmail' }
     | { kind: 'jira'; cloudId?: string; projectKey?: string }
     | { kind: 'teams'; teamId?: string; channelId?: string }
-    | { kind: 'todo'; listId?: string };
+    | { kind: 'todo'; listId?: string }
+    | { kind: 'google-tasks'; listId?: string };
 }
 
 export interface ConnectorStateStore {

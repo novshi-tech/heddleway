@@ -24,7 +24,7 @@ npm run deploy -- <名前>
 
 `MURMUR_DB` と `ANTHROPIC_API_KEY` がそろうと有効になる。なければゲートウェイは Murmur なしで動く。設定を変えたら、設定のリポジトリにコミットしてプッシュする。CI はデプロイしない。
 
-利用者は、スタンドから Outlook や Jira をつなぐよう頼んだときに、ゲートウェイの画面「Murmur を有効にしますか?」に案内されて有効にする。無効にするのはゲートウェイのホームの「このゲートウェイの機能」から。
+利用者は、スタンドから Outlook・Gmail・To Do・Google Tasks や Jira をつなぐよう頼んだときに、ゲートウェイの画面「Murmur を有効にしますか?」に案内されて有効にする。無効にするのはゲートウェイのホームの「このゲートウェイの機能」から。
 
 マスタの `User.id` は、ゲートウェイの User ID（`entra_<tenant-id>_<object-id>` / `google_<sub>`）にする。
 マスタ（seed）の投入は `murmur/` で `npm run seed <scenario> -- --deployment <名前> --user <seed の User ID>=<ゲートウェイの User ID>`（SQL を作って `wrangler d1 execute` で MURMUR_DB に流す）。

@@ -16,17 +16,18 @@ Claude ──MCP(OAuth でサインイン)──▶ ゲートウェイ ─┐
 小さい呼び出しは、MCP のツール `api_get`(読み取り。確認なしで呼べる)と `api_request`(POST・PUT・PATCH・DELETE。呼ぶたびに確認が出る)で、ゲートウェイが同じ中継を通して呼びます。返すのはテキストだけで、長いボディは切り詰め、ファイル(バイナリ)はスクリプトに任せます。
 
 - **Claude は認証情報を見ません。** API キーや OAuth のトークンは、ユーザーがゲートウェイの Web 画面で登録し、暗号化して保存されます。Claude が受け取るのは、寿命 15 分のゲートウェイのトークンだけです。
-- **よく使うサービスは組み込みです。** freee、Microsoft Graph、Google(Gmail・Drive・Calendar・Docs・Analytics)、Slack、Jira、Confluence、board、gBizINFO、Serper、X は `src/catalog.ts` にあり、OAuth のクライアントを登録すれば使えます。ほかのサービスは、デプロイの設定の `SERVICES` に書くか、管理画面から、ベース URL と認証方式(ヘッダーか OAuth 2.0)を書いて足します。OAuth のトークンの更新もゲートウェイが受け持ちます。
+- **よく使うサービスは組み込みです。** freee、Microsoft Graph、Google(Gmail・Drive・Calendar・Docs・Tasks・Analytics)、Slack、Jira、Confluence、board、gBizINFO、Serper、X は `src/catalog.ts` にあり、OAuth のクライアントを登録すれば使えます。ほかのサービスは、デプロイの設定の `SERVICES` に書くか、管理画面から、ベース URL と認証方式(ヘッダーか OAuth 2.0)を書いて足します。OAuth のトークンの更新もゲートウェイが受け持ちます。
 - **使い方はスキルで配ります。** API の呼び方は、Claude のスキル(プラグイン)にまとめて配布します。コネクタの URL を含めていないので、どのデプロイでも同じプラグインを使えます。
 
 Claude の Cowork で動作を確認しています。MCP の OAuth に従っているので、ほかの Claude のクライアントや ChatGPT のコネクタにも対応する設計ですが、まだ確認していません。設計の詳細は [docs/concept.md](docs/concept.md) と [docs/auth-design.md](docs/auth-design.md) にあります。
 
 ## トピック索引(Murmur)
 
-[`murmur/`](murmur/) は、ゲートウェイの機能の 1 つ「トピック索引」です(内部の名前は Murmur)。メール・Teams・Jira・To Do などのやりとりをトピック(アクションアイテムの候補になる会話)にまとめ、誰の番かを追います。自分が担当か、自分へのアテンションが残っているトピックが、自分のタスクです。利用者は意識せず、エージェント(Claude など)が裏で読んで「いまやるべきこと」に答えるための索引です([docs/adr/0005](docs/adr/0005-murmur-as-a-feature.md)、言葉は [murmur/docs/adr/0040](murmur/docs/adr/0040-surface-vocabulary.md))。
+[`murmur/`](murmur/) は、ゲートウェイの機能の 1 つ「トピック索引」です(内部の名前は Murmur)。メール(Outlook・Gmail)・Teams・Jira・To Do・Google Tasks などのやりとりをトピック(アクションアイテムの候補になる会話)にまとめ、誰の番かを追います。自分が担当か、自分へのアテンションが残っているトピックが、自分のタスクです。利用者は意識せず、エージェント(Claude など)が裏で読んで「いまやるべきこと」に答えるための索引です([docs/adr/0005](docs/adr/0005-murmur-as-a-feature.md)、言葉は [murmur/docs/adr/0040](murmur/docs/adr/0040-surface-vocabulary.md))。
 
 - ゲートウェイの Worker に入っていて、デプロイの設定に Murmur の D1 を足すと有効になります(`wrangler.example.jsonc` の末尾)。足さなければ、ゲートウェイはトピック索引なしで今までどおり動きます
 - 利用者ごとに、ゲートウェイの画面で有効にします(エージェントにトピック索引への接続を頼むと、有効にする画面に案内されます)。有効にした人の接続だけを、読み取りだけで使います。「つないだサービス」の画面でいつでも無効にできます
+- 個人のメールとタスクは、組織のデプロイにあるサービスで決まります。Microsoft 365 の組織は Outlook と To Do(`graph`)、Google Workspace の組織は Gmail と Google Tasks(`gmail`・`tasks`)です。Google は変更の通知を使わず、5 分ごとの見回りで取り込むので、Outlook より最大 5 分ほど遅れます。Google Tasks の見回りの間隔は、設定の `MURMUR_TASKS_POLL_MINUTES`(分。省くと毎回)で延ばせ、サービス名を変えているときは `MURMUR_GMAIL_SERVICE`・`MURMUR_TASKS_SERVICE` で指定します(`wrangler.example.jsonc` の末尾)。ゲートウェイの Google Cloud のプロジェクトで Gmail API と Google Tasks API を有効にし、`tasks` のサービスの OAuth の同意のスコープを足してください(下の「Google」)。使う人は、ゲートウェイで Gmail と Google Tasks をつないでから、エージェントにトピック索引へのつなぎを頼みます
 - エージェントからは、ほかのサービスと同じく `issue_token`(`identity:murmur`)と REST(`/api/murmur/...`)で使います。使い方はプラグイン `heddleway` の `topic-index` スキルです
 
 ## 前提
@@ -80,11 +81,12 @@ curl -H "Authorization: Bearer $TOKEN" "https://<ゲートウェイ>/api/freee/a
 | | `gbizinfo` | `gbizinfo` | 経済産業省の法人情報(gBizINFO)の検索 |
 | | `serper` | `serper` | Serper 経由の Google 検索(ウェブ・画像・ニュース・地図・論文など) |
 | | `x` | `x` | X(旧 Twitter)のポストの検索・取得、投稿・返信・画像の添付、いいね・リポスト・ブックマーク(ユーザー本人として) |
-| | `topic-index` | `murmur` | トピック索引(このゲートウェイの機能)のトピック・誰の番・To Do のタスクでの追跡と経過のメモ・送信の記録。有効にする手順は上の「トピック索引(Murmur)」 |
+| | `topic-index` | `murmur` | トピック索引(このゲートウェイの機能)のトピック・誰の番・To Do / Google Tasks のタスクでの追跡と経過のメモ・送信の記録。有効にする手順は上の「トピック索引(Murmur)」 |
 | `heddleway-microsoft` | `microsoft-graph` | `graph` | Outlook メール、OneDrive / SharePoint、Teams、予定表 |
 | `heddleway-google` | `gmail` | `gmail` | メールの検索・送信・返信・下書き、添付ファイル |
 | | `google-drive` | `drive` | ファイルの検索・ダウンロード・エクスポート・アップロード、共有ドライブ |
 | | `google-calendar` | `calendar` | 予定の検索・作成・更新、空き時間の確認 |
+| | `google-tasks` | `tasks` | タスクのリストとタスクの一覧・作成・更新・完了・削除・移動 |
 | | `google-docs` | `docs` | ドキュメントの本文の読み取り、作成、追記・置換・書式の編集 |
 | | `google-analytics` | `analytics`・`analytics-admin` | GA4 のレポート取得、アカウントとプロパティの参照(読み取り専用) |
 | `heddleway-freee` | `freee` | `freee` | 会計・人事労務・請求書・販売の API |
@@ -284,18 +286,18 @@ freee のアプリ管理でアプリを作成し、コールバック URL を設
 
 サインイン用とは別の Entra アプリを登録します。プラットフォームは「Web」で、`src/catalog.ts` の `GRAPH_SCOPE` にある委任のアクセス許可を付けて、管理者の同意を与えます。`GRAPH_SCOPE` に許可が増えたとき(例: Murmur の Teams のための `ChannelMember.Read.All`)は、Entra のアプリにも足して管理者の同意をやり直し、利用者は「つないだサービス」で Microsoft Graph をつなぎ直します。デプロイの設定の `MICROSOFT_TENANT_ID` にテナント ID を書きます。シークレットは `OAUTH_MICROSOFT_CLIENT_ID` / `OAUTH_MICROSOFT_CLIENT_SECRET` です。
 
-#### Google(`gmail`・`drive`・`calendar`・`docs`・`analytics`・`analytics-admin`)
+#### Google(`gmail`・`drive`・`calendar`・`docs`・`tasks`・`analytics`・`analytics-admin`)
 
-Google Cloud のプロジェクトで、Gmail API、Google Drive API、Google Calendar API、Google Docs API、Google Analytics Data API、Google Analytics Admin API のうち使うものを有効にし、OAuth クライアントを「ウェブ アプリケーション」として作成します。OAuth 同意画面のユーザーの種類は、Workspace の「内部」にします(別の組織のアカウントはつなげなくなります。別の組織はその組織のゲートウェイで)。承認済みのリダイレクト URI に `https://<ゲートウェイ>/connect/callback` を登録し、OAuth 同意画面に `src/catalog.ts` のスコープを追加します。6 つのサービスで 1 つの OAuth クライアントを共有します。
+Google Cloud のプロジェクトで、Gmail API、Google Drive API、Google Calendar API、Google Docs API、Google Tasks API、Google Analytics Data API、Google Analytics Admin API のうち使うものを有効にし、OAuth クライアントを「ウェブ アプリケーション」として作成します。OAuth 同意画面のユーザーの種類は、Workspace の「内部」にします(別の組織のアカウントはつなげなくなります。別の組織はその組織のゲートウェイで)。承認済みのリダイレクト URI に `https://<ゲートウェイ>/connect/callback` を登録し、OAuth 同意画面に `src/catalog.ts` のスコープを追加します。7 つのサービスで 1 つの OAuth クライアントを共有します。
 
 ```sh
 npm run secret -- <名前> put OAUTH_GOOGLE_CLIENT_ID
 npm run secret -- <名前> put OAUTH_GOOGLE_CLIENT_SECRET
 ```
 
-- スコープ: Gmail の `gmail.modify` はメールの読み書きと送信、Drive の `drive` は既存のファイルを含む全ファイルの閲覧と管理、Calendar の 3 つは予定の読み書き、カレンダー一覧の参照、空き時間の参照、Docs の `documents` はドキュメントの本文の読み書き、Analytics の `analytics.readonly` は GA4 のレポートとプロパティの読み取りに使います(Data API と Admin API はホストが別なので、サービスも 2 つに分けています)。読み取り専用にするなら、`SERVICES` に同じ名前でサービスを書いて、スコープを `gmail.readonly` / `drive.readonly` / `documents.readonly` などに変えます。詳細は [Gmail](https://developers.google.com/workspace/gmail/api/auth/scopes)、[Drive](https://developers.google.com/workspace/drive/api/guides/api-specific-auth)、[Calendar](https://developers.google.com/workspace/calendar/api/auth)、[Docs](https://developers.google.com/workspace/docs/api/auth) の公式ドキュメントにあります。
+- スコープ: Gmail の `gmail.modify` はメールの読み書きと送信、Drive の `drive` は既存のファイルを含む全ファイルの閲覧と管理、Calendar の 3 つは予定の読み書き、カレンダー一覧の参照、空き時間の参照、Docs の `documents` はドキュメントの本文の読み書き、Tasks の `tasks` はタスクのリストとタスクの読み書き(トピック索引がタスクを読み取ります)、`userinfo.email` はつないだアカウントのメールアドレスの参照(トピック索引がタスクの持ち主を知るために使います。Tasks のサービスは Calendar や Drive と同じ `www.googleapis.com` を向き、Tasks の API は `/tasks/v1/` の下にあります)、Analytics の `analytics.readonly` は GA4 のレポートとプロパティの読み取りに使います(Data API と Admin API はホストが別なので、サービスも 2 つに分けています)。読み取り専用にするなら、`SERVICES` に同じ名前でサービスを書いて、スコープを `gmail.readonly` / `drive.readonly` / `documents.readonly` などに変えます。詳細は [Gmail](https://developers.google.com/workspace/gmail/api/auth/scopes)、[Drive](https://developers.google.com/workspace/drive/api/guides/api-specific-auth)、[Calendar](https://developers.google.com/workspace/calendar/api/auth)、[Docs](https://developers.google.com/workspace/docs/api/auth) の公式ドキュメントにあります。
 - `authorize_params` の `access_type: offline` と `prompt: consent` は、リフレッシュトークンを受け取るための設定です。
-- REST の呼び出し先の例: `/api/gmail/gmail/v1/users/me/messages`、`/api/drive/drive/v3/files`(アップロードは `/api/drive/upload/drive/v3/files`)、`/api/calendar/calendar/v3/calendars/primary/events`、`/api/docs/v1/documents/{id}`、`/api/analytics/v1beta/properties/{id}:runReport`、`/api/analytics-admin/v1beta/accountSummaries`
+- REST の呼び出し先の例: `/api/gmail/gmail/v1/users/me/messages`、`/api/drive/drive/v3/files`(アップロードは `/api/drive/upload/drive/v3/files`)、`/api/calendar/calendar/v3/calendars/primary/events`、`/api/docs/v1/documents/{id}`、`/api/tasks/tasks/v1/users/@me/lists`、`/api/analytics/v1beta/properties/{id}:runReport`、`/api/analytics-admin/v1beta/accountSummaries`
 
 #### Slack(`slack`)
 

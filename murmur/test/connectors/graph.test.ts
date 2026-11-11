@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { SyncJob } from '../../src/connectors/graph/jobs';
-import { normalizeMessage, stripQuoted } from '../../src/connectors/graph/normalize';
+import { normalizeMessage } from '../../src/connectors/graph/normalize';
+import { stripQuoted } from '../../src/connectors/strip-quoted';
 import { jobsFromNotifications } from '../../src/connectors/graph/notifications';
 import type { SourceState } from '../../src/connectors/graph/state';
 import { planLifecycle, planMaintenance } from '../../src/connectors/graph/subscriptions';

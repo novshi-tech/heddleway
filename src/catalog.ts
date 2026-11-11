@@ -129,6 +129,14 @@ export function catalog(env: Env): Services {
       "https://analyticsadmin.googleapis.com",
       "https://www.googleapis.com/auth/analytics.readonly",
     ),
+    // Read and write: Murmur reads a task list as a personal list, and the stand creates and completes tasks (Murmur's 0041).
+    // The Tasks API is also served from www.googleapis.com (/tasks/v1/...), which lets Murmur read the connected account's
+    // address from /oauth2/v3/userinfo with the same credential (the Tasks API has no profile endpoint).
+    tasks: google(
+      "Google Tasks",
+      "https://www.googleapis.com",
+      "https://www.googleapis.com/auth/tasks https://www.googleapis.com/auth/userinfo.email",
+    ),
     // A user token: Slack puts it under `authed_user` and takes its scopes as `user_scope`.
     // It does not expire unless the app turns on token rotation.
     slack: {

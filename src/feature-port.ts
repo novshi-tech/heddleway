@@ -1,7 +1,7 @@
 import {
   ConsentRequired,
   GatewayAuthError,
-  inScope,
+  scopeTarget,
   UpstreamRefused,
   type GatewayCredential,
   type GatewayPort,
@@ -24,6 +24,8 @@ import { vaultFor } from "./vault";
 // gateway and refuses any call outside the read scope fixed by the entry, so a bug in the
 // feature cannot send mail or file an issue. Everything is the user's own credential and
 // only after the user turned the feature on (consent).
+
+const METHOD_OVERRIDE_HEADERS = ["x-http-method-override", "x-http-method", "x-method-override"];
 
 export const CONSENT_CODE_TTL_SECONDS = 5 * 60;
 
@@ -72,7 +74,9 @@ export function featurePort(env: Env, opts: FeaturePortOptions): GatewayPort {
       if (!target) throw new GatewayAuthError(`unknown service: ${service}`);
 
       return async (method, path, init = {}) => {
-        if (!inScope(scope, method, path)) throw new UpstreamRefused(method, path);
+        // 照合したのと同じ URL だけを送る（照合と送るパスが別物にならないように scopeTarget が URL を返す）
+        const url = scopeTarget(scope, method, path);
+        if (!url) throw new UpstreamRefused(method, path);
         // The vault is asked on every call, so a refresh or a reconnect is picked up as for the stand.
         const result = await vault(userId).headers(credentialId, target);
         if ("error" in result) {
@@ -81,8 +85,9 @@ export function featurePort(env: Env, opts: FeaturePortOptions): GatewayPort {
           if (result.error === "no_value") return denied(502, `credential has no value for ${result.field}`);
           return denied(502, "could not refresh the upstream access token; try again later");
         }
-        const url = new URL(path, "https://feature.invalid");
         const headers = new Headers(init.headers);
+        // 上流に別のメソッドとして扱わせるヘッダーは渡さない（GET に見せて書き込みをさせられないように）
+        for (const name of METHOD_OVERRIDE_HEADERS) headers.delete(name);
         if (init.body !== undefined) headers.set("content-type", "application/json");
         const request = new Request(url, { method, headers, body: init.body === undefined ? undefined : JSON.stringify(init.body) });
         return forward(request, target.config, upstreamFetcher(env, target.config), url.pathname, result.headers, {

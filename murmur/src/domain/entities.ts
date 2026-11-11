@@ -67,6 +67,7 @@ export type CredentialRef = z.infer<typeof CredentialRef>;
 /**
  * 取り込みの経路（0024）。なければダミーコネクタ（チャネルで選ぶ）。
  * - graph-mail: Outlook のメールボックス。本人の委任（ゲートウェイの OAuth）で読む個人の箱。
+ * - gmail: Gmail のメールボックス（0041）。同じく個人の箱。見回りで履歴を読む
  * - jira: Jira のサイトの、本人の JQL の範囲の課題（0034）。
  *   folders は delta とサブスクリプションの単位（Graph のよく知られたフォルダ名）
  */
@@ -75,6 +76,11 @@ export const SourceConnector = z.discriminatedUnion('kind', [
     kind: z.literal('graph-mail'),
     mailbox: z.literal('me'),
     folders: z.array(z.string()).min(1).default(['inbox', 'sentitems']),
+  }),
+  /** Gmail のメールボックス（0041）。本人の委任で読む個人の箱。取り込みは見回りで履歴を読む（購読はない） */
+  z.object({
+    kind: z.literal('gmail'),
+    mailbox: z.literal('me'),
   }),
   /**
    * Jira（0034・0037）。プロジェクト単位の共有リスト（projectKey があるもの）。範囲の JQL はプロジェクトから決まる。
@@ -97,6 +103,12 @@ export const SourceConnector = z.discriminatedUnion('kind', [
   /** Microsoft To Do のタスクのリスト（0039）。本人の委任で読む個人リスト。listName は写しの statusLabel に使う */
   z.object({
     kind: z.literal('graph-todo'),
+    listId: z.string().min(1),
+    listName: z.string().min(1),
+  }),
+  /** Google Tasks のタスクのリスト（0041）。見回り（updatedMin）で読む個人リスト。形は To Do と同じ */
+  z.object({
+    kind: z.literal('google-tasks'),
     listId: z.string().min(1),
     listName: z.string().min(1),
   }),
