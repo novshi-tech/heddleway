@@ -79,6 +79,12 @@ const DROPPED_BLOCKS = new Set(['script', 'style', 'head', 'title']);
 /** 終わりに改行を置くタグ */
 const BLOCK_ENDS = new Set(['p', 'div', 'li', 'tr', 'table', 'ul', 'ol', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'pre', 'section', 'article', 'header', 'footer']);
 
+/** blockquote の始まりと終わりの目印（入力から取り除いてから読む）。htmlToText の中だけで使う */
+const QUOTE_OPEN = '\u0001';
+const QUOTE_CLOSE = '\u0002';
+/** 引用の印（> ）を付ける深さの上限。入れ子が深くても行の長さを抑える */
+const MAX_QUOTE_PREFIX_DEPTH = 8;
+
 const isLetter = (c: number) => (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
 const isNameChar = (c: number) => isLetter(c) || (c >= 48 && c <= 57) || c === 45 || c === 58 || c === 95;
 
@@ -150,6 +156,16 @@ function scanHtml(html: string): string {
         }
         from = close + 1;
       }
+    } else if (name === 'blockquote') {
+      // 引用の中の行に印を付けるための目印（htmlToText が行ごとの深さを読んで取り除く）。引用は行を改めて始め、閉じたら改める
+      if (closing) out.push(QUOTE_CLOSE, '\n');
+      else {
+        let k = out.length - 1;
+        while (k >= 0 && out[k] === '') k--;
+        const prev = k >= 0 ? out[k] : undefined;
+        if (prev !== undefined && !prev.endsWith('\n')) out.push('\n');
+        out.push(QUOTE_OPEN);
+      }
     } else if ((!closing && (name === 'br' || name === 'hr')) || (closing && BLOCK_ENDS.has(name))) out.push('\n');
     else if (closing && (name === 'td' || name === 'th')) out.push(' ');
   }
@@ -159,13 +175,38 @@ function scanHtml(html: string): string {
 
 /**
  * HTML をテキストにする。script・style・head・title・コメントを落とし、<br> とブロックの終わりを改行にして、タグを外し、
- * よく使う文字参照を読む（1 回で読むので &amp;lt; は &lt; のまま残る）。読むのは先頭の MAX_BODY_INPUT まで
+ * よく使う文字参照を読む（1 回で読むので &amp;lt; は &lt; のまま残る）。読むのは先頭の MAX_BODY_INPUT まで。
+ * <blockquote> の中の行は、深さの分だけ行頭に「> 」を付ける（テキストのメールの引用と同じ形にして、stripQuoted の規則に乗せる）
  */
 export function htmlToText(html: string): string {
-  const text = scanHtml(html.slice(0, MAX_BODY_INPUT)).replace(/&(#[xX]?[0-9a-fA-F]+|[a-zA-Z]+);/g, entity);
+  const text = scanHtml(html.slice(0, MAX_BODY_INPUT).replace(/[\u0001\u0002]/g, '')).replace(/&(#[xX]?[0-9a-fA-F]+|[a-zA-Z]+);/g, entity);
+  let depth = 0;
   return text
     .split('\n')
-    .map((l) => l.replace(/[ \t ]+/g, ' ').trim())
+    .map((raw): string | null => {
+      // 行の最初の文字の深さが、その行の引用の深さ（目印は取り除き、行の途中の目印は次の行の深さに効く）
+      let lead = depth;
+      let line = raw;
+      if (raw.includes(QUOTE_OPEN) || raw.includes(QUOTE_CLOSE)) {
+        let seen = false;
+        let clean = '';
+        for (const ch of raw) {
+          if (ch === QUOTE_OPEN) depth++;
+          else if (ch === QUOTE_CLOSE) depth = Math.max(0, depth - 1);
+          else {
+            if (!seen) lead = depth;
+            seen = true;
+            clean += ch;
+          }
+        }
+        // 目印だけの行（引用の始まり・終わりに置いた改行）は行として残さない
+        if (!seen) return null;
+        line = clean;
+      }
+      const t = line.replace(/[ \t ]+/g, ' ').trim();
+      return t === '' ? '' : `${'> '.repeat(Math.min(lead, MAX_QUOTE_PREFIX_DEPTH))}${t}`;
+    })
+    .filter((l): l is string => l !== null)
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();

@@ -209,6 +209,12 @@ describe('H5 Gmail の本文（MIME・base64url・文字コード）', () => {
       fast('<p>x', '<p>あ</p>'.repeat(25_000), (out) => expect(out.split('\n')).toHaveLength(25_000));
     });
 
+    it('D4 blockquote の入れ子・並びが病的でも 1 秒以内（印の深さに上限があり、出力が膨らまない）', () => {
+      fast('<blockquote> x20000 + 行', '<blockquote>'.repeat(20_000) + '<br>あ'.repeat(10_000), (out) => expect(out.length).toBeLessThan(MAX_BODY_INPUT));
+      fast('<blockquote>あ</blockquote> x20000', '<blockquote>あ</blockquote>'.repeat(10_000), (out) => expect(out.split('\n').every((l) => l === '' || l === '> あ')).toBe(true));
+      fast('</blockquote> x', '</blockquote>'.repeat(15_000) + 'あ', (out) => expect(out).toBe('あ'));
+    });
+
     it('本文の部分は先頭の MAX_BODY_INPUT（256 KB）までしか読まない（plain も HTML も。切るだけで飛ばさない）', () => {
       const big = 'a'.repeat(MAX_BODY_INPUT + 5000);
       expect(partText(part('text/plain', big))).toHaveLength(MAX_BODY_INPUT);
@@ -220,6 +226,37 @@ describe('H5 Gmail の本文（MIME・base64url・文字コード）', () => {
       expect(bodyText(two)).toHaveLength(MAX_BODY_INPUT);
       // 取り込むのは先頭。HTML の変換も、切った先頭だけ
       expect(htmlToText('先頭' + 'x'.repeat(MAX_BODY_INPUT) + '<script>')).toHaveLength(MAX_BODY_INPUT);
+    });
+  });
+
+  it('D4 blockquote の中の行は深さの分だけ「> 」を付ける（入れ子は 1 段ごとに 1 つ増える）。外の行には付けない', () => {
+    expect(htmlToText('前<blockquote>引用<br>2 行目<blockquote>入れ子</blockquote>戻り</blockquote>後')).toBe('前\n> 引用\n> 2 行目\n> > 入れ子\n> 戻り\n後');
+    expect(htmlToText('<p>a</p><blockquote><p>b</p><p>c</p></blockquote><p>d</p>')).toBe('a\n> b\n> c\nd');
+    expect(htmlToText('<BLOCKQUOTE class="x">大文字</BLOCKQUOTE>')).toBe('> 大文字');
+    // 入力にある目印の文字は効かない
+    expect(htmlToText('あ\u0001い')).toBe('あい');
+  });
+
+  describe('D4 HTML だけの返信も、テキストと同じ引用の規則で切る', () => {
+    const htmlMail = (html: string) => signalOf(gmailMessage({ from: 'Carol <carol@example.com>', at: '2026-11-10T01:00:00.000Z', html })).body;
+
+    it('日本語の Gmail（見出しの行 + blockquote）', () => {
+      const html =
+        '<div dir="ltr">承知しました。金曜までに送ります。</div><br><div class="gmail_quote"><div dir="ltr" class="gmail_attr">2026年11月10日(火) 10:00 山田 太郎 &lt;<a href="mailto:taro@example.com">taro@example.com</a>&gt;:<br></div>' +
+        '<blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex"><div dir="ltr">見積をお願いします。<br>よろしくお願いします。</div></blockquote></div>';
+      expect(htmlMail(html)).toBe('承知しました。金曜までに送ります。');
+    });
+
+    it('英語の Gmail', () => {
+      const html =
+        '<div dir="ltr">Sounds good, will send it Friday.</div><br><div class="gmail_quote"><div dir="ltr" class="gmail_attr">On Tue, Nov 10, 2026 at 10:00 AM Taro Yamada &lt;<a href="mailto:taro@example.com">taro@example.com</a>&gt; wrote:<br></div>' +
+        '<blockquote class="gmail_quote"><div dir="ltr">Please send the estimate.</div></blockquote></div>';
+      expect(htmlMail(html)).toBe('Sounds good, will send it Friday.');
+    });
+
+    it('引用を挟んで答えを書いた HTML メール（見出しなし）は答えを残し、引用だけを落とす', () => {
+      const html = '<p>確認です。</p><blockquote>納期は金曜でよいですか？</blockquote><p>はい、金曜で大丈夫です。</p><blockquote>金額は据え置きですか？</blockquote><p>据え置きです。</p>';
+      expect(htmlMail(html)).toBe('確認です。\nはい、金曜で大丈夫です。\n据え置きです。');
     });
   });
 
@@ -298,7 +335,17 @@ describe('H5 引用の履歴の除去（Outlook と共有）', () => {
   it('下に引用だけが続く普通の Gmail の返信は、今までどおり見出しから切る（空行・最後の空行まで）', () => {
     expect(stripQuoted('承知しました。\n\nOn Tue, Nov 10, 2026 at 10:00 AM Taro <taro@example.com> wrote:\n\n> a\n>\n> b\n\n')).toBe('承知しました。\n');
     expect(stripQuoted('承知しました。\n\n2026年11月10日のお問い合わせ:\n> a\n\n> b')).toBe('承知しました。\n');
-    expect(stripQuoted('了解\nOn Tue Taro wrote:\n前の本文（> なしの引用）\nもう 1 行')).toBe('了解');
+    // > の行がなくても、見出しがメールの引用の見出しらしい（アドレスか時刻がある）なら切る
+    expect(stripQuoted('了解\nOn Tue, Nov 10 at 10:00 AM Taro wrote:\n前の本文（> なしの引用）\nもう 1 行')).toBe('了解');
+    expect(stripQuoted('了解\nOn Tue Taro <taro@example.com> wrote:\n前の本文（> なしの引用）')).toBe('了解');
+  });
+
+  it('D4 > の行が続かず、見出しがメールの引用の見出しらしくない文は、本文として残す（実際の内容を切らない）', () => {
+    const en = 'Hi team,\n\nOn Monday the client wrote:\n"Please send the estimate by Friday."\n\nI think we should reply by Thursday.';
+    expect(stripQuoted(en)).toBe(en);
+    const ja = '各位\n\n2026年度の計画について部長が書きました：\n「予算は据え置き」\n\n対応をお願いします。';
+    expect(stripQuoted(ja)).toBe(ja);
+    expect(stripQuoted('了解\nOn Tue Taro wrote:\n前の本文\nもう 1 行')).toBe('了解\nOn Tue Taro wrote:\n前の本文\nもう 1 行');
   });
 
   it('引用の行が続かない日付の行は本文として残す（誤って切らない）', () => {
