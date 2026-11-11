@@ -388,6 +388,9 @@ describe('H3 個人の箱をつなぐ', () => {
       const secondId = second.status === 'connected' ? second.data_source.id : '';
       expect(await state.source(firstId)).toMatchObject({ gatewayCredentialId: 'gw_bob2', status: 'setup' });
       expect(await state.source(secondId)).toMatchObject({ gatewayCredentialId: 'gw_bob2' });
+      // To Do のソースに Google Tasks の状態（gtasks）を持ち込まない
+      expect(await state.source(firstId)).not.toHaveProperty('gtasks');
+      expect(await state.source(secondId)).not.toHaveProperty('gtasks');
       expect(queued.map((j) => j.kind === 'setup' && j.dataSourceId).sort()).toEqual([firstId, secondId].sort());
       const dir = await ctx.service.directory();
       expect(dir.credentialRef(dir.dataSource(firstId)!.credentialRefId)?.gatewayCredentialId).toBe('gw_bob2');

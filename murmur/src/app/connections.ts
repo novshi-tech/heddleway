@@ -432,7 +432,7 @@ export class Connections {
     for (const s of await this.deps.state.sources()) {
       if (s.kind !== 'todo' || s.dataSourceId === ds.id || s.userId !== userId || s.gatewayCredentialId === credentialId) continue;
       if (dir.dataSource(s.dataSourceId)?.credentialRefId !== ds.credentialRefId || s.status === 'disconnected') continue;
-      await this.deps.state.putSource({ ...s, gatewayCredentialId: credentialId, ...(s.status === 'broken' ? { status: 'setup' as const, reason: null, gtasks: { updatedMin: null, ...s.gtasks, setupAt: this.deps.now() } } : {}) });
+      await this.deps.state.putSource({ ...s, gatewayCredentialId: credentialId, ...(s.status === 'broken' ? { status: 'setup' as const, reason: null } : {}) });
       if (s.status === 'broken') await this.deps.queue.send({ kind: 'setup', dataSourceId: s.dataSourceId });
     }
     const current = await this.deps.state.source(ds.id);
