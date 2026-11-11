@@ -36,9 +36,24 @@ export interface TeamsCursor {
   readersSyncedAt?: string;
 }
 
+/**
+ * Google Tasks の取り込みの位置（0041）。変更の通知がなく、見回りで updatedMin の差分を読む。
+ * updatedMin は読み切った最後の見回りで見えた一番新しい updated（RFC 3339。なければ最初から読む）
+ */
+export interface GtasksCursor {
+  updatedMin: string | null;
+  /**
+   * ページの上限で止めた読みかけ。同じ updatedMin の一覧の pageToken から続ける。読み切るまで updatedMin は進めない
+   * （Google はタスクを更新順に返さないので、途中の updated まで進めると読んでいない分を飛ばす）。maxUpdated は読んだ分の一番新しい updated
+   */
+  resume?: { pageToken: string; maxUpdated: string | null } | null;
+  /** リストの名前を最後に確かめた時刻（名前の変更を拾う。通知がないので間引く） */
+  listCheckedAt?: string | null;
+}
+
 /** 実行時に作ったデータソースの取り込みの状態。kind がなければ Outlook（Jira より前の行） */
 export interface SourceState {
-  kind?: 'outlook' | 'jira' | 'teams' | 'todo';
+  kind?: 'outlook' | 'jira' | 'teams' | 'todo' | 'gtasks';
   dataSourceId: string;
   /** 個人の箱の本人（ゲートウェイの User） */
   userId: string;
@@ -52,8 +67,10 @@ export interface SourceState {
   jira?: JiraCursor;
   /** Teams: 取り込みの位置 */
   teams?: TeamsCursor;
+  /** Google Tasks: 取り込みの位置（見回りの最後の読み切りの時刻は lastSyncAt） */
+  gtasks?: GtasksCursor;
   connectedAt: string;
-  /** 最後に全フォルダの delta を終えた時刻 */
+  /** 最後に全フォルダの delta を終えた時刻（Google Tasks: 見回りでリストを最後まで読み終えた時刻。間隔の判定に使う） */
   lastSyncAt: string | null;
   /** 最後に broken から試し直した時刻 */
   lastRetryAt: string | null;

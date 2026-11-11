@@ -83,7 +83,7 @@ export const RenameBody = z.object({ name: z.string().min(1) });
 
 /** 個人のリスト。スタンドはゲートウェイで目的のサービスがつながっているかを確かめてから作る */
 export const CreateDataSourceBody = z.object({
-  /** タスクのサービス（todo）は POST /connections/todo でつなぐ（経路のないタスクのリストは写しが来ない。0039） */
+  /** タスクのサービス（todo）は POST /connections/todo・/connections/google-tasks でつなぐ（経路のないタスクのリストは写しが来ない。0039・0041） */
   channel: Channel.exclude(['todo']),
   name: z.string().min(1),
   description: z.string().optional(),
@@ -163,6 +163,12 @@ export const ConnectTeamsBody = z.object({
 
 /** To Do のタスクのリストを個人リストとしてつなぐ（0039）。list を省くと一覧（choose_list）を返す */
 export const ConnectTodoBody = z.object({
+  credential_id: z.string().min(1).optional(),
+  list: z.string().min(1).optional(),
+});
+
+/** Google Tasks のタスクのリストを個人リストとしてつなぐ（0041）。list を省くと一覧（choose_list）を返す */
+export const ConnectGoogleTasksBody = z.object({
   credential_id: z.string().min(1).optional(),
   list: z.string().min(1).optional(),
 });

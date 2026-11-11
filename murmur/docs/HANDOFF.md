@@ -4,6 +4,8 @@
 
 ## いまの状態
 
+**2026-11-11（2）: Google Tasks のコネクタを `docs/adr/0041` に沿って実装した。** 経路 `google-tasks`（チャネルは To Do と同じ `todo`）、`POST /api/connections/google-tasks`（To Do と同じ流れと状態）、`GET /api/connections` の `kind: 'google-tasks'`。5 分ごとの見回り（maintain）で `updatedMin` の差分を読み（`MURMUR_TASKS_POLL_MINUTES` で間隔を延ばせる）、つないだ直後はリストを全部読む。位置は取り込みの状態（`connector_sources` の JSON。マイグレーションなし）。ゲートウェイのカタログの `tasks` は `www.googleapis.com` を向き、スコープに `userinfo.email` を足した（アカウントのアドレスを `oauth2/v3/userinfo` で知るため。**デプロイ済みの Google Tasks の接続はスコープが足りないので、つなぎ直しが要る**）。残り: Gmail のコネクタ、スキル（topic-index の書き直しと Google Tasks のスキル）、実物での確認（0041 の「進める順番」の 4・5）
+
 **2026-11-11: Gmail と Google Tasks のコネクタの `docs/adr/0041` を採用した（実装中）。** Google の取り込みは 5 分ごとの見回りから始め、Pub/Sub は使わない（決定 1。未決 1 で後から足せる）。Gmail は履歴（`history.list`）の差分、Google Tasks は `updatedMin` の差分。ゲートウェイには Google Tasks のサービスと、読める口を足す。0041 の「進める順番」で実装する。見回り 1 回につきマスタの読み込みを 1 回にすることと、Tasks の見回りの間隔を別に決められるようにすることも入れる。0039 の未決 3（Google Tasks は次）の続き
 
 **2026-11-08（3）: 表の言葉を整理する `docs/adr/0040` を採用し、スキル・画面に反映した。** 表では Murmur を「トピック索引」と呼び、スキルは `heddleway:topic-index`（`plugins/heddleway/skills/topic-index/`、heddleway 0.22.0）。索引の 1 項目（スレッド）は「トピック」、自分の番のトピックが「タスク」、To Do のものは「To Do のタスク」。名指しは「アテンション」、スタンドは「エージェント」、読者は「メンバー」、シグナルは「メッセージ」、仕分け待ちは「割当待ち」、開き直しは「再開」。API・イベント・コードの名前は変えていない。残り: 同意の画面の文面を直樹に見てもらう（0040 の未決 1）

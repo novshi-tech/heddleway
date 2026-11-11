@@ -64,6 +64,7 @@ describe('GTASKS_SCOPE', () => {
       '/tasks/v1/lists/MTIz/tasks',
       '/tasks/v1/lists/MTIz/tasks?updatedMin=2026-11-01T00:00:00Z&showCompleted=true&showHidden=true&showDeleted=true',
       '/tasks/v1/lists/MTIz/tasks/dGFzaw',
+      '/oauth2/v3/userinfo',
     ]) expect(allowed(GTASKS_SCOPE, 'GET', path), path).toBe(true);
   });
 
@@ -76,6 +77,7 @@ describe('GTASKS_SCOPE', () => {
         '/tasks/v1/lists/MTIz/tasks/dGFzaw',
         '/tasks/v1/lists/MTIz/tasks/dGFzaw/move',
         '/tasks/v1/lists/MTIz/clear',
+        '/oauth2/v3/userinfo',
       ]) expect(allowed(GTASKS_SCOPE, method, path), `${method} ${path}`).toBe(false);
     }
   });
@@ -88,6 +90,8 @@ describe('GTASKS_SCOPE', () => {
       '/tasks/v1/lists/MTIz/tasks/dGFzaw/move',
       '/tasks/v1/lists/MTIz/clear',
       '/tasks/v1/lists/MTIz/tasks/a/b',
+      '/oauth2/v3/userinfo/extra',
+      '/oauth2/v2/userinfo',
       '/gmail/v1/users/me/profile',
     ]) expect(allowed(GTASKS_SCOPE, 'GET', path), path).toBe(false);
   });

@@ -100,6 +100,12 @@ export const SourceConnector = z.discriminatedUnion('kind', [
     listId: z.string().min(1),
     listName: z.string().min(1),
   }),
+  /** Google Tasks のタスクのリスト（0041）。見回り（updatedMin）で読む個人リスト。形は To Do と同じ */
+  z.object({
+    kind: z.literal('google-tasks'),
+    listId: z.string().min(1),
+    listName: z.string().min(1),
+  }),
 ]);
 export type SourceConnector = z.infer<typeof SourceConnector>;
 

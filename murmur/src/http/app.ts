@@ -15,7 +15,7 @@ import {
   AcknowledgeBody,
   AcknowledgeManyBody,
   ClaimBody,
-  ConnectJiraBody, ConnectOutlookBody, ConnectTeamsBody, ConnectTodoBody,
+  ConnectGoogleTasksBody, ConnectJiraBody, ConnectOutlookBody, ConnectTeamsBody, ConnectTodoBody,
   DismissBody,
   GetThreadQuery,
   InboundItemBody,
@@ -274,6 +274,11 @@ export function createApp(opts: HttpOptions) {
   api.post('/connections/todo', async (c) => {
     const b = ConnectTodoBody.parse(await json(c));
     return c.json(await (await connectors(c)).connections.connectTodo(c.var.userId, { credentialId: b.credential_id, listId: b.list }));
+  });
+
+  api.post('/connections/google-tasks', async (c) => {
+    const b = ConnectGoogleTasksBody.parse(await json(c));
+    return c.json(await (await connectors(c)).connections.connectGoogleTasks(c.var.userId, { credentialId: b.credential_id, listId: b.list }));
   });
 
   api.post('/connections/jira', async (c) => {

@@ -5,6 +5,7 @@ import { GraphMailSync } from '../../src/connectors/graph/sync';
 import { JiraSync } from '../../src/connectors/jira/sync';
 import { TeamsSync } from '../../src/connectors/teams/sync';
 import { TodoSync } from '../../src/connectors/todo/sync';
+import { GtasksSync } from '../../src/connectors/gtasks/sync';
 import type { SourceState } from '../../src/connectors/graph/state';
 import { MemoryConnectorState } from '../../src/store/connector-state';
 import { makeService } from '../helpers/service';
@@ -27,7 +28,7 @@ async function setup() {
   });
   const state = new MemoryConnectorState();
   // どのコネクタのデータソースも、それぞれ 3 つずつ。マスタにはない（guard はマスタを引いたところで止まる）
-  for (const kind of ['outlook', 'todo', 'jira', 'teams'] as const) {
+  for (const kind of ['outlook', 'todo', 'gtasks', 'jira', 'teams'] as const) {
     for (const n of [1, 2, 3]) await state.putSource(source(`ds_${kind}_${n}`, kind));
   }
   const deps = {
@@ -42,6 +43,7 @@ async function setup() {
   const syncs = {
     graph: new GraphMailSync({ ...deps, graphFor: async () => ({}) as never }),
     todo: new TodoSync({ ...deps, todoFor: async () => ({}) as never }),
+    gtasks: new GtasksSync({ service: counting, state, now: deps.now, gtasksFor: async () => ({}) as never }),
     jira: new JiraSync({ ...deps, jiraFor: async () => ({}) as never, webhookUrlFor: async () => 'https://gw.test/hook' }),
     teams: new TeamsSync({ ...deps, teamsFor: async () => ({}) as never }),
   };
@@ -55,18 +57,18 @@ describe('見回りのマスタの読み込み', () => {
     expect(loads()).toBe(1);
   });
 
-  it('To Do・Jira・Teams の maintain は、自分のデータソースが 3 個あってもマスタを 1 回だけ読む', async () => {
-    for (const name of ['todo', 'jira', 'teams'] as const) {
+  it('To Do・Google Tasks・Jira・Teams の maintain は、自分のデータソースが 3 個あってもマスタを 1 回だけ読む', async () => {
+    for (const name of ['todo', 'gtasks', 'jira', 'teams'] as const) {
       const { syncs, loads } = await setup();
       await syncs[name].handle({ kind: 'maintain' });
       expect(loads(), name).toBe(1);
     }
   });
 
-  it('読み込みを渡せば、4 つのコネクタの maintain をまとめて 1 回で済ませる', async () => {
+  it('読み込みを渡せば、5 つのコネクタの maintain をまとめて 1 回で済ませる', async () => {
     const { syncs, loads } = await setup();
     const directory = onceDirectory(() => (syncs.graph as unknown as { deps: { service: MurmurService } }).deps.service.directory());
-    for (const s of [syncs.graph, syncs.jira, syncs.teams, syncs.todo]) await s.handle({ kind: 'maintain' }, directory);
+    for (const s of [syncs.graph, syncs.jira, syncs.teams, syncs.todo, syncs.gtasks]) await s.handle({ kind: 'maintain' }, directory);
     expect(loads()).toBe(1);
   });
 

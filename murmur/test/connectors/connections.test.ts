@@ -9,6 +9,7 @@ import { FakeGraph } from '../helpers/fake-graph';
 import { FakeJira } from '../helpers/fake-jira';
 import { FakeTeams } from '../helpers/fake-teams';
 import { FakeTodo } from '../helpers/fake-todo';
+import { FakeGtasks } from '../helpers/fake-gtasks';
 import { seed } from '../helpers/world';
 
 // 個人の箱をつなぐ（0024 の決定 3）。ゲートウェイは口（ports/gateway.ts）の偽物。
@@ -17,7 +18,7 @@ import { seed } from '../helpers/world';
 const GATEWAY = 'https://gateway.test';
 
 /** 種類ごとのゲートウェイの接続先（本物は組み立て時に決まる。Teams は Graph の接続で読む） */
-const serviceOf = (kind: UpstreamKind) => (kind === 'teams' ? 'graph' : kind);
+const serviceOf = (kind: UpstreamKind) => (kind === 'teams' ? 'graph' : kind === 'gtasks' ? 'tasks' : kind);
 
 /** ゲートウェイの口の偽物。本人が「有効にする」を押すと同意が残り、コールバックに本人のコードで戻ってくる */
 class FakeGatewayPort implements GatewayPort {
@@ -77,6 +78,7 @@ describe('H3 個人の箱をつなぐ', () => {
   let sharedServices: string[];
   let teams: FakeTeams;
   let todo: FakeTodo;
+  let gtasks: FakeGtasks;
 
   async function setup(world = seed) {
     const made = await makeService(world);
@@ -91,6 +93,7 @@ describe('H3 個人の箱をつなぐ', () => {
       jiraFor: () => jira,
       teamsFor: () => teams,
       todoFor: () => todo,
+      gtasksFor: () => gtasks,
       sharedServices,
     });
     return { ...made, connections };
@@ -115,6 +118,8 @@ describe('H3 個人の箱をつなぐ', () => {
     jira = new FakeJira(() => now);
     teams = new FakeTeams(() => now);
     todo = new FakeTodo(undefined, { id: 'oid_bob', displayName: 'Bob', addresses: ['bob.todo@ubs.example'] });
+    gtasks = new FakeGtasks(undefined, 'bob@gws.example');
+    gw.credentialsOf.set('u_bob', [...gw.credentialsOf.get('u_bob')!, { id: 'gw_tasks', service: 'tasks', label: 'gws' }]);
     sharedServices = ['jira'];
     ctx = await setup();
   });
@@ -355,6 +360,89 @@ describe('H3 個人の箱をつなぐ', () => {
       expect(dir.credentialRef(dir.dataSource(firstId)!.credentialRefId)?.gatewayCredentialId).toBe('gw_bob2');
       // 同じリストをもう一度つなげば、新しい接続で読み直す
       expect(await ctx.connections.connectTodo('u_bob', { listId: 'L_murmur' })).toMatchObject({ status: 'connected', created: false });
+    });
+  });
+
+  describe('H3 Google Tasks のタスクのリスト（0041）', () => {
+    async function consentGtasks(asUser: string) {
+      const r = await ctx.connections.connectGoogleTasks('u_bob');
+      if (r.status !== 'authorize') throw new Error(`expected authorize, got ${r.status}`);
+      return ctx.connections.callback({ state: new URL(r.authorize_url).searchParams.get('state'), code: gw.approve(asUser), error: null });
+    }
+
+    it('同意 → リストを選んでもらう → 個人リストを作り（読者は本人だけ。アドレスは userinfo のメール）、キューに setup を積む。何度呼んでも同じ', async () => {
+      expect(await consentGtasks('u_bob')).toMatchObject({ ok: true, message: expect.stringMatching(/Google Tasks のタスクのリストを選んで/) });
+      expect(await ctx.connections.connectGoogleTasks('u_bob')).toEqual({
+        status: 'choose_list',
+        lists: [
+          { id: 'L_default', name: 'My Tasks', wellknown: null },
+          { id: 'L_murmur', name: 'Murmur', wellknown: null },
+        ],
+      });
+      const r = await ctx.connections.connectGoogleTasks('u_bob', { listId: 'L_murmur' });
+      expect(r).toMatchObject({ status: 'connected', created: true, data_source: { name: 'Bob の Google Tasks（Murmur）' } });
+      const id = r.status === 'connected' ? r.data_source.id : '';
+      const dir = await ctx.service.directory();
+      expect(dir.dataSource(id)).toMatchObject({ channel: 'todo', connector: { kind: 'google-tasks', listId: 'L_murmur', listName: 'Murmur' } });
+      expect(dir.credentialRef(dir.dataSource(id)!.credentialRefId)).toMatchObject({ address: { channel: 'todo', value: 'bob@gws.example' }, gatewayCredentialId: 'gw_tasks' });
+      expect(dir.readersOfList(dir.listOfDataSource(id)!.id)).toEqual(['u_bob']);
+      expect(queued).toEqual([{ kind: 'setup', dataSourceId: id }]);
+      expect(await state.source(id)).toMatchObject({ kind: 'gtasks', gatewayCredentialId: 'gw_tasks', status: 'setup', gtasks: { updatedMin: null } });
+      expect(await ctx.connections.list('u_bob')).toEqual([expect.objectContaining({ data_source: id, kind: 'google-tasks', list: 'Murmur', status: 'setup' })]);
+      expect(await ctx.connections.connectGoogleTasks('u_bob', { listId: 'L_murmur' })).toMatchObject({ status: 'connected', created: false });
+      expect(seedProblems((await ctx.service.directory()).seed)).toEqual([]);
+    });
+
+    it('見えないリストはつなげない。リストはいくつでもつなげ、1 つずつが別の個人リストになる', async () => {
+      await consentGtasks('u_bob');
+      await expect(ctx.connections.connectGoogleTasks('u_bob', { listId: 'L_nope' })).rejects.toMatchObject({ code: 'not_found' });
+      const a = await ctx.connections.connectGoogleTasks('u_bob', { listId: 'L_murmur' });
+      const b = await ctx.connections.connectGoogleTasks('u_bob', { listId: 'L_default' });
+      expect(b).toMatchObject({ status: 'connected', created: true, data_source: { name: 'Bob の Google Tasks（My Tasks）' } });
+      const ids = [a, b].map((r) => (r.status === 'connected' ? r.data_source.id : ''));
+      const dir = await ctx.service.directory();
+      expect(dir.dataSource(ids[0]!)!.credentialRefId).toBe(dir.dataSource(ids[1]!)!.credentialRefId);
+      expect((await ctx.connections.list('u_bob')).map((c) => c.list).sort()).toEqual(['Murmur', 'My Tasks']);
+    });
+
+    it('アカウントのアドレスがわからない（email がない・確認済みでない）ならつながない（To Do が本人を特定できないときと同じ）', async () => {
+      await consentGtasks('u_bob');
+      gtasks.email = '';
+      await expect(ctx.connections.connectGoogleTasks('u_bob', { listId: 'L_murmur' })).rejects.toMatchObject({ code: 'invalid' });
+      expect(await state.sources()).toEqual([]);
+      expect(queued).toEqual([]);
+    });
+
+    it('ゲートウェイに Google Tasks の接続がなければ no_credential。To Do（graph）の接続は使わない', async () => {
+      gw.credentialsOf.set('u_bob', [{ id: 'gw_bob', service: 'graph', label: 'ubs' }]);
+      const r = await ctx.connections.connectGoogleTasks('u_bob');
+      if (r.status !== 'authorize') throw new Error('expected authorize');
+      const done = await ctx.connections.callback({ state: new URL(r.authorize_url).searchParams.get('state'), code: gw.approve('u_bob'), error: null });
+      expect(done).toMatchObject({ ok: false, message: expect.stringMatching(/Google Tasks の接続がありません/) });
+      expect(await ctx.connections.connectGoogleTasks('u_bob')).toMatchObject({ status: 'no_credential' });
+    });
+
+    it('ゲートウェイの接続を足し直して ID が変わっても、同じアカウントならつなげる。ほかのリストも新しい接続で読む', async () => {
+      await consentGtasks('u_bob');
+      const first = await ctx.connections.connectGoogleTasks('u_bob', { listId: 'L_murmur' });
+      const firstId = first.status === 'connected' ? first.data_source.id : '';
+      await state.putSource({ ...(await state.source(firstId))!, status: 'broken', reason: 'credential must be reconnected' });
+      gw.credentialsOf.set('u_bob', [{ id: 'gw_tasks2', service: 'tasks', label: 'gws' }]);
+      queued = [];
+      const second = await ctx.connections.connectGoogleTasks('u_bob', { listId: 'L_default' });
+      const secondId = second.status === 'connected' ? second.data_source.id : '';
+      expect(await state.source(firstId)).toMatchObject({ gatewayCredentialId: 'gw_tasks2', status: 'setup' });
+      expect(queued.map((j) => j.kind === 'setup' && j.dataSourceId).sort()).toEqual([firstId, secondId].sort());
+    });
+
+    it('外す: disconnected にしてキューに積む（上流に消すものはない）。本人以外は外せない', async () => {
+      await consentGtasks('u_bob');
+      const r = await ctx.connections.connectGoogleTasks('u_bob', { listId: 'L_murmur' });
+      const id = r.status === 'connected' ? r.data_source.id : '';
+      await expect(ctx.connections.disconnect('u_alice', id)).rejects.toThrow(/not found/);
+      expect(await ctx.connections.disconnect('u_bob', id)).toEqual([expect.objectContaining({ kind: 'google-tasks', status: 'disconnected' })]);
+      expect(queued.at(-1)).toEqual({ kind: 'disconnect', dataSourceId: id });
+      expect(gtasks.calls.filter((c) => c.fn === 'tasks')).toEqual([]);
     });
   });
 

@@ -18,7 +18,8 @@ export interface PendingAuthorization {
     | { kind: 'outlook' }
     | { kind: 'jira'; cloudId?: string; projectKey?: string }
     | { kind: 'teams'; teamId?: string; channelId?: string }
-    | { kind: 'todo'; listId?: string };
+    | { kind: 'todo'; listId?: string }
+    | { kind: 'google-tasks'; listId?: string };
 }
 
 export interface ConnectorStateStore {

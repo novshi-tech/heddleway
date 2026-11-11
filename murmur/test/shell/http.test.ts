@@ -306,13 +306,14 @@ describe('H3 外部コネクタの公開ルート（0024）', () => {
     const connectJira = async (userId: string, input: unknown) => ({ status: 'connected', userId, input });
     const connectTeams = async (userId: string, input: unknown) => ({ status: 'connected', userId, input });
     const connectTodo = async (userId: string, input: unknown) => ({ status: 'connected', userId, input });
+    const connectGoogleTasks = async (userId: string, input: unknown) => ({ status: 'connected', userId, input });
     const http = createApp({
       service: () => ctx.service,
       authenticate,
       webhookVerify: async () => false,
       connectors: withConnectors
         ? () => ({
-            connections: { connectOutlook, connectJira, connectTeams, connectTodo, list: async () => [], disconnect: async () => [], callback: async () => ({ ok: true, message: '<b>つないだ</b>' }) } as never,
+            connections: { connectOutlook, connectJira, connectTeams, connectTodo, connectGoogleTasks, list: async () => [], disconnect: async () => [], callback: async () => ({ ok: true, message: '<b>つないだ</b>' }) } as never,
             notifications: async (body) => {
               notified.push(body);
               return 1;
@@ -386,6 +387,15 @@ describe('H3 外部コネクタの公開ルート（0024）', () => {
     expect((await http.request('/api/connections/todo', { method: 'POST' })).status).toBe(401);
     const res = await http.request('/api/connections/todo', { method: 'POST', headers: auth, body: JSON.stringify({ list: 'L_murmur' }) });
     expect(await res.json()).toEqual({ status: 'connected', userId: 'u_bob', input: { credentialId: undefined, listId: 'L_murmur' } });
+  });
+
+  it('H3 /api/connections/google-tasks はタスクのリストを渡す（本人のトークンが要る。0041）', async () => {
+    const { http } = await app();
+    const auth = { authorization: `Bearer ${token('u_bob')}`, 'content-type': 'application/json' };
+    expect((await http.request('/api/connections/google-tasks', { method: 'POST' })).status).toBe(401);
+    const res = await http.request('/api/connections/google-tasks', { method: 'POST', headers: auth, body: JSON.stringify({ list: 'L_murmur', credential_id: 'gw_tasks' }) });
+    expect(await res.json()).toEqual({ status: 'connected', userId: 'u_bob', input: { credentialId: 'gw_tasks', listId: 'L_murmur' } });
+    expect((await http.request('/api/connections/google-tasks', { method: 'POST', headers: auth, body: JSON.stringify({ list: '' }) })).status).toBe(400);
   });
 
   it('設定がなければ 404', async () => {
