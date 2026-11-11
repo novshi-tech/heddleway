@@ -1,7 +1,7 @@
 {
   "name": "heddleway-google",
   "displayName": "Heddleway: Google",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "description": "API ゲートウェイ経由で Gmail・Google Drive・Google Calendar・Google Docs・Google Tasks・Google Analytics を操作するスキル。heddleway プラグインと一緒に使う。",
   "author": {
     "name": "novshi-tech"

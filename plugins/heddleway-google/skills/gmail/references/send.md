@@ -21,7 +21,7 @@ python3 "$GW" POST gmail /gmail/v1/users/me/messages/send --json @send.json
 python3 "$GW" GET gmail "/gmail/v1/users/me/messages/{送信の戻り値の id}" -q format=metadata -q metadataHeaders=Message-ID
 ```
 
-- `payload.headers` の `name` が `Message-ID` の `value`(`<...@mail.gmail.com>` の形)を、そのまま `sent_ref` にする。山かっこを外さない。
+- `payload.headers` から、`name` が `Message-ID` のもの(`Message-ID` / `Message-Id` など大文字小文字は区別せず探す)の `value` を、返ってきたとおり(`<...>` の山かっこつき。ドメインも `@mail.gmail.com` とは限らない)そのまま `sent_ref` にする。山かっこを外さない。
 - 返信なら、元のメールの Message-ID を `anchors.in_reply_to` に、元のトピックを `reply_to_thread_id` に入れる。
 - 下書きを送ったときは、`drafts/send` の戻り値の `id`(メッセージの ID。下書きの ID ではない)で同じように取る。
 - 送れたと確かめたあとに呼ぶ。送れなかった・確かめられないものは記録しない。
