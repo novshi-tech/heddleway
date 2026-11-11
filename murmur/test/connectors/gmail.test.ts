@@ -582,7 +582,7 @@ describe('H5 拾い直しと失敗の計画（純関数）', () => {
     ['口が断った', new UpstreamRefused('GET', '/x'), 'transient'],
     ['LLM の API（400 でも）', new LlmApiError(400, 'invalid_request_error', 'credit balance is too low'), 'transient'],
     ['LLM の API（529）', new LlmApiError(529, 'overloaded_error', 'x'), 'transient'],
-    ['LLM の拒否', new LlmRefusalError('x'), 'transient'],
+    ['LLM の拒否（そのメッセージの中身による）', new LlmRefusalError('x'), 'count'],
     ['記録がない', new RecordingMissingError('x'), 'transient'],
     ['保存の競合', new ConcurrencyError(1), 'transient'],
     ['ネットワーク（fetch failed）', new TypeError('fetch failed'), 'transient'],

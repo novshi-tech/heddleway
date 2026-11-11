@@ -25,8 +25,10 @@ export function classifyMessageFailure(err: unknown): FailureClass {
   }
   // ゲートウェイ自身の失敗（上流トークンの更新失敗の 502 など）
   if (err instanceof GatewayError || err instanceof UpstreamRefused) return 'transient';
-  // 取り込みの AI 判断の基盤（過負荷・障害・残高切れ・記録なし・拒否）。状態に関わらず一時的として扱う
-  if (err instanceof LlmApiError || err instanceof LlmRefusalError || err instanceof RecordingMissingError) return 'transient';
+  // 取り込みの AI 判断の基盤（過負荷・障害・残高切れ・記録なし）。状態に関わらず一時的として扱う
+  if (err instanceof LlmApiError || err instanceof RecordingMissingError) return 'transient';
+  // AI が判断を拒んだのは、そのメッセージの中身による。障害ではないので数える（続けば飛ばし、後ろのメールを止めない）
+  if (err instanceof LlmRefusalError) return 'count';
   // 保存の競合
   if (err instanceof ConcurrencyError) return 'transient';
   // ネットワーク（fetch の失敗は TypeError、時間切れは AbortError / TimeoutError）
