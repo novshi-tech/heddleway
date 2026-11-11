@@ -202,14 +202,14 @@ describe("the gateway's port for Murmur", () => {
     const gmail = featurePort(on, { feature: "murmur", kinds: { graph: { service: "board", scope: GRAPH_SCOPE }, jira: { service: "jira", scope: JIRA_SCOPE }, teams: { service: "board", scope: TEAMS_SCOPE }, gmail: { service: "board", scope: GMAIL_SCOPE }, gtasks: { service: "tasks", scope: GTASKS_SCOPE } } });
     const read = await gmail.upstream(bob, cred.id, "gmail");
     for (const path of [
-      "/gmail/v1/users/me/labels/..\\..\\..\\..\\..\\gmail\\v1\\users\\me\\drafts",
-      "/gmail/v1/users/me/labels/%2e%2e",
-      "/gmail/v1/users/me/labels/%2E%2E",
+      "/gmail/v1/users/me/messages/..\\..\\..\\..\\..\\gmail\\v1\\users\\me\\drafts",
+      "/gmail/v1/users/me/messages/%2e%2e",
+      "/gmail/v1/users/me/messages/%2E%2E",
       "/gmail/v1/users/me/messages/a%2Fb",
-      "/gmail/v1/users/me/labels/x#/../../drafts",
+      "/gmail/v1/users/me/messages/x#/../../drafts",
     ]) await expect(read("GET", path), path).rejects.toBeInstanceOf(UpstreamRefused);
-    const ok = (await (await read("GET", "/gmail/v1/users/me/labels/Label_1?x=1")).json()) as { url: string };
-    expect(ok.url).toBe("https://api.the-board.jp/gmail/v1/users/me/labels/Label_1?x=1");
+    const ok = (await (await read("GET", "/gmail/v1/users/me/messages/18c0ffee?x=1")).json()) as { url: string };
+    expect(ok.url).toBe("https://api.the-board.jp/gmail/v1/users/me/messages/18c0ffee?x=1");
   });
 
   it("does not forward method override headers", async () => {
