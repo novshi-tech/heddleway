@@ -9,9 +9,8 @@ const NOW = '2026-10-30T00:00:00.000Z';
 const input: MailboxInput = { userId: 'u_bob', gatewayCredentialId: 'gw_bob', displayName: 'Bob', addresses: ['Bob@ubs.example', 'bob@ubs.example', 'b.alias@ubs.example'] };
 
 /** シェルの changeMaster と同じく、下書きに当てて差分を取る */
-function connect(before: Seed, i: MailboxInput = input): { after: Seed; plan: MailboxPlan } {
+function connect(before: Seed, i: MailboxInput = input, newId = counterIds()): { after: Seed; plan: MailboxPlan } {
   let plan!: MailboxPlan;
-  const newId = counterIds();
   const { after } = planMasterEdit(before, (d) => {
     plan = connectMailbox(d, { dir: new Directory(d), now: NOW, newId }, i);
   });
@@ -39,6 +38,23 @@ describe('H3 connectMailbox', () => {
     const again = connect(first.after);
     expect(again.plan).toEqual({ kind: 'exists', dataSource: first.plan.dataSource });
     expect(again.after).toEqual(first.after);
+  });
+
+  it('Gmail（service: gmail）: 経路は gmail、名前は「の Gmail」。Outlook のメールボックスとは別のデータソース', () => {
+    const outlookInput = { ...input, addresses: ['bob@ubs.example'] };
+    const gmailInput: MailboxInput = { ...input, addresses: ['bob@gws.example'], service: 'gmail', gatewayCredentialId: 'gw_gmail' };
+    const newId = counterIds();
+    const outlook = connect(seed, outlookInput, newId);
+    const gmail = connect(outlook.after, gmailInput, newId);
+    expect(gmail.plan.kind).toBe('created');
+    expect(gmail.plan.dataSource).toMatchObject({ name: 'Bob の Gmail', channel: 'email', selfAddresses: [], connector: { kind: 'gmail', mailbox: 'me' } });
+    expect(seedProblems(gmail.after)).toEqual([]);
+    // 同じ本人・同じ接続なら作り直さない（種類が同じものだけ）
+    const again = connect(gmail.after, gmailInput, newId);
+    expect(again.plan).toEqual({ kind: 'exists', dataSource: gmail.plan.dataSource });
+    expect(connect(gmail.after, outlookInput, newId).plan).toEqual({ kind: 'exists', dataSource: outlook.plan.dataSource });
+    // 同じアドレスの箱を Outlook と Gmail の両方でつなぐことはできない（同じ箱を 2 つのリストで読まない）
+    expect(() => connect(outlook.after, { ...outlookInput, service: 'gmail', gatewayCredentialId: 'gw_gmail' }, newId)).toThrow(/already reads/);
   });
 
   it('別の人のアドレスなら断る', () => {

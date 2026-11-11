@@ -18,7 +18,13 @@ export interface MailboxInput {
   displayName: string;
   /** 本人のアドレスとエイリアス。先頭が主のアドレスで、リストでのアイデンティティになる */
   addresses: string[];
+  /** 個人の箱のサービス（経路）。省けば Outlook（0041 で Gmail を足した。作り方は同じ） */
+  service?: MailboxService;
 }
+
+export type MailboxService = 'graph-mail' | 'gmail';
+
+const MAILBOX_LABEL: Record<MailboxService, string> = { 'graph-mail': 'Outlook', gmail: 'Gmail' };
 
 export type MailboxPlan =
   | { kind: 'exists'; dataSource: ServiceDataSource }
@@ -29,11 +35,13 @@ export type MailboxPlan =
  * エイリアスも本人の Contact に付ける（別の人のアドレスなら conflict）
  */
 export function connectMailbox(draft: Seed, ctx: CoreContext, input: MailboxInput): MailboxPlan {
+  const service = input.service ?? 'graph-mail';
+  const label = MAILBOX_LABEL[service];
   const user = draft.users.find((u) => u.id === input.userId);
   if (!user) throw new DomainError('forbidden', `user ${input.userId} はまだサインインしていない`);
 
   const existing = draft.dataSources.find((ds): ds is ServiceDataSource => {
-    if (ds.kind !== 'service' || ds.connector?.kind !== 'graph-mail') return false;
+    if (ds.kind !== 'service' || ds.connector?.kind !== service) return false;
     const cred = draft.credentialRefs.find((c) => c.id === ds.credentialRefId);
     return cred?.principal.kind === 'user' && cred.principal.userId === input.userId && cred.gatewayCredentialId === input.gatewayCredentialId;
   });
@@ -48,7 +56,7 @@ export function connectMailbox(draft: Seed, ctx: CoreContext, input: MailboxInpu
     input.userId,
     {
       channel: 'email',
-      name: `${name} の Outlook`,
+      name: `${name} の ${label}`,
       description: `${name} の個人のメールボックス。本人の同意で取り込む（読者は本人だけ）`,
       identity: values[0]!,
       gatewayCredentialId: input.gatewayCredentialId,
@@ -57,7 +65,7 @@ export function connectMailbox(draft: Seed, ctx: CoreContext, input: MailboxInpu
   );
   for (const alias of values.slice(1)) bindIdentity(draft, input.userId, { channel: 'email', value: alias }, ctx);
   const dataSource = draft.dataSources.find((d) => d.id === created.dataSourceId) as ServiceDataSource;
-  dataSource.connector = { kind: 'graph-mail', mailbox: 'me', folders: ['inbox', 'sentitems'] };
+  dataSource.connector = service === 'gmail' ? { kind: 'gmail', mailbox: 'me' } : { kind: 'graph-mail', mailbox: 'me', folders: ['inbox', 'sentitems'] };
   return { kind: 'created', dataSource, identity: created.identity };
 }
 

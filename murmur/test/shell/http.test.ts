@@ -307,13 +307,14 @@ describe('H3 外部コネクタの公開ルート（0024）', () => {
     const connectTeams = async (userId: string, input: unknown) => ({ status: 'connected', userId, input });
     const connectTodo = async (userId: string, input: unknown) => ({ status: 'connected', userId, input });
     const connectGoogleTasks = async (userId: string, input: unknown) => ({ status: 'connected', userId, input });
+    const connectGmail = async (userId: string, credentialId?: string) => ({ status: 'authorize', authorize_url: `https://gw/authorize?u=${userId}&c=${credentialId ?? ''}&k=gmail` });
     const http = createApp({
       service: () => ctx.service,
       authenticate,
       webhookVerify: async () => false,
       connectors: withConnectors
         ? () => ({
-            connections: { connectOutlook, connectJira, connectTeams, connectTodo, connectGoogleTasks, list: async () => [], disconnect: async () => [], callback: async () => ({ ok: true, message: '<b>つないだ</b>' }) } as never,
+            connections: { connectOutlook, connectJira, connectTeams, connectTodo, connectGoogleTasks, connectGmail, list: async () => [], disconnect: async () => [], callback: async () => ({ ok: true, message: '<b>つないだ</b>' }) } as never,
             notifications: async (body) => {
               notified.push(body);
               return 1;
@@ -396,6 +397,17 @@ describe('H3 外部コネクタの公開ルート（0024）', () => {
     const res = await http.request('/api/connections/google-tasks', { method: 'POST', headers: auth, body: JSON.stringify({ list: 'L_murmur', credential_id: 'gw_tasks' }) });
     expect(await res.json()).toEqual({ status: 'connected', userId: 'u_bob', input: { credentialId: 'gw_tasks', listId: 'L_murmur' } });
     expect((await http.request('/api/connections/google-tasks', { method: 'POST', headers: auth, body: JSON.stringify({ list: '' }) })).status).toBe(400);
+  });
+
+  it('H3 /api/connections/gmail は Outlook と同じ形（credential_id だけ。本人のトークンが要る。0041）', async () => {
+    const { http } = await app();
+    const auth = { authorization: `Bearer ${token('u_bob')}`, 'content-type': 'application/json' };
+    expect((await http.request('/api/connections/gmail', { method: 'POST' })).status).toBe(401);
+    const res = await http.request('/api/connections/gmail', { method: 'POST', headers: auth, body: JSON.stringify({ credential_id: 'gw_gmail' }) });
+    expect(await res.json()).toEqual({ status: 'authorize', authorize_url: 'https://gw/authorize?u=u_bob&c=gw_gmail&k=gmail' });
+    const none = await http.request('/api/connections/gmail', { method: 'POST', headers: auth, body: JSON.stringify({}) });
+    expect(await none.json()).toEqual({ status: 'authorize', authorize_url: 'https://gw/authorize?u=u_bob&c=&k=gmail' });
+    expect((await http.request('/api/connections/gmail', { method: 'POST', headers: auth, body: JSON.stringify({ credential_id: '' }) })).status).toBe(400);
   });
 
   it('設定がなければ 404', async () => {

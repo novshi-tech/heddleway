@@ -153,6 +153,9 @@ export const InboundItemBody = z.union([InboundMirrorBody, InboundSignalBody]);
 /** POST /api/connections/outlook。credential_id はゲートウェイの Graph の接続（複数あるときに選ぶ） */
 export const ConnectOutlookBody = z.object({ credential_id: z.string().min(1).optional() });
 
+/** POST /api/connections/gmail。credential_id はゲートウェイの Gmail の接続（複数あるときに選ぶ。0041） */
+export const ConnectGmailBody = z.object({ credential_id: z.string().min(1).optional() });
+
 /** Jira をつなぐ（0034）。site はサイトの cloudId（choose_site で返したもの）、jql は範囲（省けば担当・起票・ウォッチ） */
 /** Teams のチャネルを共有リストとしてつなぐ（0036・0037）。team・channel を省くと一覧（choose_team・choose_channel）を返す */
 export const ConnectTeamsBody = z.object({

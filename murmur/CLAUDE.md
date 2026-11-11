@@ -72,6 +72,7 @@ src/
     jira/          Jira（0034・0037）: 写像（純関数）・差分の JQL と Webhook の計画（純関数）・呼べる口を固定した API・キューの仕事・共有リストの読者の同期
     teams/         Teams（0036・0037）: 正規化・走査とサブスクリプションと読者の計画（純関数）・読める口・キューの仕事
     todo/          To Do（0039）: タスクの正規化（決まった形の写し。純関数）・読み取りの口・キューの仕事（サブスクリプションと delta は Outlook と同じ）
+    gmail/         Gmail（0041）: 正規化・ヘッダーと本文の読み取り（アドレスの一覧・符号化された語・MIME・文字コード。純関数）・履歴の計画と拾い直しの起点（純関数）・読み取りの口（GET だけ）・見回りの同期（通知がなく、5 分ごとの maintain で history.list の差分を読む。位置が切れたら検索で拾い直す）
     gtasks/        Google Tasks（0041）: タスクの正規化（純関数。To Do と同じ決まった形）・見回りの計画（間隔・cursor。純関数）・読み取りの口（GET だけ。userinfo でアカウントを知る）・見回りの同期（通知がなく、5 分ごとの maintain で updatedMin の差分を読む）
   ports/gateway.ts  ゲートウェイの口（型と取り決めだけ。0023）。認証・本人の接続・上流を読む関数・同意。読める口の許可リストはゲートウェイの入口で固定し、ゲートウェイの中核が強制する
   api/           HTTP API の入力スキーマ
@@ -102,7 +103,7 @@ npm run seed <scenario> -- --deployment <名前>    # ゲートウェイのデ�
 
 ## 注意
 
-- 本体は上流サービスのトークンを持たず、データソースの中身は書き換えない（購読の管理だけはする。`docs/adr/0024`）。上流を読むのはゲートウェイの口の `upstream` だけで、トークンはゲートウェイの中核の中で使われ、読める口の許可リストもゲートウェイの中核が強制する。本人がゲートウェイの画面で Murmur を有効にしていなければ何も読めない。実装は個人の箱の Outlook（`src/connectors/graph/`）と、本人のタスクのリストの To Do（`src/connectors/todo/`。0039）と Google Tasks（`src/connectors/gtasks/`。0041。経路 `google-tasks`、`POST /api/connections/google-tasks`。変更の通知がないので見回りで差分を読む。Gmail は次）と、プロジェクトの共有リストの Jira（`src/connectors/jira/`。0034・0037）と、チャネルの共有リストの Teams（`src/connectors/teams/`。0036・0037）とダミーコネクタ。外部コネクタは `MURMUR_WEBHOOK_SECRET` があるデプロイだけ有効
+- 本体は上流サービスのトークンを持たず、データソースの中身は書き換えない（購読の管理だけはする。`docs/adr/0024`）。上流を読むのはゲートウェイの口の `upstream` だけで、トークンはゲートウェイの中核の中で使われ、読める口の許可リストもゲートウェイの中核が強制する。本人がゲートウェイの画面で Murmur を有効にしていなければ何も読めない。実装は個人の箱の Outlook（`src/connectors/graph/`）と、本人のタスクのリストの To Do（`src/connectors/todo/`。0039）と Google Tasks（`src/connectors/gtasks/`。0041。経路 `google-tasks`、`POST /api/connections/google-tasks`。変更の通知がないので見回りで差分を読む）と、Gmail（`src/connectors/gmail/`。0041。経路 `gmail`、`POST /api/connections/gmail`。Outlook と同じ個人の箱で、通知がないので見回りで履歴を読む。引用の履歴を落とす `stripQuoted` は `src/connectors/strip-quoted.ts` で Outlook と共有）と、プロジェクトの共有リストの Jira（`src/connectors/jira/`。0034・0037）と、チャネルの共有リストの Teams（`src/connectors/teams/`。0036・0037）とダミーコネクタ。外部コネクタは `MURMUR_WEBHOOK_SECRET` があるデプロイだけ有効
 - 初めてつないだ sub は User の行だけ作る（名無し、Contact なし）。自分の Contact はリストに入るときのアイデンティティで決まり、名寄せは人とスタンドが API で付ける（`docs/adr/0030`）。seed の `--user` の差し替えはシナリオを実環境で回すときだけ
 - 本体の API はゲートウェイの中継の後ろ（`<ゲートウェイ>/api/murmur/*`）だけで、`issue_token` の `identity:murmur` で発行したゲートウェイのトークンが要る（口の `authenticate` でもう一度確かめる）。公開の経路は `<ゲートウェイ>/murmur/` の下の `/webhooks/*`（Graph の通知は clientState、Jira の通知は URL の本人ごとの秘密で照合）、同意のコールバック（`/oauth/callback`）、`MURMUR_TIMELINE_TOKEN` で守る参照専用の画面（`/admin`・`/timeline.html`）だけ
 - スタンド（Cowork / Claude Code）用のスキルは同じリポジトリの `plugins/heddleway/skills/topic-index/SKILL.md`（`murmur/` から見て `../plugins/...`）（共通のプラグイン `heddleway`。ゲートウェイに同梱し、`/setup` とマーケットプレイスで配る）、接続手順は `docs/stand/connect.md`。下書きは置かない。HTTP API を変えたら、同じ時期にゲートウェイのスキル（API の表と手順）も直し、プラグインの版を上げる

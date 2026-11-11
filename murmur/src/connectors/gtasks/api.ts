@@ -1,3 +1,4 @@
+import { isQuota, type GoogleErrorBody } from '../google-error';
 import { GatewayAuthError, GatewayError, type UpstreamCall } from '../../ports/gateway';
 import { GoogleUserinfo, GtasksListsPage, GtasksTaskList, GtasksTasksPage, verifiedEmail } from './task';
 
@@ -73,19 +74,6 @@ export class GatewayGtasksApi implements GtasksApi {
   private get(path: string): Promise<unknown> {
     return gtasksRequest(this.upstream, path);
   }
-}
-
-interface GoogleErrorBody {
-  code?: number;
-  message?: string;
-  status?: string;
-  errors?: { reason?: string }[];
-}
-
-/** 上限（クォータ・レート）に当たった 403 は、同意の問題ではない（試し直せば通る） */
-function isQuota(e: GoogleErrorBody | undefined): boolean {
-  if (!e) return false;
-  return e.status === 'RESOURCE_EXHAUSTED' || (e.errors ?? []).some((x) => /ratelimit|quota/i.test(x.reason ?? '')) || /rate limit|quota/i.test(e.message ?? '');
 }
 
 /**

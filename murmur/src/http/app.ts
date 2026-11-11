@@ -15,6 +15,7 @@ import {
   AcknowledgeBody,
   AcknowledgeManyBody,
   ClaimBody,
+  ConnectGmailBody,
   ConnectGoogleTasksBody, ConnectJiraBody, ConnectOutlookBody, ConnectTeamsBody, ConnectTodoBody,
   DismissBody,
   GetThreadQuery,
@@ -264,6 +265,11 @@ export function createApp(opts: HttpOptions) {
   api.post('/connections/outlook', async (c) => {
     const b = ConnectOutlookBody.parse(await json(c));
     return c.json(await (await connectors(c)).connections.connectOutlook(c.var.userId, b.credential_id));
+  });
+
+  api.post('/connections/gmail', async (c) => {
+    const b = ConnectGmailBody.parse(await json(c));
+    return c.json(await (await connectors(c)).connections.connectGmail(c.var.userId, b.credential_id));
   });
 
   api.post('/connections/teams', async (c) => {

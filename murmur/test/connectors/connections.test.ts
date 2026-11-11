@@ -10,6 +10,7 @@ import { FakeJira } from '../helpers/fake-jira';
 import { FakeTeams } from '../helpers/fake-teams';
 import { FakeTodo } from '../helpers/fake-todo';
 import { FakeGtasks } from '../helpers/fake-gtasks';
+import { FakeGmail } from '../helpers/fake-gmail';
 import { seed } from '../helpers/world';
 
 // 個人の箱をつなぐ（0024 の決定 3）。ゲートウェイは口（ports/gateway.ts）の偽物。
@@ -79,6 +80,7 @@ describe('H3 個人の箱をつなぐ', () => {
   let teams: FakeTeams;
   let todo: FakeTodo;
   let gtasks: FakeGtasks;
+  let gmail: FakeGmail;
 
   async function setup(world = seed) {
     const made = await makeService(world);
@@ -94,6 +96,7 @@ describe('H3 個人の箱をつなぐ', () => {
       teamsFor: () => teams,
       todoFor: () => todo,
       gtasksFor: () => gtasks,
+      gmailFor: () => gmail,
       sharedServices,
     });
     return { ...made, connections };
@@ -119,6 +122,12 @@ describe('H3 個人の箱をつなぐ', () => {
     teams = new FakeTeams(() => now);
     todo = new FakeTodo(undefined, { id: 'oid_bob', displayName: 'Bob', addresses: ['bob.todo@ubs.example'] });
     gtasks = new FakeGtasks(undefined, 'bob@gws.example');
+    gmail = new FakeGmail('bob@gws.example', [
+      { sendAsEmail: 'bob@gws.example', displayName: 'Bob Tanaka', isPrimary: true },
+      { sendAsEmail: 'sales@gws.example', verificationStatus: 'accepted' },
+      { sendAsEmail: 'pending@gws.example', verificationStatus: 'pending' },
+    ]);
+    gw.credentialsOf.set('u_bob', [...gw.credentialsOf.get('u_bob')!, { id: 'gw_gmail', service: 'gmail', label: 'gws' }]);
     gw.credentialsOf.set('u_bob', [...gw.credentialsOf.get('u_bob')!, { id: 'gw_tasks', service: 'tasks', label: 'gws' }]);
     sharedServices = ['jira'];
     ctx = await setup();
@@ -443,6 +452,114 @@ describe('H3 個人の箱をつなぐ', () => {
       expect(await ctx.connections.disconnect('u_bob', id)).toEqual([expect.objectContaining({ kind: 'google-tasks', status: 'disconnected' })]);
       expect(queued.at(-1)).toEqual({ kind: 'disconnect', dataSourceId: id });
       expect(gtasks.calls.filter((c) => c.fn === 'tasks')).toEqual([]);
+    });
+  });
+
+  describe('H3 Gmail のメールボックス（0041）', () => {
+    async function consentGmail(asUser: string, credentialId?: string) {
+      const r = await ctx.connections.connectGmail('u_bob', credentialId);
+      if (r.status !== 'authorize') throw new Error(`expected authorize, got ${r.status}`);
+      return ctx.connections.callback({ state: new URL(r.authorize_url).searchParams.get('state'), code: gw.approve(asUser), error: null });
+    }
+
+    it('同意 → 個人リストを作り（読者は本人だけ。アドレスは profile、別名は確認済みの sendAs）、キューに setup を積む。何度呼んでも同じ', async () => {
+      expect(await consentGmail('u_bob')).toMatchObject({ ok: true, message: expect.stringMatching(/Bob Tanaka の Gmail をつなぎました。これから届くメールを取り込みます/) });
+      // 同意から戻ったところで作る（何度呼んでも同じデータソース）
+      const queuedByConsent = [...queued];
+      const r = await ctx.connections.connectGmail('u_bob');
+      expect(r).toMatchObject({ status: 'connected', created: false, data_source: { name: 'Bob Tanaka の Gmail' } });
+      const id = r.status === 'connected' ? r.data_source.id : '';
+      const dir = await ctx.service.directory();
+      const ds = dir.dataSource(id)!;
+      expect(ds).toMatchObject({ channel: 'email', selfAddresses: [], connector: { kind: 'gmail', mailbox: 'me' } });
+      expect(connectorOwner(dir.seed, ds)).toBe('u_bob');
+      expect(dir.readersOfList(dir.listOfDataSource(id)!.id)).toEqual(['u_bob']);
+      expect(deriveViewer(dir, 'u_alice').dataSourceIds).not.toContain(id);
+      expect(dir.credentialRef(ds.credentialRefId)).toMatchObject({ address: { channel: 'email', value: 'bob@gws.example' }, gatewayCredentialId: 'gw_gmail' });
+      // 主のアドレスと確認済みの別名が本人の Contact に付く。保留中の別名は付けない
+      expect(dir.addressesOfContact('p_bob', 'email').map((a) => a.value).sort()).toEqual(['bob@gws.example', 'sales@gws.example']);
+      expect(queuedByConsent).toEqual([{ kind: 'setup', dataSourceId: id }]);
+      expect(await state.source(id)).toMatchObject({ kind: 'gmail', userId: 'u_bob', gatewayCredentialId: 'gw_gmail', status: 'setup', gmail: { historyId: null }, connectedAt: now });
+      expect(await ctx.connections.list('u_bob')).toEqual([expect.objectContaining({ data_source: id, kind: 'gmail', status: 'setup' })]);
+      expect(await ctx.connections.connectGmail('u_bob')).toMatchObject({ status: 'connected', created: false });
+      expect(seedProblems((await ctx.service.directory()).seed)).toEqual([]);
+    });
+
+    it('表示名がなければ、サインインの名前に倒れる（Google Tasks と同じ）', async () => {
+      gmail.sendAsList = [{ sendAsEmail: 'bob@gws.example', isPrimary: true }];
+      expect(await consentGmail('u_bob')).toMatchObject({ ok: true, message: expect.stringMatching(/Bob の Gmail をつなぎました/) });
+    });
+
+    it('別名が別の人のアドレスなら 409 でつながない（Outlook と同じ。何も残さない）', async () => {
+      gmail.sendAsList = [...gmail.sendAsList, { sendAsEmail: 'alice@ubs.example', verificationStatus: 'accepted' }];
+      const r = await ctx.connections.connectGmail('u_bob');
+      if (r.status !== 'authorize') throw new Error(`expected authorize, got ${r.status}`);
+      const back = ctx.connections.callback({ state: new URL(r.authorize_url).searchParams.get('state'), code: gw.approve('u_bob'), error: null });
+      await expect(back).rejects.toMatchObject({ code: 'conflict' });
+      // 同意は残っているので、つなぎ直しを頼んでも同じ理由で断る
+      await expect(ctx.connections.connectGmail('u_bob')).rejects.toMatchObject({ code: 'conflict' });
+      expect(await state.sources()).toEqual([]);
+      expect(queued).toEqual([]);
+      expect((await ctx.service.directory()).seed.dataSources.some((d) => d.kind === 'service' && d.connector?.kind === 'gmail')).toBe(false);
+    });
+
+    it('有効にしたのが頼んだ本人でなければ作らない。ゲートウェイに Gmail の接続がなければ no_credential（Outlook の graph の接続は使わない）', async () => {
+      expect(await consentGmail('u_alice')).toMatchObject({ ok: false });
+      gw.credentialsOf.set('u_bob', [{ id: 'gw_bob', service: 'graph', label: 'ubs' }]);
+      const r = await ctx.connections.connectGmail('u_bob');
+      if (r.status !== 'authorize') throw new Error('expected authorize');
+      const done = await ctx.connections.callback({ state: new URL(r.authorize_url).searchParams.get('state'), code: gw.approve('u_bob'), error: null });
+      expect(done).toMatchObject({ ok: false, message: expect.stringMatching(/Gmail の接続がありません/) });
+      expect(await ctx.connections.connectGmail('u_bob')).toMatchObject({ status: 'no_credential' });
+    });
+
+    it('Gmail の接続が複数なら選んでもらう。サインインしていない User はつなげない', async () => {
+      gw.credentialsOf.set('u_bob', [{ id: 'gw_a', service: 'gmail', label: 'a' }, { id: 'gw_b', service: 'gmail', label: 'b' }]);
+      await consentGmail('u_bob');
+      expect(await ctx.connections.connectGmail('u_bob')).toMatchObject({ status: 'choose', credentials: [{ id: 'gw_a' }, { id: 'gw_b' }] });
+      expect(await ctx.connections.connectGmail('u_bob', 'gw_b')).toMatchObject({ status: 'connected', created: true });
+      await expect(ctx.connections.connectGmail('u_nobody')).rejects.toThrow(/サインイン/);
+    });
+
+    it('Outlook と Gmail は別のデータソース（種類で区別する）', async () => {
+      await consent('u_bob');
+      // 同意は本人に 1 つ。Outlook をつないだあとは、Gmail の接続を選ぶだけで作れる
+      expect(await ctx.connections.connectGmail('u_bob')).toMatchObject({ status: 'connected', created: true });
+      expect((await ctx.connections.list('u_bob')).map((c) => c.kind).sort()).toEqual(['gmail', 'outlook']);
+    });
+
+    it('同意は有効で、選んだ接続がゲートウェイでつなぎ直しを要るときは 409', async () => {
+      await consentGmail('u_bob');
+      gw.reconnect.add('gw_gmail');
+      await expect(ctx.connections.connectGmail('u_bob')).rejects.toMatchObject({ code: 'conflict' });
+      expect(gw.consents.has('u_bob')).toBe(true);
+    });
+
+    it('外す: disconnected にしてキューに積む（上流に消すものはない）。本人以外は外せない。つなぎ直すと、その時点から取る', async () => {
+      await consentGmail('u_bob');
+      const r = await ctx.connections.connectGmail('u_bob');
+      const id = r.status === 'connected' ? r.data_source.id : '';
+      await state.putSource({ ...(await state.source(id))!, status: 'ok', gmail: { historyId: '4242', recovery: null } });
+      await expect(ctx.connections.disconnect('u_alice', id)).rejects.toThrow(/not found/);
+      expect(await ctx.connections.disconnect('u_bob', id)).toEqual([expect.objectContaining({ kind: 'gmail', status: 'disconnected' })]);
+      expect(queued.at(-1)).toEqual({ kind: 'disconnect', dataSourceId: id });
+      expect(gmail.calls.filter((c) => c.startsWith('message') || c.startsWith('history'))).toEqual([]);
+      now = '2026-10-31T00:00:00.000Z';
+      expect(await ctx.connections.connectGmail('u_bob')).toMatchObject({ status: 'connected', created: false });
+      expect(await state.source(id)).toMatchObject({ status: 'setup', connectedAt: now, gmail: { historyId: null } });
+    });
+
+    it('broken からのつなぎ直しは位置を残す（止まっている間のメールを取り逃さない）', async () => {
+      await consentGmail('u_bob');
+      const r = await ctx.connections.connectGmail('u_bob');
+      const id = r.status === 'connected' ? r.data_source.id : '';
+      const first = await state.source(id);
+      await state.putSource({ ...first!, status: 'broken', reason: 'credential must be reconnected', gmail: { historyId: '4242', recovery: null } });
+      now = '2026-10-31T00:00:00.000Z';
+      queued = [];
+      expect(await ctx.connections.connectGmail('u_bob')).toMatchObject({ status: 'connected', created: false });
+      expect(await state.source(id)).toMatchObject({ status: 'setup', gatewayCredentialId: 'gw_gmail', connectedAt: first!.connectedAt, gmail: { historyId: '4242' } });
+      expect(queued).toEqual([{ kind: 'setup', dataSourceId: id }]);
     });
   });
 

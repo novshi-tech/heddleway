@@ -51,9 +51,24 @@ export interface GtasksCursor {
   listCheckedAt?: string | null;
 }
 
+/**
+ * Gmail の取り込みの位置（0041）。変更の通知がなく、見回りで履歴（history.list）を読む。
+ * historyId は読み終えた履歴の位置（次の見回りの startHistoryId）。つないだ直後に最初に取る
+ */
+export interface GmailCursor {
+  /** 次の見回りの startHistoryId。つないだ直後（まだ取っていない）は null */
+  historyId: string | null;
+  /**
+   * 位置が切れた（startHistoryId が古すぎて 404）ときの拾い直しの途中。nextHistoryId は拾い直しを始めたときの箱の最新の historyId
+   * （読み終えたらこれから続ける）、after は検索の起点（エポック秒）、pageToken は次に読む検索のページ。
+   * 拾い直しが終わるまで historyId は進めない（読んでいないメールを飛ばさない）
+   */
+  recovery?: { nextHistoryId: string; after: number; pageToken: string | null } | null;
+}
+
 /** 実行時に作ったデータソースの取り込みの状態。kind がなければ Outlook（Jira より前の行） */
 export interface SourceState {
-  kind?: 'outlook' | 'jira' | 'teams' | 'todo' | 'gtasks';
+  kind?: 'outlook' | 'jira' | 'teams' | 'todo' | 'gtasks' | 'gmail';
   dataSourceId: string;
   /** 個人の箱の本人（ゲートウェイの User） */
   userId: string;
@@ -69,6 +84,8 @@ export interface SourceState {
   teams?: TeamsCursor;
   /** Google Tasks: 取り込みの位置（見回りの最後の読み切りの時刻は lastSyncAt） */
   gtasks?: GtasksCursor;
+  /** Gmail: 取り込みの位置（見回りの最後の読み切りの時刻は lastSyncAt） */
+  gmail?: GmailCursor;
   connectedAt: string;
   /** 最後に全フォルダの delta を終えた時刻（Google Tasks: 見回りでリストを最後まで読み終えた時刻。間隔の判定に使う） */
   lastSyncAt: string | null;

@@ -81,7 +81,7 @@ export function murmurFeature(env: Env): Feature | null {
     name: NAME,
     displayName: "トピック索引",
     consentText:
-      "トピック索引は、あなたがつないだメール(Outlook)・To Do・Google Tasks のタスク・Teams のチャネル・Jira を読み取り、やりとりをトピックにまとめて、誰の番かを記録します。エージェント(Claude など)が「いまやるべきこと」に答えるときに使います。読むのは、あなたがエージェントに頼んでつないだものだけで、送信や書き込みはしません。",
+      "トピック索引は、あなたがつないだメール(Outlook・Gmail)・To Do・Google Tasks のタスク・Teams のチャネル・Jira を読み取り、やりとりをトピックにまとめて、誰の番かを記録します。エージェント(Claude など)が「いまやるべきこと」に答えるときに使います。読むのは、あなたがエージェントに頼んでつないだものだけで、送信や書き込みはしません。",
     consentCallbackPath: CALLBACK_PATH,
     fetch: (request, ctx) => murmur.fetch(request, ctx),
     scheduled: (_controller, ctx) => murmur.scheduled(ctx),
