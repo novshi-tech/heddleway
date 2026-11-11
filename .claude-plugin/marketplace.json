@@ -14,8 +14,8 @@
         "url": "novshi-tech/heddleway",
         "path": "plugins/heddleway"
       },
-      "version": "0.24.0",
-      "description": "API ゲートウェイの共通手順(認証情報の確認、MCP のツールでの呼び出し、トークンの発行、REST の呼び出し)と、git(clone・push)・board・gBizINFO・Serper・X と トピック索引(やりとりをトピックにまとめ、誰の番かを追う Heddleway の機能)のスキル。ほかの heddleway-* プラグインの前提。コネクタ(Heddleway)はデプロイごとに別途追加する。"
+      "version": "0.25.0",
+      "description": "API ゲートウェイの共通手順(認証情報の確認、MCP のツールでの呼び出し、トークンの発行、REST の呼び出し)と、git(clone・push)・board・gBizINFO・Serper・X と トピック索引(Outlook・Gmail・To Do・Google Tasks などのやりとりをトピックにまとめ、誰の番かを追う Heddleway の機能)のスキル。ほかの heddleway-* プラグインの前提。コネクタ(Heddleway)はデプロイごとに別途追加する。"
     },
     {
       "name": "heddleway-google",
@@ -24,8 +24,8 @@
         "url": "novshi-tech/heddleway",
         "path": "plugins/heddleway-google"
       },
-      "version": "0.14.1",
-      "description": "API ゲートウェイ経由で Gmail・Google Drive・Google Calendar・Google Docs・Google Analytics を操作するスキル。heddleway プラグインと一緒に使う。",
+      "version": "0.15.0",
+      "description": "API ゲートウェイ経由で Gmail・Google Drive・Google Calendar・Google Docs・Google Tasks・Google Analytics を操作するスキル。heddleway プラグインと一緒に使う。",
       "dependencies": [
         "heddleway"
       ]
