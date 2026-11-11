@@ -16,10 +16,10 @@ describe('GMAIL_SCOPE', () => {
       '/gmail/v1/users/me/messages',
       '/gmail/v1/users/me/messages?q=after:1700000000&maxResults=100',
       '/gmail/v1/users/me/messages/18c0ffee?format=full',
-      '/gmail/v1/users/me/labels',
-      '/gmail/v1/users/me/labels/Label_1',
       '/gmail/v1/users/me/settings/sendAs',
     ]) expect(allowed(GMAIL_SCOPE, 'GET', path), path).toBe(true);
+    // 使わない読み取り（ラベル）は通さない（最小の権限）
+    for (const path of ['/gmail/v1/users/me/labels', '/gmail/v1/users/me/labels/Label_1']) expect(allowed(GMAIL_SCOPE, 'GET', path), path).toBe(false);
   });
 
   it('書き込みの種類はどの口でも断る（送信・下書き・変更・削除・watch）', () => {
@@ -63,9 +63,10 @@ describe('GTASKS_SCOPE', () => {
       '/tasks/v1/users/@me/lists/MTIz',
       '/tasks/v1/lists/MTIz/tasks',
       '/tasks/v1/lists/MTIz/tasks?updatedMin=2026-11-01T00:00:00Z&showCompleted=true&showHidden=true&showDeleted=true',
-      '/tasks/v1/lists/MTIz/tasks/dGFzaw',
       '/oauth2/v3/userinfo',
     ]) expect(allowed(GTASKS_SCOPE, 'GET', path), path).toBe(true);
+    // タスク 1 つの取得は使わないので通さない
+    expect(allowed(GTASKS_SCOPE, 'GET', '/tasks/v1/lists/MTIz/tasks/dGFzaw')).toBe(false);
   });
 
   it('書き込みの種類は断る（作成・更新・完了・削除・移動・クリア）', () => {

@@ -16,13 +16,13 @@ import { inScope, scopeTarget, UpstreamRefused, type ReadScope, type UpstreamCal
 const SCOPES: Record<string, { scope: ReadScope; ok: string; traversal: string[] }> = {
   gmail: {
     scope: GMAIL_SCOPE,
-    ok: '/gmail/v1/users/me/labels/Label_1',
+    ok: '/gmail/v1/users/me/messages/18c0ffee',
     traversal: [
-      '/gmail/v1/users/me/labels/..\\..\\..\\..\\..\\gmail\\v1\\users\\me\\drafts',
-      '/gmail/v1/users/me/labels/%2e%2e',
-      '/gmail/v1/users/me/labels/%2E%2E',
-      '/gmail/v1/users/me/labels/..',
-      '/gmail/v1/users/me/labels/.',
+      '/gmail/v1/users/me/messages/..\\..\\..\\..\\..\\gmail\\v1\\users\\me\\drafts',
+      '/gmail/v1/users/me/messages/%2e%2e',
+      '/gmail/v1/users/me/messages/%2E%2E',
+      '/gmail/v1/users/me/messages/..',
+      '/gmail/v1/users/me/messages/.',
       '/gmail/v1/users/me/messages/a%2Fb',
       '/gmail/v1/users/me/messages/a%5Cb',
       '/gmail/v1/users/me/messages/abc#/../../drafts',
@@ -31,13 +31,15 @@ const SCOPES: Record<string, { scope: ReadScope; ok: string; traversal: string[]
   },
   gtasks: {
     scope: GTASKS_SCOPE,
-    ok: '/tasks/v1/lists/MTIz/tasks/dGFzaw',
+    ok: '/tasks/v1/users/@me/lists/MTIz',
     traversal: [
       '/tasks/v1/lists/..\\..\\users\\@me\\lists/tasks',
       '/tasks/v1/lists/%2e%2e/tasks',
       '/tasks/v1/lists/../tasks',
       '/tasks/v1/lists/MTIz/tasks/%2e%2e',
       '/tasks/v1/lists/MTIz/tasks/..',
+      '/tasks/v1/users/@me/lists/%2e%2e',
+      '/tasks/v1/users/@me/lists/..',
       '/tasks/v1/lists/a%2Fb/tasks',
       '/tasks/v1/lists/MTIz/tasks#x',
     ],
