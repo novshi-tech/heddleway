@@ -1,4 +1,5 @@
 import type { MurmurService } from '../../app/service';
+import { onceDirectory, type DirectoryLoader } from '../directory-once';
 import { syncSharedReaders, type ServiceDataSource } from '../../domain';
 import type { ConnectorStateStore } from '../../store/connector-state';
 import { GatewayAuthError } from '../../ports/gateway';
@@ -38,13 +39,15 @@ interface Ctx {
 export class JiraSync {
   constructor(private readonly deps: JiraSyncDeps) {}
 
-  async handle(job: SyncJob): Promise<void> {
+  /** directory は maintain のとき、ほかのコネクタと見回り 1 回のマスタの読み込みを共有するために渡す（なければこの 1 回だけ読む） */
+  async handle(job: SyncJob, directory?: DirectoryLoader): Promise<void> {
     switch (job.kind) {
       case 'maintain': {
+        const loadDirectory = directory ?? onceDirectory(() => this.deps.service.directory());
         let failed = 0;
         for (const s of await this.deps.state.sources()) {
           if (s.kind !== 'jira') continue;
-          await this.guard(s.dataSourceId, (ctx) => this.maintain(ctx), { allowDisconnected: true }).catch((err: unknown) => {
+          await this.guard(s.dataSourceId, (ctx) => this.maintain(ctx), { allowDisconnected: true, directory: loadDirectory }).catch((err: unknown) => {
             failed++;
             this.deps.log?.({ msg: 'jira_maintain_failed', dataSourceId: s.dataSourceId, error: String(err) });
           });
@@ -70,11 +73,11 @@ export class JiraSync {
     return targets.length;
   }
 
-  private async guard(dataSourceId: string, run: (ctx: Ctx) => Promise<void>, opts: { allowDisconnected?: boolean } = {}): Promise<void> {
+  private async guard(dataSourceId: string, run: (ctx: Ctx) => Promise<void>, opts: { allowDisconnected?: boolean; directory?: DirectoryLoader } = {}): Promise<void> {
     const source = await this.deps.state.source(dataSourceId);
     if (!source || source.kind !== 'jira') return;
     if (source.status === 'disconnected' && !opts.allowDisconnected) return;
-    const ds = (await this.deps.service.directory()).dataSource(dataSourceId);
+    const ds = (await (opts.directory ?? (() => this.deps.service.directory()))()).dataSource(dataSourceId);
     if (!ds || ds.kind !== 'service' || ds.connector?.kind !== 'jira') return;
     const ctx: Ctx = { source, ds: ds as Ctx['ds'], api: null };
     try {

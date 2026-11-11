@@ -1,4 +1,5 @@
 import type { MurmurService } from '../../app/service';
+import { onceDirectory, type DirectoryLoader } from '../directory-once';
 import { renameTaskList, type ServiceDataSource } from '../../domain';
 import { GatewayAuthError } from '../../ports/gateway';
 import type { ConnectorStateStore } from '../../store/connector-state';
@@ -43,12 +44,14 @@ interface Ctx {
 export class TodoSync {
   constructor(private readonly deps: TodoSyncDeps) {}
 
-  async handle(job: SyncJob): Promise<void> {
+  /** directory は maintain のとき、ほかのコネクタと見回り 1 回のマスタの読み込みを共有するために渡す（なければこの 1 回だけ読む） */
+  async handle(job: SyncJob, directory?: DirectoryLoader): Promise<void> {
     switch (job.kind) {
       case 'maintain': {
+        const loadDirectory = directory ?? onceDirectory(() => this.deps.service.directory());
         for (const s of await this.deps.state.sources()) {
           if (s.kind !== 'todo') continue;
-          await this.guard(s.dataSourceId, (ctx) => this.maintain(ctx), { allowDisconnected: true }).catch((err: unknown) => {
+          await this.guard(s.dataSourceId, (ctx) => this.maintain(ctx), { allowDisconnected: true, directory: loadDirectory }).catch((err: unknown) => {
             this.deps.log?.({ msg: 'todo_maintain_failed', dataSourceId: s.dataSourceId, error: String(err) });
           });
         }
@@ -74,11 +77,11 @@ export class TodoSync {
     }
   }
 
-  private async guard(dataSourceId: string, run: (ctx: Ctx) => Promise<void>, opts: { allowDisconnected?: boolean } = {}): Promise<void> {
+  private async guard(dataSourceId: string, run: (ctx: Ctx) => Promise<void>, opts: { allowDisconnected?: boolean; directory?: DirectoryLoader } = {}): Promise<void> {
     const source = await this.deps.state.source(dataSourceId);
     if (!source || source.kind !== 'todo') return;
     if (source.status === 'disconnected' && !opts.allowDisconnected) return;
-    const dir = await this.deps.service.directory();
+    const dir = await (opts.directory ?? (() => this.deps.service.directory()))();
     const ds = dir.dataSource(dataSourceId);
     if (!ds || ds.kind !== 'service' || ds.connector?.kind !== 'graph-todo') return;
     const account = dir.credentialRef(ds.credentialRefId)?.address.value ?? '';

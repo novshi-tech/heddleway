@@ -1,6 +1,8 @@
 import { createMurmur, type MurmurConfig } from "../murmur/src/feature";
 import { GRAPH_SCOPE } from "../murmur/src/connectors/graph/scope";
 import { JIRA_SCOPE } from "../murmur/src/connectors/jira/api";
+import { GMAIL_SCOPE } from "../murmur/src/connectors/gmail/scope";
+import { GTASKS_SCOPE } from "../murmur/src/connectors/gtasks/scope";
 import { TEAMS_SCOPE } from "../murmur/src/connectors/teams/scope";
 import type { SyncJob } from "../murmur/src/connectors/graph/jobs";
 import { CALLBACK_PATH } from "../murmur/src/ports/gateway";
@@ -29,10 +31,22 @@ interface MurmurEnv {
   // Gateway services Murmur reads, by kind.
   MURMUR_GRAPH_SERVICE?: string;
   MURMUR_JIRA_SERVICE?: string;
+  MURMUR_GMAIL_SERVICE?: string;
+  MURMUR_TASKS_SERVICE?: string;
+  // Patrol interval of the Google Tasks connector, in minutes. Unset or invalid: every tick (Murmur's 0041).
+  MURMUR_TASKS_POLL_MINUTES?: string;
 }
 
 const NAME = "murmur";
 const DEFAULT_MODEL = "claude-sonnet-5-5";
+
+/** 見回りの間隔（分）。正の整数だけ受け、空・0・負・小数・数字以外は undefined（見回りのたび） */
+export function parsePollMinutes(value: string | undefined): number | undefined {
+  const text = value?.trim();
+  if (!text || !/^\d+$/.test(text)) return undefined;
+  const n = Number(text);
+  return Number.isSafeInteger(n) && n > 0 ? n : undefined;
+}
 
 export function murmurFeature(env: Env): Feature | null {
   const m = env as unknown as MurmurEnv;
@@ -44,6 +58,8 @@ export function murmurFeature(env: Env): Feature | null {
       jira: { service: m.MURMUR_JIRA_SERVICE || "jira", scope: JIRA_SCOPE },
       // Teams channels are read with the same Microsoft Graph credential, through a narrower scope.
       teams: { service: m.MURMUR_GRAPH_SERVICE || "graph", scope: TEAMS_SCOPE },
+      gmail: { service: m.MURMUR_GMAIL_SERVICE || "gmail", scope: GMAIL_SCOPE },
+      gtasks: { service: m.MURMUR_TASKS_SERVICE || "tasks", scope: GTASKS_SCOPE },
     },
   });
   const config: MurmurConfig = {
@@ -55,6 +71,7 @@ export function murmurFeature(env: Env): Feature | null {
     timelineToken: m.MURMUR_TIMELINE_TOKEN,
     queue: m.MURMUR_QUEUE,
     sharedServices: splitList(m.MURMUR_SHARED_SERVICES),
+    tasksPollMinutes: parsePollMinutes(m.MURMUR_TASKS_POLL_MINUTES),
     connectors: m.MURMUR_WEBHOOK_SECRET
       ? { publicUrl: `${publicUrl(env)}/${NAME}`, gateway: port, webhookKey: m.MURMUR_WEBHOOK_SECRET }
       : undefined,

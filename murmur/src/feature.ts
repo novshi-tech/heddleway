@@ -22,6 +22,7 @@ import { TeamsSync } from './connectors/teams/sync';
 import { GatewayTodoApi } from './connectors/todo/api';
 import { TodoSync } from './connectors/todo/sync';
 import { randomHex, sha256Hex } from './connectors/secrets';
+import { onceDirectory } from './connectors/directory-once';
 import { D1ConnectorState } from './store/connector-state';
 
 // Murmur の組み立て（0023）。env を読まず、入口が渡す設定とゲートウェイの口だけで組み立てる。
@@ -42,6 +43,11 @@ export interface MurmurConfig {
   queue?: Queue<SyncJob>;
   /** 共有リストを許すサービス（0037 の決定 4。管理者がデプロイの設定で決める。既定は許さない） */
   sharedServices?: readonly string[];
+  /**
+   * Google Tasks の見回りの間隔（分。0041 の決定 1）。Tasks は変更の通知がなく、1 日の API の上限があるので、
+   * Gmail と別に延ばせるようにする。なければ見回りのたび（Cron の間隔）。Tasks のコネクタが使う
+   */
+  tasksPollMinutes?: number;
   /** 外部コネクタ（0024）。なければ /api/connections と Webhook の口は 404 */
   connectors?: {
     /** Murmur の公開 URL（Webhook の受け口の URL になる） */
@@ -151,10 +157,12 @@ function buildConnectors(config: MurmurConfig, service: MurmurService, waitUntil
   });
   sync = {
     async handle(job) {
-      await graph.handle(job);
-      await jira.handle(job);
-      await teams.handle(job);
-      await todo.handle(job);
+      // 見回りは、マスタを 1 回だけ読んで全コネクタの全データソースで使い回す
+      const directory = job.kind === 'maintain' ? onceDirectory(() => service.directory()) : undefined;
+      await graph.handle(job, directory);
+      await jira.handle(job, directory);
+      await teams.handle(job, directory);
+      await todo.handle(job, directory);
     },
   };
   const connections = new Connections({ gateway, service, queue, newId: randomIds, graphFor, jiraFor, teamsFor, todoFor, state, now, sharedServices: config.sharedServices ?? [] });

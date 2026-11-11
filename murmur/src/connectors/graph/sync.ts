@@ -1,4 +1,5 @@
 import type { MurmurService } from '../../app/service';
+import { onceDirectory, type DirectoryLoader } from '../directory-once';
 import type { ServiceDataSource } from '../../domain';
 import type { ConnectorStateStore } from '../../store/connector-state';
 import { GatewayAuthError } from '../../ports/gateway';
@@ -32,13 +33,15 @@ export interface GraphSyncDeps {
 export class GraphMailSync {
   constructor(private readonly deps: GraphSyncDeps) {}
 
-  async handle(job: SyncJob): Promise<void> {
+  /** directory は maintain のとき、ほかのコネクタと見回り 1 回のマスタの読み込みを共有するために渡す（なければこの 1 回だけ読む） */
+  async handle(job: SyncJob, directory?: DirectoryLoader): Promise<void> {
     switch (job.kind) {
       case 'maintain': {
+        const loadDirectory = directory ?? onceDirectory(() => this.deps.service.directory());
         // 1 つのデータソースの失敗でほかの手入れを止めない（失敗したものは次の見回りでまた試す）
         let failed = 0;
         for (const s of await this.deps.state.sources()) {
-          await this.guard(s.dataSourceId, (ctx) => this.maintain(ctx)).catch((err: unknown) => {
+          await this.guard(s.dataSourceId, (ctx) => this.maintain(ctx), { directory: loadDirectory }).catch((err: unknown) => {
             failed++;
             this.deps.log?.({ msg: 'maintain_failed', dataSourceId: s.dataSourceId, error: String(err) });
           });
@@ -68,11 +71,11 @@ export class GraphMailSync {
    * データソースの状態を読んで仕事をする。同意の問題（GatewayAuthError）なら broken にして止める（ほかの失敗はキューが試し直す）。
    * disconnected のデータソースは、外す仕事のほかは何もしない
    */
-  private async guard(dataSourceId: string, run: (ctx: SourceContext) => Promise<void>, opts: { allowDisconnected?: boolean } = {}): Promise<void> {
+  private async guard(dataSourceId: string, run: (ctx: SourceContext) => Promise<void>, opts: { allowDisconnected?: boolean; directory?: DirectoryLoader } = {}): Promise<void> {
     const source = await this.deps.state.source(dataSourceId);
     if (!source) return;
     if (source.status === 'disconnected' && !opts.allowDisconnected) return;
-    const ds = (await this.deps.service.directory()).dataSource(dataSourceId);
+    const ds = (await (opts.directory ?? (() => this.deps.service.directory()))()).dataSource(dataSourceId);
     if (!ds || ds.kind !== 'service' || ds.connector?.kind !== 'graph-mail') return;
     const ctx: SourceContext = { source, ds, folders: ds.connector.folders, subs: await this.deps.state.subscriptions(dataSourceId), graph: null };
     try {
