@@ -83,6 +83,33 @@ describe('H5 H6 Gmail の個人の箱の同期（偽の Gmail）', () => {
     expect(gmail.fetched).toEqual([]);
   });
 
+  it('D6 setup が遅れて走ったとき（つないでから 60 秒を超える）は、つないだ時刻から拾い直す。つなぐ前のメールと、位置を読んだあとに着いたメールは履歴が拾う', async () => {
+    gmail.place(gmailMessage({ from: from('old'), at: mailAt(-60), id: 'before', subject: 'つなぐ前' }));
+    // つないだ（T0）あと、setup が走るまでに着いたメール（履歴にはない位置より前）
+    gmail.place(gmailMessage({ from: from('gap'), at: mailAt(0, 30), id: 'gap', subject: 'つないだあと setup まで', mid: '<gap@example.com>' }));
+    ctx.clock.set(mailAt(2));
+    await ctx.sync.handle({ kind: 'setup', dataSourceId: ctx.ds.id });
+    expect(gmail.calls[0]).toBe('profile');
+    expect(gmail.calls[1]).toBe(`list ${Math.floor(Date.parse(T0) / 1000) - 600}`);
+    expect((await threads()).map((t) => t.title)).toEqual(['つないだあと setup まで']);
+    expect(await cursor()).toEqual({ historyId: String(gmail.head), recovery: null });
+    expect(await state.source(ctx.ds.id)).toMatchObject({ status: 'ok', lastSyncAt: mailAt(2) });
+    expect(logs).toContainEqual(expect.objectContaining({ msg: 'gmail_setup_gap_recovery' }));
+    // 位置はそのあとの履歴から進む（二重に取らない）
+    gmail.deliver(gmailMessage({ from: from('next'), at: mailAt(3), id: 'next', subject: '次' }));
+    await maintain(mailAt(5));
+    expect((await threads()).map((t) => t.title).sort()).toEqual(['つないだあと setup まで', '次']);
+  });
+
+  it('D6 ちょうど 60 秒以内の setup は、今までどおり位置を読むだけ（拾い直さない）', async () => {
+    gmail.place(gmailMessage({ from: from('gap'), at: mailAt(0, 30), id: 'gap' }));
+    ctx.clock.set(mailAt(1));
+    await ctx.sync.handle({ kind: 'setup', dataSourceId: ctx.ds.id });
+    expect(gmail.calls).toEqual(['profile']);
+    expect(await cursor()).toEqual({ historyId: String(gmail.head), recovery: null });
+    expect(await signals()).toEqual([]);
+  });
+
   it('見回り: 増えたメール（受信と送信）を取り込み、同じスレッドに入れる。位置は履歴の最新に進む。変化がなくても進む', async () => {
     await ctx.sync.handle({ kind: 'setup', dataSourceId: ctx.ds.id });
     gmail.deliver(gmailMessage({ from: from('carol'), at: mailAt(1), subject: '見積のお願い', mid: '<c1@example.com>', id: 'in1' }));

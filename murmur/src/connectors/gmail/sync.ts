@@ -10,7 +10,7 @@ import { GmailError, type GmailApi } from './api';
 import { classifyMessageFailure } from './failure';
 import { GmailMessage } from './message';
 import { normalizeGmailMessage } from './normalize';
-import { appendRecoveryIds, MAX_FETCH_PER_RUN, MAX_HISTORY_PAGES, MAX_RECOVERY_IDS, MAX_RECOVERY_PAGES, nextFailure, planHistory, planPoll, planRecoveryChunk, recoveryAfter, SAVE_EVERY } from './plan';
+import { appendRecoveryIds, MAX_FETCH_PER_RUN, MAX_HISTORY_PAGES, MAX_RECOVERY_IDS, MAX_RECOVERY_PAGES, nextFailure, planHistory, planPoll, planRecoveryChunk, recoveryAfter, SAVE_EVERY, setupGapExceeded } from './plan';
 
 // Gmail の取り込み（0041）。変更の通知はなく（Pub/Sub は使わない）、5 分ごとの見回り（maintain）で履歴（history.list）を読む。
 // つないだ直後（setup）は profile.historyId を位置にするだけで、過去のメールは取らない（Outlook と同じ）。
@@ -111,12 +111,20 @@ export class GmailSync {
 
   /**
    * つないだ直後: 位置がなければ profile.historyId を位置にする（過去のメールは取らない）。
+   * ただし、つないだ時刻から 60 秒を超えて読んだときは、つないだ時刻から拾い直す（そのあいだに着いたメールを落とさない）。
    * broken からの戻りで位置が残っていれば、位置は捨てずにそこから読む（切れていれば poll が拾い直す）
    */
   private async setup(ctx: Ctx): Promise<void> {
     if (!ctx.source.gmail?.historyId) {
       const startedAt = this.deps.now();
       const profile = await (await this.api(ctx)).profile();
+      // つないでから位置を読むまでに間が空いた（setup の遅れ・再試行）: そのあいだに着いたメールは履歴にないので、つないだ時刻から拾い直す
+      if (setupGapExceeded(ctx.source.connectedAt, startedAt)) {
+        const recovery = { nextHistoryId: profile.historyId, after: recoveryAfter(null, ctx.source.connectedAt), pageToken: null, ids: [], listed: false, startedAt };
+        await this.put(ctx, { gmail: { historyId: profile.historyId, recovery }, status: 'ok', reason: null });
+        this.deps.log?.({ msg: 'gmail_setup_gap_recovery', dataSourceId: ctx.ds.id });
+        return this.recover(ctx, startedAt);
+      }
       await this.put(ctx, { gmail: { historyId: profile.historyId, recovery: null }, lastSyncAt: startedAt, status: 'ok', reason: null });
       return;
     }
@@ -189,7 +197,7 @@ export class GmailSync {
       // 途中で失敗しても、同じ起点・同じ新しい位置で続ける
       await this.putGmail(ctx, { recovery: rec });
     }
-    let ids = rec.ids ?? [];
+    let ids = rec.ids;
     if (!rec.listed) {
       let pageToken = rec.pageToken;
       let listed = false;

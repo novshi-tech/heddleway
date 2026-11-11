@@ -90,6 +90,15 @@ export function planHistory(input: { cursor: string; pages: readonly HistoryPage
   return { fetch, labels, records, nextCursor: lastProcessed, complete: input.exhausted };
 }
 
+/** つないだ時刻から、setup が最初の位置（profile.historyId）を読むまでの許容（秒）。超えたら、そのあいだに着いたメールを拾い直しで取る */
+export const SETUP_GAP_SECONDS = 60;
+
+/** setup が profile を読んだ時刻（now）が、つないだ時刻（connectedAt）から許容を超えて遅れているか */
+export function setupGapExceeded(connectedAt: string, now: string): boolean {
+  const gap = Date.parse(now) - Date.parse(connectedAt);
+  return Number.isFinite(gap) && gap > SETUP_GAP_SECONDS * 1000;
+}
+
 /** cursor が切れたときの拾い直しの検索の起点（エポック秒）。最後に読めた時刻から重なりの分だけ手前 */
 export function recoveryAfter(lastSyncAt: string | null, connectedAt: string): number {
   const base = Date.parse(lastSyncAt ?? connectedAt);

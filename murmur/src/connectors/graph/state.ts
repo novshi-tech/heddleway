@@ -86,9 +86,9 @@ export interface GmailRecovery {
   after: number;
   pageToken: string | null;
   /** 集めた ID（検索の順 = 新しい順。まだ取り込んでいないもの） */
-  ids?: string[];
+  ids: string[];
   /** ID を集め終えたか */
-  listed?: boolean;
+  listed: boolean;
   /** 拾い直しを始めた時刻（profile.historyId を読んだとき）。ここまでのメールは取り込み済みになるので、終えたら lastSyncAt にする */
   startedAt?: string;
 }
