@@ -675,18 +675,46 @@ describe('H5 H6 Gmail の個人の箱の同期（偽の Gmail）', () => {
   });
 
   describe('取り込むのは受信トレイか送信済みのメールだけ', () => {
-    it('フィルタでアーカイブされたメール（INBOX がない）は飛ばし、送信済みと、カテゴリのラベルがついた受信トレイのメールは取る。履歴の時点のラベルではなく、取ったメールのラベルで決める', async () => {
+    it('フィルタでアーカイブされたメール（どちらのラベルにも INBOX がない）は飛ばし、送信済みと、カテゴリのラベルがついた受信トレイのメールは取る', async () => {
       await ctx.sync.handle({ kind: 'setup', dataSourceId: ctx.ds.id });
       gmail.deliver(gmailMessage({ from: from('a'), at: mailAt(1), id: 'archived', subject: 'アーカイブ', labels: ['CATEGORY_UPDATES'] }));
       gmail.deliver(gmailMessage({ from: 'bob@gws.example', to: from('c'), at: mailAt(2), id: 'sent', subject: '送信', labels: ['SENT'] }));
       gmail.deliver(gmailMessage({ from: from('d'), at: mailAt(3), id: 'cat', subject: 'カテゴリ', labels: ['INBOX', 'CATEGORY_PROMOTIONS'] }));
-      // 履歴の時点では受信トレイだったが、取ったときにはアーカイブされていた
-      gmail.deliver(gmailMessage({ from: from('e'), at: mailAt(4), id: 'moved', subject: '移動' }));
-      gmail.messages.get('moved')!.labelIds = ['CATEGORY_SOCIAL'];
       await maintain(mailAt(5));
-      expect(gmail.fetched).toEqual(['archived', 'sent', 'cat', 'moved']);
+      expect(gmail.fetched).toEqual(['archived', 'sent', 'cat']);
       expect((await threads()).map((t) => t.title).sort()).toEqual(['カテゴリ', '送信']);
       expect(await cursor()).toMatchObject({ historyId: String(gmail.head) });
+    });
+
+    it('D3 届いてから取るまでのあいだにアーカイブされたメール（履歴は INBOX、取ったときは INBOX がない）と、送信してアーカイブしたメール（履歴は SENT、取ったときは何もない）は取り込む。返信だけが残らない', async () => {
+      await ctx.sync.handle({ kind: 'setup', dataSourceId: ctx.ds.id });
+      gmail.deliver(gmailMessage({ from: from('e'), at: mailAt(1), id: 'moved', subject: '見積', mid: '<moved@example.com>' }));
+      gmail.messages.get('moved')!.labelIds = ['CATEGORY_SOCIAL'];
+      gmail.deliver(gmailMessage({ from: 'bob@gws.example', to: from('e'), at: mailAt(2), id: 'sa', subject: 'Re: 見積', mid: '<sa@gws.example>', inReplyTo: '<moved@example.com>', labels: ['SENT'] }));
+      gmail.messages.get('sa')!.labelIds = [];
+      await maintain(mailAt(5));
+      expect(await threads()).toHaveLength(1);
+      expect(await signals()).toHaveLength(2);
+    });
+
+    it('D3 ゴミ箱・迷惑メールに移されたものは、履歴が INBOX でも取り込まない（除外は取ったときのラベルで決める）', async () => {
+      await ctx.sync.handle({ kind: 'setup', dataSourceId: ctx.ds.id });
+      gmail.deliver(gmailMessage({ from: from('e'), at: mailAt(1), id: 'late' }));
+      gmail.messages.get('late')!.labelIds = ['TRASH'];
+      gmail.deliver(gmailMessage({ from: from('f'), at: mailAt(2), id: 'late2' }));
+      gmail.messages.get('late2')!.labelIds = ['SPAM', 'INBOX'];
+      await maintain(mailAt(5));
+      expect(gmail.fetched).toEqual(['late', 'late2']);
+      expect(await signals()).toHaveLength(0);
+    });
+
+    it('D3 拾い直し（履歴のラベルがない）は、取ったメールの今のラベルだけで決める', async () => {
+      await ctx.sync.handle({ kind: 'setup', dataSourceId: ctx.ds.id });
+      gmail.expireHistory();
+      gmail.place(gmailMessage({ from: from('a'), at: mailAt(10), id: 'r_in', subject: '受信' }));
+      gmail.place(gmailMessage({ from: from('b'), at: mailAt(11), id: 'r_arch', subject: 'アーカイブ済み', labels: [] }));
+      await maintain(mailAt(30));
+      expect((await threads()).map((t) => t.title)).toEqual(['受信']);
     });
   });
 

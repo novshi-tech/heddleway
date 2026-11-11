@@ -17,7 +17,7 @@ export function b64url(text: string | Uint8Array): string {
  */
 export class FakeGmail implements GmailApi {
   readonly messages = new Map<string, Record<string, unknown>>();
-  /** labels は届いた時点のラベル（本物の履歴のメッセージも、その時点のラベルを持つ） */
+  /** labels は履歴が報せるラベル（この偽物では届いた時点のもの。本物がそうかは実物で確かめる） */
   readonly records: { id: number; added: string[]; labels: Record<string, string[]> }[] = [];
   readonly calls: string[] = [];
   head = 1000;

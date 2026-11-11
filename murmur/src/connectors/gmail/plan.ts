@@ -41,6 +41,8 @@ export function planPoll(source: SourceState, now: string): PollPlan {
 export interface HistoryPlan {
   /** messages.get する ID。履歴の順で、重複とラベルで落とすものを除く */
   fetch: string[];
+  /** 履歴のレコードが報せたラベル（ID → ラベル。届いたときのものとは限らない。実物で確かめる）。取り込む受信トレイ・送信済みの判定に、取ったメールのラベルと合わせて使う */
+  labels: Record<string, string[]>;
   /** 処理を終えたあとの cursor。null は今のまま（進めるものがない） */
   nextCursor: string | null;
   /** レコードごとの取る ID（履歴の順。取るものがないレコードも入る）。取り込みの途中で位置を書く切れ目に使う */
@@ -60,6 +62,7 @@ export interface HistoryPlan {
 export function planHistory(input: { cursor: string; pages: readonly HistoryPage[]; exhausted: boolean; maxFetch?: number }): HistoryPlan {
   const maxFetch = input.maxFetch ?? MAX_FETCH_PER_RUN;
   const fetch: string[] = [];
+  const labels: Record<string, string[]> = {};
   const records: { id: string; ids: string[] }[] = [];
   const seen = new Set<string>();
   let lastProcessed: string | null = null;
@@ -71,8 +74,9 @@ export function planHistory(input: { cursor: string; pages: readonly HistoryPage
         if (seen.has(message.id) || fresh.includes(message.id)) continue;
         if (skippedLabel(message.labelIds)) continue;
         fresh.push(message.id);
+        labels[message.id] = [...(message.labelIds ?? [])];
       }
-      if (fetch.length > 0 && fetch.length + fresh.length > maxFetch) return { fetch, records, nextCursor: lastProcessed, complete: false };
+      if (fetch.length > 0 && fetch.length + fresh.length > maxFetch) return { fetch, labels, records, nextCursor: lastProcessed, complete: false };
       for (const id of fresh) {
         seen.add(id);
         fetch.push(id);
@@ -82,8 +86,8 @@ export function planHistory(input: { cursor: string; pages: readonly HistoryPage
     }
   }
   const last = input.pages.at(-1);
-  if (input.exhausted && last) return { fetch, records, nextCursor: last.historyId, complete: true };
-  return { fetch, records, nextCursor: lastProcessed, complete: input.exhausted };
+  if (input.exhausted && last) return { fetch, labels, records, nextCursor: last.historyId, complete: true };
+  return { fetch, labels, records, nextCursor: lastProcessed, complete: input.exhausted };
 }
 
 /** cursor が切れたときの拾い直しの検索の起点（エポック秒）。最後に読めた時刻から重なりの分だけ手前 */

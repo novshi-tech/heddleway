@@ -24,11 +24,17 @@ export function skippedLabel(labelIds: readonly string[] | undefined): string | 
   return null;
 }
 
-export function normalizeGmailMessage(dataSourceId: string, msg: GmailMessage): Normalized {
+/**
+ * historyLabels は履歴のレコードが報せたそのメールのラベル（拾い直しでは渡さない）。
+ * 取り込むかどうかは、取ったメールの今のラベルか履歴のラベルのどちらかに INBOX・SENT があれば取り込む
+ * （届いてから取るまでのあいだにアーカイブされた・「送信してアーカイブ」したメールを失わない。フィルタでアーカイブされたものは
+ * どちらにも INBOX がないので飛ばす）。下書き・迷惑メール・ゴミ箱・チャットの除外は今のラベルだけで決める
+ */
+export function normalizeGmailMessage(dataSourceId: string, msg: GmailMessage, historyLabels?: readonly string[]): Normalized {
   const label = skippedLabel(msg.labelIds);
   if (label) return { kind: 'skip', reason: label };
-  // 履歴のレコードのラベルは届いた時点のもの。取ったメールのラベルで決める（フィルタでアーカイブされたものは INBOX がない）
-  if (!(msg.labelIds ?? []).some((l) => TAKEN_LABELS.includes(l))) return { kind: 'skip', reason: 'not in inbox or sent' };
+  // 履歴のレコードのラベルが届いた時点のものかは未確認（ADR 0041「実物で確かめること」）。どちらかにあれば取り込む
+  if (![...(msg.labelIds ?? []), ...(historyLabels ?? [])].some((l) => TAKEN_LABELS.includes(l))) return { kind: 'skip', reason: 'not in inbox or sent' };
   const headers = msg.payload?.headers ?? [];
   const all = (name: string) => headers.filter((h) => h.name.toLowerCase() === name.toLowerCase()).map((h) => unfold(h.value));
   const first = (name: string) => all(name)[0];

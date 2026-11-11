@@ -159,7 +159,7 @@ export class GmailSync {
     // 位置は、処理し終えたレコードまでしか進めない
     let sinceSave = 0;
     for (const record of plan.records) {
-      for (const id of record.ids) await this.processMessage(ctx, id);
+      for (const id of record.ids) await this.processMessage(ctx, id, plan.labels[id]);
       sinceSave += record.ids.length;
       if (sinceSave >= SAVE_EVERY) {
         await this.putGmail(ctx, { historyId: record.id });
@@ -269,13 +269,13 @@ export class GmailSync {
    * ID だけ記録して飛ばす。それ以外（上限・5xx など）は失敗の回数を残して見回りを止め、次の見回りが試し直す。
    * 同意の問題（broken にする）と、外された・つなぎ直された（SyncSuperseded）は、メッセージの失敗として数えない
    */
-  private async processMessage(ctx: Ctx, id: string): Promise<void> {
+  private async processMessage(ctx: Ctx, id: string, historyLabels?: readonly string[]): Promise<void> {
     try {
       const raw = await (await this.api(ctx)).message(id);
       const parsed = raw ? GmailMessage.safeParse(raw) : null;
       if (parsed && !parsed.success) this.deps.log?.({ msg: 'gmail_message_unreadable', dataSourceId: ctx.ds.id, id });
       if (parsed?.success) {
-        const n = normalizeGmailMessage(ctx.ds.id, parsed.data);
+        const n = normalizeGmailMessage(ctx.ds.id, parsed.data, historyLabels);
         if (n.kind === 'signal') await this.deps.service.ingestItem(n.signal);
       }
     } catch (err) {
