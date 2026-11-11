@@ -2,18 +2,21 @@ import type { MurmurService } from '../../app/service';
 import { onceDirectory, type DirectoryLoader } from '../directory-once';
 import { renameTaskList, type ServiceDataSource } from '../../domain';
 import { GatewayAuthError } from '../../ports/gateway';
+import { GoogleApiNotEnabled } from '../google-error';
 import type { ConnectorStateStore } from '../../store/connector-state';
 import type { SyncJob } from '../graph/jobs';
 import type { GtasksCursor, SourceState } from '../graph/state';
 import { GtasksError, type GtasksApi } from './api';
 import { normalizeGtask } from './normalize';
-import { advanceCursor, isListCheckDue, MAX_PAGES_PER_RUN, planPoll } from './plan';
-import { GtasksTask } from './task';
+import { advanceCursor, finalCursor, isListCheckDue, MAX_PAGES_PER_RUN, planPoll, planRead } from './plan';
+import { GtasksTask, listDisplayName } from './task';
 
 // Google Tasks の取り込み（0041）。変更の通知はなく、5 分ごとの見回り（maintain）でリストごとに updatedMin の差分を読む。
 // つないだ直後（setup）はリストを全部読む。写しは冪等（同じ値なら何もしない）なので、同じタスクが 2 度来ても二重にならない。
 // 購読がないので、キューの仕事は maintain と setup だけ（外す仕事 disconnect は消すものがなく何もしない）。
-// 同意の問題は broken にして止め、そのほかの失敗は次の見回りが試し直す
+// 同意の問題と、Google の API がゲートウェイのプロジェクトで有効でないことは broken にして止め、そのほかの失敗（上限を含む）は次の見回りが試し直す。
+// 書き込みは、そのつど今のデータソースの状態を読み直して、見回りが持つ項目だけを重ねる。読んでいる間に外された・別の接続に
+// つなぎ直された場合は、何も書かずに止める（外したのを元に戻さない）
 
 export interface GtasksSyncDeps {
   service: MurmurService;
@@ -26,8 +29,13 @@ export interface GtasksSyncDeps {
   log?(entry: Record<string, unknown>): void;
 }
 
+/** 読んでいる間に、本人が外した・別の接続につなぎ直した。何も書かずに止める */
+class SyncSuperseded extends Error {}
+
 interface Ctx {
   source: SourceState;
+  /** 見回りを始めたときの接続（ゲートウェイの資格情報）。書くときに今のと違えば止める */
+  credentialId: string;
   ds: ServiceDataSource & { connector: { kind: 'google-tasks'; listId: string; listName: string } };
   /** 本人のアカウント（チャネル todo のアドレス） */
   account: string;
@@ -64,12 +72,18 @@ export class GtasksSync {
     const ds = dir.dataSource(dataSourceId);
     if (!ds || ds.kind !== 'service' || ds.connector?.kind !== 'google-tasks') return;
     const account = dir.credentialRef(ds.credentialRefId)?.address.value ?? '';
-    const ctx: Ctx = { source, ds: ds as Ctx['ds'], account, api: null };
+    const ctx: Ctx = { source, credentialId: source.gatewayCredentialId, ds: ds as Ctx['ds'], account, api: null };
     try {
       await run(ctx);
     } catch (err) {
-      if (!(err instanceof GatewayAuthError)) throw err;
+      if (err instanceof SyncSuperseded) {
+        this.deps.log?.({ msg: 'gtasks_sync_superseded', dataSourceId });
+        return;
+      }
+      if (!(err instanceof GatewayAuthError || err instanceof GoogleApiNotEnabled)) throw err;
       const latest = (await this.deps.state.source(dataSourceId)) ?? source;
+      // 別の接続につなぎ直されたものは、古い接続の失敗で止めない
+      if (latest.gatewayCredentialId !== ctx.credentialId) return;
       // 外したもの（仕事の途中で同意が切れた）は外したままにする。broken にすると見回りが勝手につなぎ直す
       if (latest.status === 'disconnected') {
         this.deps.log?.({ msg: 'connector_disconnect_unclean', dataSourceId, reason: err.message });
@@ -117,11 +131,12 @@ export class GtasksSync {
     const list = await (await this.api(ctx)).list(listId);
     if (!list) throw this.listGone(ctx);
     await this.putGtasks(ctx, { listCheckedAt: this.deps.now() });
-    if (list.title === ctx.ds.connector.listName) return false;
-    const { result } = await this.deps.service.changeMaster(null, 'Google Tasks のリストの名前が変わった', (d) => renameTaskList(d, ctx.ds.id, list.title));
+    const title = listDisplayName(list.title);
+    if (title === ctx.ds.connector.listName) return false;
+    const { result } = await this.deps.service.changeMaster(null, 'Google Tasks のリストの名前が変わった', (d) => renameTaskList(d, ctx.ds.id, title));
     if (!result) return false;
     this.deps.log?.({ msg: 'gtasks_list_renamed', dataSourceId: ctx.ds.id });
-    ctx.ds = { ...ctx.ds, connector: { ...ctx.ds.connector, listName: list.title } };
+    ctx.ds = { ...ctx.ds, connector: { ...ctx.ds.connector, listName: title } };
     return true;
   }
 
@@ -131,26 +146,28 @@ export class GtasksSync {
 
   /**
    * タスクを読んで写す。full はリスト全部（updatedMin なし）、delta は cursor 以後に変わったもの。
-   * 1 回に読むのは MAX_PAGES_PER_RUN ページまで。上限で止めたら読みかけの位置（resume）を残し、次の見回りが続ける。
-   * 読み切ったら cursor を見えた中で一番新しい updated まで進め、読み終えた時刻（lastSyncAt）を記録する
+   * 1 回に読むのは MAX_PAGES_PER_RUN ページまで。上限で止めたら読みかけの位置（resume）を、その問い合わせ（mode と updatedMin）と
+   * 読み始めた時刻つきで残し、次の見回りが同じ問い合わせで続ける（planRead）。
+   * 読み切ったら cursor を見えた中で一番新しい updated まで進める。ただし読み始めた時刻から余裕を引いた時刻より後にはしない（finalCursor）。
+   * 見回りの間隔の基準（lastSyncAt）は、読み始めた時刻（終わった時刻だと、間隔が読む時間の分だけずれていく）
    */
-  private async read(ctx: Ctx, mode: 'full' | 'delta'): Promise<void> {
+  private async read(ctx: Ctx, requested: 'full' | 'delta'): Promise<void> {
     const api = await this.api(ctx);
     const listId = ctx.ds.connector.listId;
     const taskCtx = { dataSourceId: ctx.ds.id, account: ctx.account, listName: ctx.ds.connector.listName, connectedAt: ctx.source.connectedAt };
     const g = ctx.source.gtasks ?? { updatedMin: null };
-    const updatedMin = mode === 'delta' ? g.updatedMin : null;
-    // 読みかけの続きは delta のときだけ（全部読み直すときは捨てる）
-    let pageToken: string | null = mode === 'delta' ? (g.resume?.pageToken ?? null) : null;
-    let seen: string[] = mode === 'delta' && g.resume ? (g.resume.maxUpdated ? [g.resume.maxUpdated] : []) : [];
+    const plan = planRead({ requested, cursor: g.updatedMin, resume: g.resume });
+    const startedAt = plan.startedAt ?? this.deps.now();
+    let pageToken: string | null = plan.pageToken;
+    let seen: string[] = plan.maxUpdated ? [plan.maxUpdated] : [];
 
     for (let page = 0; page < MAX_PAGES_PER_RUN; page++) {
       let result;
       try {
-        result = await api.tasks(listId, { updatedMin, pageToken });
+        result = await api.tasks(listId, { updatedMin: plan.updatedMin, pageToken });
       } catch (err) {
         if (err instanceof GtasksError && err.status === 404) throw this.listGone(ctx);
-        // 読みかけの pageToken が無効になった: この cursor から読み直す（写しは冪等）
+        // 読みかけの pageToken が無効になった: 同じ問い合わせを最初から読み直す（写しは冪等。読み始めた時刻は元のまま）
         if (err instanceof GtasksError && err.status === 400 && pageToken) {
           this.deps.log?.({ msg: 'gtasks_page_token_reset', dataSourceId: ctx.ds.id });
           pageToken = null;
@@ -168,15 +185,18 @@ export class GtasksSync {
         const n = normalizeGtask(taskCtx, task);
         if (n.kind === 'mirror') await this.deps.service.ingestItem(n.mirror);
       }
-      const maxUpdated = advanceCursor(null, seen);
+      const maxUpdated = advanceMax(seen);
       seen = maxUpdated ? [maxUpdated] : [];
       if (!result.nextPageToken) {
-        await this.putGtasks(ctx, { updatedMin: advanceCursor(g.updatedMin, seen), resume: null });
-        await this.put(ctx, { lastSyncAt: this.deps.now() });
+        await this.update(ctx, (latest) => ({
+          gtasks: { ...latest.gtasks, updatedMin: finalCursor(latest.gtasks?.updatedMin ?? null, seen, startedAt), resume: null },
+          lastSyncAt: startedAt,
+        }));
         return;
       }
       pageToken = result.nextPageToken;
-      await this.putGtasks(ctx, { resume: { pageToken, maxUpdated } });
+      const resume = { pageToken, mode: plan.mode, updatedMin: plan.updatedMin, startedAt, maxUpdated };
+      await this.putGtasks(ctx, { resume });
     }
     this.deps.log?.({ msg: 'gtasks_sync_paged_out', dataSourceId: ctx.ds.id });
   }
@@ -187,11 +207,26 @@ export class GtasksSync {
   }
 
   private async putGtasks(ctx: Ctx, patch: Partial<GtasksCursor>) {
-    await this.put(ctx, { gtasks: { updatedMin: null, ...ctx.source.gtasks, ...patch } });
+    await this.update(ctx, (latest) => ({ gtasks: { updatedMin: null, ...latest.gtasks, ...patch } }));
   }
 
   private async put(ctx: Ctx, patch: Partial<SourceState>) {
-    ctx.source = { ...ctx.source, ...patch };
+    await this.update(ctx, () => patch);
+  }
+
+  /**
+   * 今のデータソースの状態を読み直し、見回りが持つ項目（patch）だけを重ねて書く。外されていたら（disconnected）、
+   * 別の接続につなぎ直されていたら、何も書かずに止める（SyncSuperseded）
+   */
+  private async update(ctx: Ctx, patch: (latest: SourceState) => Partial<SourceState>) {
+    const latest = await this.deps.state.source(ctx.ds.id);
+    if (!latest || latest.status === 'disconnected' || latest.gatewayCredentialId !== ctx.credentialId) throw new SyncSuperseded();
+    ctx.source = { ...latest, ...patch(latest) };
     await this.deps.state.putSource(ctx.source);
   }
+}
+
+/** 見えた updated の中で一番新しいもの（なければ null） */
+function advanceMax(seen: readonly string[]): string | null {
+  return advanceCursor(null, seen);
 }

@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { drizzle } from 'drizzle-orm/d1';
+import { afterAll, describe, expect, it } from 'vitest';
 import type { MurmurService } from '../../src/app/service';
 import { onceDirectory } from '../../src/connectors/directory-once';
 import { GraphMailSync } from '../../src/connectors/graph/sync';
@@ -7,7 +8,11 @@ import { TeamsSync } from '../../src/connectors/teams/sync';
 import { TodoSync } from '../../src/connectors/todo/sync';
 import { GtasksSync } from '../../src/connectors/gtasks/sync';
 import type { SourceState } from '../../src/connectors/graph/state';
-import { MemoryConnectorState } from '../../src/store/connector-state';
+import { createMurmur } from '../../src/feature';
+import type { GatewayPort } from '../../src/ports/gateway';
+import { D1ConnectorState, MemoryConnectorState } from '../../src/store/connector-state';
+import type { Db } from '../../src/store/d1';
+import { localD1Raw } from '../../scripts/lib/d1';
 import { makeService } from '../helpers/service';
 import { seed } from '../helpers/world';
 
@@ -77,6 +82,42 @@ describe('見回りのマスタの読み込み', () => {
     await syncs.teams.handle({ kind: 'sync', dataSourceId: 'ds_teams_1', folder: 'inbox' });
     await syncs.teams.handle({ kind: 'sync', dataSourceId: 'ds_teams_2', folder: 'inbox' });
     expect(loads()).toBe(2);
+  });
+});
+
+describe('組み立て（createMurmur）の見回り', () => {
+  let close: (() => Promise<void>) | undefined;
+  afterAll(() => close?.());
+
+  it('種類の違う 12 個のデータソース（Outlook・To Do・Google Tasks・Gmail・Jira・Teams）があっても、maintain はマスタを 1 回だけ読む', async () => {
+    const local = await localD1Raw();
+    close = local.close;
+    // マスタの読み込み（master テーブルの select）を数える
+    let masterLoads = 0;
+    const counting = new Proxy(local.d1, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop, target) as unknown;
+        if (prop === 'prepare') return (query: string) => {
+          if (/^\s*select\b[^]*\bfrom\s+"?master"?/i.test(query)) masterLoads++;
+          return target.prepare(query);
+        };
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) as D1Database;
+    const state = new D1ConnectorState(drizzle(local.d1) as Db);
+    const kinds = ['outlook', 'todo', 'gtasks', 'gmail', 'jira', 'teams'] as const;
+    for (const kind of kinds) for (const n of [1, 2]) await state.putSource({ ...source(`ds_${kind}_${n}`, kind), kind });
+    const gateway = { upstream: async () => { throw new Error('マスタにないデータソースはゲートウェイを呼ばない'); } } as unknown as GatewayPort;
+    const handlers = createMurmur(
+      { db: counting, anthropicApiKey: 'k', claudeModel: 'm', connectors: { publicUrl: 'https://gw.test/murmur', gateway, webhookKey: 'wk' } },
+      async () => null,
+    );
+    const acked: string[] = [];
+    const batch = { messages: [{ body: { kind: 'maintain' }, ack: () => acked.push('ack'), retry: () => acked.push('retry') }] } as unknown as MessageBatch<unknown>;
+    masterLoads = 0;
+    await handlers.queue(batch, { waitUntil: () => undefined } as unknown as ExecutionContext);
+    expect(acked).toEqual(['ack']);
+    expect(masterLoads).toBe(1);
   });
 });
 

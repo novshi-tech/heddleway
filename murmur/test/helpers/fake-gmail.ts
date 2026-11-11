@@ -30,6 +30,8 @@ export class FakeGmail implements GmailApi {
   authBroken = false;
   /** 次の呼び出し（関数名）を失敗させる */
   failNext: { fn: string; error: Error } | null = null;
+  /** history・message・list の呼び出しの前に呼ぶ（読んでいる間に外される・つなぎ直されるなどを起こす） */
+  beforeCall: ((fn: string) => Promise<void> | void) | null = null;
   /** 取ろうとすると 404（消えた）にするメッセージ。履歴や一覧には残る */
   readonly vanished = new Set<string>();
 
@@ -77,6 +79,7 @@ export class FakeGmail implements GmailApi {
 
   async history(startHistoryId: string, pageToken?: string | null): Promise<HistoryPage> {
     this.check(`history ${startHistoryId}${pageToken ? ` ${pageToken}` : ''}`);
+    await this.beforeCall?.('history');
     if (Number(startHistoryId) < this.oldest) throw new GmailError(404, 'NOT_FOUND');
     const start = Number(startHistoryId);
     const all = this.records.filter((r) => (this.inclusive ? r.id >= start : r.id > start) && r.id >= this.oldest);
@@ -99,12 +102,14 @@ export class FakeGmail implements GmailApi {
 
   async message(id: string) {
     this.check(`message ${id}`);
+    await this.beforeCall?.('message');
     if (this.vanished.has(id)) return null;
     return this.messages.get(id) ?? null;
   }
 
   async list(after: number, pageToken?: string | null) {
     this.check(`list ${after}${pageToken ? ` ${pageToken}` : ''}`);
+    await this.beforeCall?.('list');
     const all = [...this.messages.values()]
       .filter((m) => Number(m.internalDate) / 1000 >= after && !((m.labelIds as string[] | undefined) ?? []).some((l) => l === 'SPAM' || l === 'TRASH'))
       .sort((a, b) => Number(b.internalDate) - Number(a.internalDate));

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { GmailError } from '../../src/connectors/gmail/api';
+import { GoogleApiNotEnabled } from '../../src/connectors/google-error';
 import { GmailMessage } from '../../src/connectors/gmail/message';
 import { normalizeGmailMessage } from '../../src/connectors/gmail/normalize';
 import { MAX_FETCH_PER_RUN } from '../../src/connectors/gmail/plan';
@@ -290,6 +291,43 @@ describe('H5 H6 Gmail の個人の箱の同期（偽の Gmail）', () => {
       await maintain(mailAt(66));
       expect(await state.source(ctx.ds.id)).toMatchObject({ status: 'ok', reason: null });
       expect((await threads()).map((t) => t.title)).toEqual(['止まっている間']);
+    });
+
+    it('Gmail API がゲートウェイのプロジェクトで有効でないときは broken にして理由を残す（同意の問題と書かない）。1 時間おきにしか試さない。位置は残る', async () => {
+      await ctx.sync.handle({ kind: 'setup', dataSourceId: ctx.ds.id });
+      const kept = await cursor();
+      gmail.failNext = { fn: 'history', error: new GoogleApiNotEnabled('Gmail API') };
+      await maintain(mailAt(5));
+      const s = (await state.source(ctx.ds.id))!;
+      expect(s).toMatchObject({ status: 'broken', lastRetryAt: mailAt(5), gmail: kept });
+      expect(s.reason).toMatch(/Gmail API がゲートウェイの Google Cloud プロジェクトで有効になっていない/);
+      expect(s.reason).not.toMatch(/同意/);
+      const calls = gmail.calls.length;
+      await maintain(mailAt(30));
+      expect(gmail.calls.length).toBe(calls);
+      await maintain(mailAt(66));
+      expect(await state.source(ctx.ds.id)).toMatchObject({ status: 'ok', reason: null });
+    });
+
+    it('読んでいる間に外されたら外したままにする（位置・状態を書き戻さない）。つなぎ直されたら、つなぎ直した状態を上書きしない', async () => {
+      await ctx.sync.handle({ kind: 'setup', dataSourceId: ctx.ds.id });
+      const before = (await cursor())!;
+      gmail.deliver(gmailMessage({ from: from('a'), at: mailAt(1), id: 'd1' }), gmailMessage({ from: from('b'), at: mailAt(2), id: 'd2' }));
+      gmail.beforeCall = async (fn) => {
+        if (fn === 'message') await state.putSource({ ...(await state.source(ctx.ds.id))!, status: 'disconnected', reason: '本人が外した' });
+      };
+      await maintain(mailAt(5));
+      expect(await state.source(ctx.ds.id)).toMatchObject({ status: 'disconnected', reason: '本人が外した', gmail: before });
+      expect(logs).toContainEqual(expect.objectContaining({ msg: 'gmail_sync_superseded' }));
+
+      // 別の接続につなぎ直された（状態は setup、位置は新しい接続のもの）
+      const reconnected = { ...(await state.source(ctx.ds.id))!, status: 'setup' as const, reason: null, gatewayCredentialId: 'gw_new', gmail: { historyId: null, recovery: null } };
+      await state.putSource({ ...reconnected, status: 'ok', gatewayCredentialId: 'gw_bob', gmail: before });
+      gmail.beforeCall = async (fn) => {
+        if (fn === 'message') await state.putSource(reconnected);
+      };
+      await maintain(mailAt(10));
+      expect(await state.source(ctx.ds.id)).toEqual(reconnected);
     });
 
     it('同意の問題でない失敗は、次の見回りが試し直す（setup の仕事は投げてキューに試し直させる）', async () => {

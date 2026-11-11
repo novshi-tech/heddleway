@@ -3,6 +3,8 @@ import { jiraMembers } from '../connectors/jira/readers';
 import type { TeamRef, TeamsApi } from '../connectors/teams/api';
 import type { TodoApi } from '../connectors/todo/api';
 import type { GtasksApi } from '../connectors/gtasks/api';
+import { listDisplayName } from '../connectors/gtasks/task';
+import { GoogleApiNotEnabled } from '../connectors/google-error';
 import type { GmailApi } from '../connectors/gmail/api';
 import { gmailMe } from '../connectors/gmail/identity';
 import type { TodoTaskList } from '../connectors/todo/task';
@@ -151,6 +153,8 @@ export class Connections {
       if (err instanceof ConsentRequired) return this.authorize(userId, credentialId, request);
       // 同意は有効で、選んだ接続そのものがゲートウェイでつなぎ直しを要る。Murmur の同意を取り直しても直らない
       if (err instanceof GatewayAuthError) throw new DomainError('conflict', `ゲートウェイでこの接続をつなぎ直してから、もう一度頼んでください（${err.message}）`);
+      // Google の API がゲートウェイのプロジェクトで有効でない: つなぎ直しでは直らない（管理者の作業）
+      if (err instanceof GoogleApiNotEnabled) throw new DomainError('conflict', err.message);
       throw err;
     }
   }
@@ -421,7 +425,7 @@ export class Connections {
     for (const s of await this.deps.state.sources()) {
       if (s.kind !== 'todo' || s.dataSourceId === ds.id || s.userId !== userId || s.gatewayCredentialId === credentialId) continue;
       if (dir.dataSource(s.dataSourceId)?.credentialRefId !== ds.credentialRefId || s.status === 'disconnected') continue;
-      await this.deps.state.putSource({ ...s, gatewayCredentialId: credentialId, ...(s.status === 'broken' ? { status: 'setup' as const, reason: null } : {}) });
+      await this.deps.state.putSource({ ...s, gatewayCredentialId: credentialId, ...(s.status === 'broken' ? { status: 'setup' as const, reason: null, gtasks: { updatedMin: null, ...s.gtasks, setupAt: this.deps.now() } } : {}) });
       if (s.status === 'broken') await this.deps.queue.send({ kind: 'setup', dataSourceId: s.dataSourceId });
     }
     const current = await this.deps.state.source(ds.id);
@@ -447,14 +451,14 @@ export class Connections {
   private async connectGoogleTasksWith(userId: string, credentialId: string, request: { kind: 'google-tasks'; listId?: string }): Promise<ConnectResult> {
     const api = this.deps.gtasksFor(await this.deps.gateway.upstream(userId, credentialId, 'gtasks'));
     const lists = await api.lists();
-    if (!request.listId) return { status: 'choose_list', lists: lists.map((l) => ({ id: l.id, name: l.title, wellknown: null })) };
+    if (!request.listId) return { status: 'choose_list', lists: lists.map((l) => ({ id: l.id, name: listDisplayName(l.title), wellknown: null })) };
     const list = lists.find((l) => l.id === request.listId);
     if (!list) throw new DomainError('not_found', `task list ${request.listId} はこの接続から見えない`);
     // つないだアカウントのアドレス（userinfo）。確認済みのメールアドレスがわからなければ、To Do が Graph の /me で
     // 本人を特定できないときと同じく、つながない（connectTaskList が invalid にする）
     const address = await api.account();
     const { result: plan } = await this.deps.service.changeMaster(userId, 'Google Tasks のタスクのリストをつなぐ', (d, ctx) =>
-      connectTaskList(d, ctx, { userId, gatewayCredentialId: credentialId, displayName: '', address, listId: list.id, listName: list.title, service: 'google-tasks' }),
+      connectTaskList(d, ctx, { userId, gatewayCredentialId: credentialId, displayName: '', address, listId: list.id, listName: listDisplayName(list.title), service: 'google-tasks' }),
     );
     const ds = plan.dataSource;
     // ゲートウェイの接続を足し直した（ID が変わった）: 同じアカウントのほかのリストも新しい接続で読む
@@ -462,7 +466,7 @@ export class Connections {
     for (const s of await this.deps.state.sources()) {
       if (s.kind !== 'gtasks' || s.dataSourceId === ds.id || s.userId !== userId || s.gatewayCredentialId === credentialId) continue;
       if (dir.dataSource(s.dataSourceId)?.credentialRefId !== ds.credentialRefId || s.status === 'disconnected') continue;
-      await this.deps.state.putSource({ ...s, gatewayCredentialId: credentialId, ...(s.status === 'broken' ? { status: 'setup' as const, reason: null } : {}) });
+      await this.deps.state.putSource({ ...s, gatewayCredentialId: credentialId, ...(s.status === 'broken' ? { status: 'setup' as const, reason: null, gtasks: { updatedMin: null, ...s.gtasks, setupAt: this.deps.now() } } : {}) });
       if (s.status === 'broken') await this.deps.queue.send({ kind: 'setup', dataSourceId: s.dataSourceId });
     }
     const current = await this.deps.state.source(ds.id);
@@ -476,7 +480,7 @@ export class Connections {
         reason: null,
         // つなぎ直しもリストを最初から読む（写しは冪等なので、変わっていないタスクは何もしない）
         folders: {},
-        gtasks: { updatedMin: null, resume: null, listCheckedAt: null },
+        gtasks: { updatedMin: null, resume: null, listCheckedAt: null, setupAt: this.deps.now() },
         connectedAt: current?.connectedAt ?? this.deps.now(),
         lastSyncAt: current?.lastSyncAt ?? null,
         lastRetryAt: null,

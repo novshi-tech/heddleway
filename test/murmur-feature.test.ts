@@ -196,6 +196,35 @@ describe("the gateway's port for Murmur", () => {
     await expect(read("DELETE", "/v1.0/me/messages/1")).rejects.toBeInstanceOf(UpstreamRefused);
   });
 
+  it("refuses paths that would be sent as a different path (traversal, backslash, encoded dots) and sends the checked path", async () => {
+    const cred = await addBoard(bob);
+    await vaultFor(env, bob).setConsent("murmur", true);
+    const gmail = featurePort(on, { feature: "murmur", kinds: { graph: { service: "board", scope: GRAPH_SCOPE }, jira: { service: "jira", scope: JIRA_SCOPE }, teams: { service: "board", scope: TEAMS_SCOPE }, gmail: { service: "board", scope: GMAIL_SCOPE }, gtasks: { service: "tasks", scope: GTASKS_SCOPE } } });
+    const read = await gmail.upstream(bob, cred.id, "gmail");
+    for (const path of [
+      "/gmail/v1/users/me/labels/..\\..\\..\\..\\..\\gmail\\v1\\users\\me\\drafts",
+      "/gmail/v1/users/me/labels/%2e%2e",
+      "/gmail/v1/users/me/labels/%2E%2E",
+      "/gmail/v1/users/me/messages/a%2Fb",
+      "/gmail/v1/users/me/labels/x#/../../drafts",
+    ]) await expect(read("GET", path), path).rejects.toBeInstanceOf(UpstreamRefused);
+    const ok = (await (await read("GET", "/gmail/v1/users/me/labels/Label_1?x=1")).json()) as { url: string };
+    expect(ok.url).toBe("https://api.the-board.jp/gmail/v1/users/me/labels/Label_1?x=1");
+  });
+
+  it("does not forward method override headers", async () => {
+    const cred = await addBoard(bob);
+    await vaultFor(env, bob).setConsent("murmur", true);
+    const read = await port().upstream(bob, cred.id, "graph");
+    const res = await read("GET", "/v1.0/me", { headers: { "X-HTTP-Method-Override": "DELETE", "x-http-method": "DELETE", "X-Method-Override": "DELETE", prefer: "x" } });
+    const echoed = (await res.json()) as { method: string; headers: Record<string, string> };
+    expect(echoed.method).toBe("GET");
+    expect(echoed.headers["x-http-method-override"]).toBeUndefined();
+    expect(echoed.headers["x-http-method"]).toBeUndefined();
+    expect(echoed.headers["x-method-override"]).toBeUndefined();
+    expect(echoed.headers.prefer).toBe("x");
+  });
+
   it("reads Teams with the Graph credential through the narrower Teams scope (no mail)", async () => {
     const cred = await addBoard(bob);
     await vaultFor(env, bob).setConsent("murmur", true);

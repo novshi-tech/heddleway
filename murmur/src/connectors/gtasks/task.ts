@@ -27,6 +27,14 @@ export const GtasksTaskList = z.object({
 });
 export type GtasksTaskList = z.infer<typeof GtasksTaskList>;
 
+/** 名前のないリスト（title が空）に付ける名前。データソースの listName は空にできない */
+export const UNNAMED_LIST = '(名前のないリスト)';
+
+/** Murmur 側のリスト名（空や空白だけなら、名前のないリスト用の名前） */
+export function listDisplayName(title: string): string {
+  return title.trim() || UNNAMED_LIST;
+}
+
 /** items は空のとき省かれる。項目は 1 件ずつ検証する（読めない 1 件で全体を落とさない） */
 export const GtasksTasksPage = z.object({ items: z.array(z.unknown()).optional(), nextPageToken: z.string().optional() });
 export type GtasksTasksPage = z.infer<typeof GtasksTasksPage>;

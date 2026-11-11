@@ -15,6 +15,8 @@ export class FakeGtasks implements GtasksApi {
   /** 次の tasks の呼び出しを失敗させる（上限に当たったときなど） */
   failNextTasks: Error | null = null;
   readonly invalidTokens = new Set<string>();
+  /** tasks の呼び出しの前に呼ぶ（n は何回目か。1 から）。途中で外す・失敗させるなど、読んでいる間の出来事を起こす */
+  beforeTasks: ((n: number) => Promise<void> | void) | null = null;
 
   constructor(
     readonly listsInfo: GtasksTaskList[] = [
@@ -55,6 +57,7 @@ export class FakeGtasks implements GtasksApi {
 
   async tasks(listId: string, opts: { updatedMin?: string | null; pageToken?: string | null } = {}): Promise<GtasksTasksPage> {
     this.check('tasks', { listId, updatedMin: opts.updatedMin ?? null, pageToken: opts.pageToken ?? null });
+    await this.beforeTasks?.(this.taskCalls.length);
     if (this.failNextTasks) {
       const err = this.failNextTasks;
       this.failNextTasks = null;

@@ -30,10 +30,35 @@ export type UpstreamCall = (
  */
 export type ReadScope = ReadonlyArray<readonly [UpstreamMethod, RegExp]>;
 
-/** 照合はパス（クエリ文字列の前）だけで行う。読める口は「どの口か」で決まり、クエリは口を変えない */
+const SCOPE_ORIGIN = 'https://scope.invalid';
+
+/**
+ * 読める口の照合と、送るパスの確定を 1 つにしたもの。許されなければ null、許されればそのまま送ってよい URL を返す。
+ * 照合するパスと送るパスが別物にならないように、次のどれかに当たるものは断る:
+ * - パスに `\`（WHATWG の URL は `/` に直す）、全体に `#`（以降を落とす）
+ * - `.` と `..` の区間、符号化された `.` `/` `\`（%2e %2f %5c。大文字小文字を問わない。上流が解くと別のパスになる）
+ * - URL として正規化するとパスが変わるもの（`//host/…` や空白・制御文字・符号化されていない記号など。呼び出し側が符号化する）
+ * 許可リストの正規表現は、この正規化したパス（クエリの前）に当てる。クエリは口を変えない
+ */
+export function scopeTarget(scope: ReadScope, method: UpstreamMethod, path: string): URL | null {
+  const q = path.indexOf('?');
+  const pathPart = q < 0 ? path : path.slice(0, q);
+  if (pathPart.includes('\\') || path.includes('#')) return null;
+  if (/%(?:2e|2f|5c)/i.test(pathPart)) return null;
+  if (pathPart.split('/').some((seg) => seg === '.' || seg === '..')) return null;
+  let url: URL;
+  try {
+    url = new URL(path, SCOPE_ORIGIN);
+  } catch {
+    return null;
+  }
+  if (url.origin !== SCOPE_ORIGIN || url.pathname !== pathPart) return null;
+  return scope.some(([m, re]) => m === method && re.test(url.pathname)) ? url : null;
+}
+
+/** 読める口に入っているか（scopeTarget が null でないか）。送る側は scopeTarget の URL をそのまま使う */
 export function inScope(scope: ReadScope, method: UpstreamMethod, path: string): boolean {
-  const pathname = path.split('?')[0]!;
-  return scope.some(([m, re]) => m === method && re.test(pathname));
+  return scopeTarget(scope, method, path) !== null;
 }
 
 /** 本人の同意（Murmur に取り込みを許すこと）。ゲートウェイの画面で本人が Murmur を有効にする */

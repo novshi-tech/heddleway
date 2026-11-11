@@ -2,6 +2,7 @@ import type { MurmurService } from '../../app/service';
 import { onceDirectory, type DirectoryLoader } from '../directory-once';
 import type { ServiceDataSource } from '../../domain';
 import { GatewayAuthError } from '../../ports/gateway';
+import { GoogleApiNotEnabled } from '../google-error';
 import type { ConnectorStateStore } from '../../store/connector-state';
 import type { SyncJob } from '../graph/jobs';
 import type { GmailCursor, SourceState } from '../graph/state';
@@ -15,7 +16,9 @@ import { MAX_HISTORY_PAGES, MAX_RECOVERY_PAGES, planHistory, planPoll, recoveryA
 // 位置（historyId）は、処理し終えた履歴のところまでしか進めない。途中で落ちても同じところから読み直し、
 // 同じメールが 2 度来ても sourceRef の重複排除（prepareInbound）で 1 通になる。
 // 購読がないので、キューの仕事は maintain と setup だけ（外す仕事 disconnect は消すものがなく何もしない）。
-// 同意の問題は broken にして止め、上限（429・クォータの 403）やそのほかの失敗は次の見回りが試し直す
+// 同意の問題と、Gmail API がゲートウェイのプロジェクトで有効でないことは broken にして止め、上限（429・クォータの 403）やそのほかの失敗は次の見回りが試し直す。
+// 書き込みは、そのつど今のデータソースの状態を読み直して、見回りが持つ項目だけを重ねる。読んでいる間に外された・別の接続に
+// つなぎ直された場合は、何も書かずに止める（外したのを元に戻さない）
 
 export interface GmailSyncDeps {
   service: MurmurService;
@@ -26,8 +29,13 @@ export interface GmailSyncDeps {
   log?(entry: Record<string, unknown>): void;
 }
 
+/** 読んでいる間に、本人が外した・別の接続につなぎ直した。何も書かずに止める */
+class SyncSuperseded extends Error {}
+
 interface Ctx {
   source: SourceState;
+  /** 見回りを始めたときの接続（ゲートウェイの資格情報）。書くときに今のと違えば止める */
+  credentialId: string;
   ds: ServiceDataSource & { connector: { kind: 'gmail'; mailbox: 'me' } };
   api: GmailApi | null;
 }
@@ -60,12 +68,18 @@ export class GmailSync {
     if (!source || source.kind !== 'gmail' || source.status === 'disconnected') return;
     const ds = (await (directory ?? (() => this.deps.service.directory()))()).dataSource(dataSourceId);
     if (!ds || ds.kind !== 'service' || ds.connector?.kind !== 'gmail') return;
-    const ctx: Ctx = { source, ds: ds as Ctx['ds'], api: null };
+    const ctx: Ctx = { source, credentialId: source.gatewayCredentialId, ds: ds as Ctx['ds'], api: null };
     try {
       await run(ctx);
     } catch (err) {
-      if (!(err instanceof GatewayAuthError)) throw err;
+      if (err instanceof SyncSuperseded) {
+        this.deps.log?.({ msg: 'gmail_sync_superseded', dataSourceId });
+        return;
+      }
+      if (!(err instanceof GatewayAuthError || err instanceof GoogleApiNotEnabled)) throw err;
       const latest = (await this.deps.state.source(dataSourceId)) ?? source;
+      // 別の接続につなぎ直されたものは、古い接続の失敗で止めない
+      if (latest.gatewayCredentialId !== ctx.credentialId) return;
       // 外したもの（仕事の途中で同意が切れた）は外したままにする。broken にすると見回りが勝手につなぎ直す
       if (latest.status === 'disconnected') {
         this.deps.log?.({ msg: 'connector_disconnect_unclean', dataSourceId, reason: err.message });
@@ -213,11 +227,21 @@ export class GmailSync {
   }
 
   private async putGmail(ctx: Ctx, patch: Partial<GmailCursor>) {
-    await this.put(ctx, { gmail: { historyId: null, ...ctx.source.gmail, ...patch } });
+    await this.update(ctx, (latest) => ({ gmail: { historyId: null, ...latest.gmail, ...patch } }));
   }
 
   private async put(ctx: Ctx, patch: Partial<SourceState>) {
-    ctx.source = { ...ctx.source, ...patch };
+    await this.update(ctx, () => patch);
+  }
+
+  /**
+   * 今のデータソースの状態を読み直し、見回りが持つ項目（patch）だけを重ねて書く。外されていたら（disconnected）、
+   * 別の接続につなぎ直されていたら、何も書かずに止める（SyncSuperseded）
+   */
+  private async update(ctx: Ctx, patch: (latest: SourceState) => Partial<SourceState>) {
+    const latest = await this.deps.state.source(ctx.ds.id);
+    if (!latest || latest.status === 'disconnected' || latest.gatewayCredentialId !== ctx.credentialId) throw new SyncSuperseded();
+    ctx.source = { ...latest, ...patch(latest) };
     await this.deps.state.putSource(ctx.source);
   }
 }

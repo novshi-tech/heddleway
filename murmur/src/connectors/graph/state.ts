@@ -38,17 +38,22 @@ export interface TeamsCursor {
 
 /**
  * Google Tasks の取り込みの位置（0041）。変更の通知がなく、見回りで updatedMin の差分を読む。
- * updatedMin は読み切った最後の見回りで見えた一番新しい updated（RFC 3339。なければ最初から読む）
+ * updatedMin は読み切った最後の見回りで見えた一番新しい updated を、読み始めた時刻（から余裕を引いた時刻）で頭打ちにしたもの
+ * （RFC 3339。なければ最初から読む）
  */
 export interface GtasksCursor {
   updatedMin: string | null;
   /**
-   * ページの上限で止めた読みかけ。同じ updatedMin の一覧の pageToken から続ける。読み切るまで updatedMin は進めない
-   * （Google はタスクを更新順に返さないので、途中の updated まで進めると読んでいない分を飛ばす）。maxUpdated は読んだ分の一番新しい updated
+   * ページの上限で止めた読みかけ。mode と updatedMin は pageToken が属する問い合わせ（全部読むか、どの updatedMin の差分か）で、
+   * 続きは必ずその問い合わせで読む（別の問い合わせに pageToken を渡さない）。startedAt はこの読みを始めた時刻で、読み切ったときの
+   * updatedMin はこれより後にしない（Google はタスクを更新順に返さないので、読んだ後ろのページの新しい updated まで進めると、
+   * すでに読んだページの途中の更新を飛ばす）。maxUpdated は読んだ分の一番新しい updated
    */
-  resume?: { pageToken: string; maxUpdated: string | null } | null;
+  resume?: { pageToken: string; mode: 'full' | 'delta'; updatedMin: string | null; startedAt: string; maxUpdated: string | null } | null;
   /** リストの名前を最後に確かめた時刻（名前の変更を拾う。通知がないので間引く） */
   listCheckedAt?: string | null;
+  /** つないだ（つなぎ直した）直後の取り込みの仕事を積んだ時刻。見回りが同じ取り込みを重ねて始めないために使う */
+  setupAt?: string | null;
 }
 
 /**

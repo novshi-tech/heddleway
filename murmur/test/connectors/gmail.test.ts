@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { GatewayGmailApi, GmailError } from '../../src/connectors/gmail/api';
+import { GoogleApiNotEnabled } from '../../src/connectors/google-error';
 import { bodyText, charsetOf, decodeBase64Url, htmlToText } from '../../src/connectors/gmail/body';
 import { decodeEncodedWords, messageIdOf, parseAddressList } from '../../src/connectors/gmail/header';
 import { gmailMe } from '../../src/connectors/gmail/identity';
@@ -402,5 +403,22 @@ describe('H5 Gmail の読み取りの口', () => {
     ]) await expect(new GatewayGmailApi(reply(403, body)).history('1')).rejects.toBeInstanceOf(GmailError);
     await expect(new GatewayGmailApi(reply(429, { error: { code: 429, status: 'RESOURCE_EXHAUSTED' } })).history('1')).rejects.toMatchObject({ status: 429 });
     await expect(new GatewayGmailApi(reply(500, { error: { code: 500, status: 'INTERNAL' } })).history('1')).rejects.toMatchObject({ status: 500 });
+  });
+
+  it('分類は構造化されたエラーで行う: quotaExceeded も試し直す側。API が有効でない 403（accessNotConfigured・SERVICE_DISABLED）は同意の問題にせず GoogleApiNotEnabled。文面だけでは分類しない', async () => {
+    const e403 = (body: object) => reply(403, { error: { code: 403, message: 'm', ...body } });
+    await expect(new GatewayGmailApi(e403({ errors: [{ reason: 'quotaExceeded' }] })).history('1')).rejects.toBeInstanceOf(GmailError);
+    const disabled = [
+      { status: 'PERMISSION_DENIED', errors: [{ reason: 'accessNotConfigured', domain: 'usageLimits' }] },
+      { status: 'PERMISSION_DENIED', details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'SERVICE_DISABLED' }] },
+      { status: 'SERVICE_DISABLED' },
+    ];
+    for (const body of disabled) {
+      await expect(new GatewayGmailApi(e403(body)).profile(), JSON.stringify(body)).rejects.toBeInstanceOf(GoogleApiNotEnabled);
+      await expect(new GatewayGmailApi(e403(body)).profile()).rejects.not.toBeInstanceOf(GatewayAuthError);
+    }
+    await expect(new GatewayGmailApi(e403(disabled[0]!)).profile()).rejects.toThrow(/Gmail API がゲートウェイの Google Cloud プロジェクトで有効になっていない/);
+    await expect(new GatewayGmailApi(e403({ status: 'PERMISSION_DENIED', message: 'Rate limit quota exceeded' })).profile()).rejects.toBeInstanceOf(GatewayAuthError);
+    await expect(new GatewayGmailApi(e403({ status: 'PERMISSION_DENIED', errors: [{ reason: 'insufficientPermissions' }] })).profile()).rejects.toBeInstanceOf(GatewayAuthError);
   });
 });

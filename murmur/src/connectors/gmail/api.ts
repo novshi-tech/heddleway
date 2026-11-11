@@ -1,5 +1,5 @@
 import { GatewayAuthError, GatewayError, type UpstreamCall } from '../../ports/gateway';
-import { isQuota, type GoogleErrorBody } from '../google-error';
+import { classifyGoogleError, GoogleApiNotEnabled, type GoogleErrorBody } from '../google-error';
 import { GmailProfile, GmailSendAsList, HistoryPage, MessageListPage, type GmailSendAs } from './message';
 
 // Gmail の読み取り（ゲートウェイの REST 経由。0041）。本体が Gmail に対してするのは読み取りだけ
@@ -88,6 +88,9 @@ export async function gmailRequest(upstream: UpstreamCall, path: string): Promis
   }
   const e = json.error as GoogleErrorBody | undefined;
   const code = e?.status ?? String(res.status);
-  if (res.status === 401 || (res.status === 403 && !isQuota(e))) throw new GatewayAuthError(`gmail ${res.status} ${code}`);
+  const kind = classifyGoogleError(res.status, e);
+  // 上限は試し直す側。API が有効でないのはデプロイの問題で、同意の問題にしない
+  if (kind === 'api_disabled') throw new GoogleApiNotEnabled('Gmail API');
+  if (res.status === 401 || (res.status === 403 && kind !== 'quota')) throw new GatewayAuthError(`gmail ${res.status} ${code}`);
   throw new GmailError(res.status, code);
 }

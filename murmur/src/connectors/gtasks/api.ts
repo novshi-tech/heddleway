@@ -1,4 +1,4 @@
-import { isQuota, type GoogleErrorBody } from '../google-error';
+import { classifyGoogleError, GoogleApiNotEnabled, type GoogleErrorBody } from '../google-error';
 import { GatewayAuthError, GatewayError, type UpstreamCall } from '../../ports/gateway';
 import { GoogleUserinfo, GtasksListsPage, GtasksTaskList, GtasksTasksPage, verifiedEmail } from './task';
 
@@ -91,6 +91,9 @@ export async function gtasksRequest(upstream: UpstreamCall, path: string): Promi
   }
   const e = json.error as GoogleErrorBody | undefined;
   const code = e?.status ?? String(res.status);
-  if (res.status === 401 || (res.status === 403 && !isQuota(e))) throw new GatewayAuthError(`google tasks ${res.status} ${code}`);
+  const kind = classifyGoogleError(res.status, e);
+  // 上限は試し直す側。API が有効でないのはデプロイの問題で、同意の問題にしない
+  if (kind === 'api_disabled') throw new GoogleApiNotEnabled('Google Tasks API');
+  if (res.status === 401 || (res.status === 403 && kind !== 'quota')) throw new GatewayAuthError(`google tasks ${res.status} ${code}`);
   throw new GtasksError(res.status, code);
 }

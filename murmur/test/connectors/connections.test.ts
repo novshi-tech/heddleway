@@ -414,6 +414,19 @@ describe('H3 個人の箱をつなぐ', () => {
       expect((await ctx.connections.list('u_bob')).map((c) => c.list).sort()).toEqual(['Murmur', 'My Tasks']);
     });
 
+    it('名前が空のリストは、名前のないリスト用の名前でつなぐ（listName を空にしない）。選ぶ一覧にも同じ名前で出る', async () => {
+      await consentGtasks('u_bob');
+      gtasks.listsInfo.push({ id: 'L_blank', title: '' });
+      const chosen = await ctx.connections.connectGoogleTasks('u_bob');
+      expect(chosen).toMatchObject({ status: 'choose_list', lists: expect.arrayContaining([{ id: 'L_blank', name: '(名前のないリスト)', wellknown: null }]) });
+      const r = await ctx.connections.connectGoogleTasks('u_bob', { listId: 'L_blank' });
+      expect(r).toMatchObject({ status: 'connected', created: true, data_source: { name: 'Bob の Google Tasks（(名前のないリスト)）' } });
+      const id = r.status === 'connected' ? r.data_source.id : '';
+      expect((await ctx.service.directory()).dataSource(id)).toMatchObject({ connector: { kind: 'google-tasks', listId: 'L_blank', listName: '(名前のないリスト)' } });
+      expect(seedProblems((await ctx.service.directory()).seed)).toEqual([]);
+      expect(await state.source(id)).toMatchObject({ status: 'setup', gtasks: { updatedMin: null, setupAt: expect.any(String) } });
+    });
+
     it('アカウントのアドレスがわからない（email がない・確認済みでない）ならつながない（To Do が本人を特定できないときと同じ）', async () => {
       await consentGtasks('u_bob');
       gtasks.email = '';
