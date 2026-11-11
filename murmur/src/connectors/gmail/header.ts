@@ -1,5 +1,20 @@
 // メールのヘッダー値の読み取り（純関数。0041）。アドレスの一覧（RFC 5322）と、符号化された語（RFC 2047）。
 
+/** アドレスの一覧として読むヘッダー値の長さの上限（文字）。超えた分は読まない */
+export const MAX_ADDRESS_HEADER_CHARS = 16 * 1024;
+
+/** 区切り（空白・山括弧・括弧・カンマ・セミコロン・コロン・引用符）。文字クラス 1 つの繰り返しだけなので、入力の長さに線形 */
+const DELIMITERS = /[\s<>(),;:"]+/;
+
+/** 山括弧の外の文字から、最初のアドレスらしい語（`local@domain`）。区切りで割って 1 語ずつ見る（後戻りのある正規表現を使わない） */
+function firstBareAddress(bare: string): string {
+  for (const token of bare.split(DELIMITERS)) {
+    const at = token.indexOf('@');
+    if (at > 0 && at < token.length - 1) return token;
+  }
+  return '';
+}
+
 /**
  * アドレスの一覧（To・Cc・From の値）からアドレスの部分だけを順に取り出す。
  * `a@b.example`、`Name <a@b.example>`、`"Last, First" <a@b.example>`（引用符の中のカンマ）、カンマ区切りの複数、
@@ -7,12 +22,14 @@
  */
 export function parseAddressList(value: string | undefined): string[] {
   if (!value) return [];
+  // 長すぎる値は先頭だけ読む（現実のヘッダーは数 KB まで。悪意のある長い値で時間を使わない）
+  if (value.length > MAX_ADDRESS_HEADER_CHARS) value = value.slice(0, MAX_ADDRESS_HEADER_CHARS);
   const out: string[] = [];
   let bare = ''; // 引用符・括弧・山括弧の外の文字
   let angle: string | null = null; // 閉じた最初の山括弧の中
   let collecting: string | null = null; // 山括弧の中を読んでいる途中
   const flush = () => {
-    const addr = (angle ?? bare.match(/[^\s<>(),;:"]+@[^\s<>(),;:"]+/)?.[0] ?? '').trim();
+    const addr = (angle ?? firstBareAddress(bare)).trim();
     if (addr.includes('@') && !/\s/.test(addr)) out.push(addr);
     bare = '';
     angle = null;

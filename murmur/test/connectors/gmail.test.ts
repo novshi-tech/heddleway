@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { GatewayGmailApi, GmailError } from '../../src/connectors/gmail/api';
 import { GoogleApiNotEnabled } from '../../src/connectors/google-error';
 import { bodyText, charsetOf, decodeBase64Url, htmlToText, MAX_BODY_INPUT, partText } from '../../src/connectors/gmail/body';
-import { decodeEncodedWords, messageIdOf, parseAddressList } from '../../src/connectors/gmail/header';
+import { decodeEncodedWords, MAX_ADDRESS_HEADER_CHARS, messageIdOf, parseAddressList } from '../../src/connectors/gmail/header';
 import { GatewayError, UpstreamRefused } from '../../src/ports/gateway';
 import { classifyMessageFailure, type FailureClass } from '../../src/connectors/gmail/failure';
 import { LlmApiError, LlmRefusalError, RecordingMissingError } from '../../src/ingest/llm';
@@ -118,8 +118,25 @@ describe('H5 Gmail のヘッダーの壊れた入力', () => {
     // 長い・壊れた入力でも長さに比例する
     const started = Date.now();
     expect(parseAddressList('<'.repeat(200_000))).toEqual([]);
-    expect(parseAddressList('"<'.repeat(100_000) + 'x@y.example')).toEqual(['x@y.example']);
+    expect(parseAddressList('"<'.repeat(7_000) + 'x@y.example')).toEqual(['x@y.example']);
+    expect(parseAddressList('"<'.repeat(100_000) + 'x@y.example')).toEqual([]); // 上限（16 KB）より後ろは読まない
     expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it.each([
+    ['@ のない長い語', 'a'.repeat(100_000)],
+    ["'<a' の繰り返し", '<a'.repeat(50_000)],
+    ['混ぜた 200 KB', ('<a(b"c, d:e;f@' + 'x'.repeat(50) + ' ').repeat(10_000).slice(0, 200_000)],
+    ['@ のない語を区切りで並べた', 'ab,'.repeat(70_000)],
+  ])('病的な入力（%s）でも 500 ms 未満で終わる', (_n, input) => {
+    const started = performance.now();
+    parseAddressList(input);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it('長すぎる値は先頭の 16 KB だけ読む', () => {
+    expect(parseAddressList(`${' '.repeat(MAX_ADDRESS_HEADER_CHARS)}late@example.com`)).toEqual([]);
+    expect(parseAddressList(`a@b.example, ${' '.repeat(MAX_ADDRESS_HEADER_CHARS)}late@example.com`)).toEqual(['a@b.example']);
   });
 });
 
