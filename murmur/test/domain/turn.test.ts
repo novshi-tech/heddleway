@@ -318,4 +318,18 @@ describe('名指しの細部（0038 のレビューで見つけたもの）', ()
     log.push(acknowledgeAttention(log.state(), alice, dir, { threadId: t.id }), T(10));
     expect(myTurnOf(dir, alice, log.state().threads[t.id]!)).toEqual([]);
   });
+
+  it('H8 個人リストに宛先なし（BCC だけ）で届いた受信も、本人へのリスト宛て。本人が宛先なしで送ったものは違う', () => {
+    const log = new EventLog();
+    const ctx = makeCtx(T(9));
+    const r = ingestPure(log, ctx, email({ dataSourceId: 'ds_alice', from: 'no-reply@notify.example', to: [], sourceRef: 'b1' }), () => answer({ title: '通知' }));
+    const t = log.state().threads[r.outcome!.threadId]!;
+    expect(myTurnOf(dir, alice, t)).toEqual(['list']);
+    expect(isAwaiting(dir, t)).toBe(false);
+    log.push(acknowledgeAttention(log.state(), alice, dir, { threadId: t.id }), T(10));
+    expect(myTurnOf(dir, alice, log.state().threads[t.id]!)).toEqual([]);
+
+    const own = ingestPure(log, ctx, email({ dataSourceId: 'ds_alice', from: 'alice@ubs.example', to: [], sourceRef: 'b2' }), () => answer({ title: '自分の BCC' }));
+    expect(myTurnOf(dir, alice, log.state().threads[own.outcome!.threadId]!)).toEqual([]);
+  });
 });
