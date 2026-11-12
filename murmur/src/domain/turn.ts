@@ -124,8 +124,9 @@ export function listSignalsOf(dir: Directory, t: Thread): (LogPos & { from: Addr
   return signalsOf(t)
     .filter((x) => {
       if (x.to.some((r) => isListAddress(ds, r))) return true;
-      // 宛先のない投稿をリスト宛てにするのはチャットのチャネルだけ。状態を持つソース（Jira のメンションのないコメント・担当者のいない起票）は名指しなし（0038 の未決 3）
-      if (x.to.length === 0) return ds.group && !isStatefulSource(ds);
+      // 宛先のない投稿をリスト宛てにするのは、チャットのチャネルと、個人の箱に届いた受信（BCC だけで届く通知など。届いた以上は本人宛て）。
+      // 状態を持つソース（Jira のメンションのないコメント・担当者のいない起票）は名指しなし（0038 の未決 3）
+      if (x.to.length === 0) return !isStatefulSource(ds) && (ds.group || (personal && !isOurs(dir, ds, x.from, x.at)));
       return personal && !isOurs(dir, ds, x.from, x.at) && !x.to.some((r) => isOurs(dir, ds, r, x.at));
     })
     .map(({ signalId, at, seq, from }) => ({ signalId, at, seq, from }));
