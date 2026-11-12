@@ -167,6 +167,8 @@ export interface Projections {
 
 /** fold で base から変わったもの。スレッドとシグナルは消えないので、保存は変わった行の upsert で足りる */
 export interface ProjectionChanges {
+  /** この差分を計算した土台（base）の lastSeq。差分は、保存済みの投影がここまで含むときだけ当てられる（空の base は 0） */
+  baseSeq: number;
   threadIds: string[];
   signalIds: string[];
   /** 索引（sourceRefs・messageIds）が変わった */

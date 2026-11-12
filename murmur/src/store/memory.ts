@@ -1,4 +1,4 @@
-import { applyMasterChanges, parseEvent, Seed, type DomainEvent, type DraftEvent, type MasterChange, type ProjectionChanges, type Projections } from '../domain';
+import { applyMasterChanges, emptyProjections, parseEvent, Seed, type DomainEvent, type DraftEvent, type MasterChange, type ProjectionChanges, type Projections } from '../domain';
 import { ConcurrencyError, type EventStore, type MasterChangeRecord, type MasterStore, type ProjectionStore, type Repo } from './types';
 
 /** テスト・CLI 用のインメモリ実装 */
@@ -25,15 +25,20 @@ export class MemoryProjectionStore implements ProjectionStore {
   }
   /**
    * 差分は保存済みのものに当てる（差分の取りこぼしがあれば、読み出した投影がリプレイと食い違って H1 で見つかる）。
-   * 保存は単調: 保存済みの lastSeq 以下の差分は捨てる（古い版を持つ書き手の保存が遅れて着いても、投影を戻さない）
+   * 差分の保存は「土台 ≤ 保存済みの lastSeq < 新しい lastSeq」のときだけ当てる（保存がなければ保存済みは 0）:
+   * - 古い版を持つ書き手の保存が遅れて着いても、投影を戻さない（新しい lastSeq 以下は捨てる）
+   * - 消した直後の空の保存先に、古い土台からの差分が着いても、足りない行のまま lastSeq だけ進めない（土台が保存済みより先なら捨てる）
+   * 捨てた保存はエラーにしない。次の state() が保存済みの lastSeq からイベントで追いつく。
+   * changes がなければ丸ごと入れ替える（作り直しのとき。入れ替えは 1 度で済み、途中の空の状態はない）
    */
   async save(p: Projections, changes?: ProjectionChanges) {
-    if (!changes || !this.saved) {
+    if (!changes) {
       this.saved = structuredClone(p);
       return;
     }
-    const saved = this.saved;
-    if (p.lastSeq <= saved.lastSeq) return;
+    const stored = this.saved?.lastSeq ?? 0;
+    if (!(changes.baseSeq <= stored && stored < p.lastSeq)) return;
+    const saved = (this.saved ??= emptyProjections());
     saved.lastSeq = p.lastSeq;
     if (changes.index) saved.index = structuredClone(p.index);
     for (const id of changes.threadIds) saved.threads[id] = structuredClone(p.threads[id]!);

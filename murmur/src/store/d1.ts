@@ -119,41 +119,46 @@ export class D1ProjectionStore implements ProjectionStore {
 
   /**
    * 変わったスレッドとシグナルだけを upsert する（スレッドもシグナルも消えないので、消す行はない）。
-   * 保存は単調: 保存済みの lastSeq 以下の投影は何も書かない。書き込みは追記のあと（読み取りの追いつきも）別々に着くので、
-   * 古い版を持つ書き手の保存が遅れて着くと、lastSeq が戻り、先に進んだ行が残ったまま同じイベントをもう一度畳むことになる
-   * （スレッドを作るイベントなら「already exists」で投影が読めなくなる）。守る条件は同じ batch（1 つのトランザクション）の中で、
-   * 保存済みの lastSeq を見て決める。meta は最後に書く（行の条件が書き換える前の lastSeq を見るため）
+   * 差分の保存は「土台 ≤ 保存済みの lastSeq < 新しい lastSeq」のときだけ書く（meta がなければ保存済みは 0）。
+   * 書き込みは追記のあと（読み取りの追いつきも）別々に着くので、次の 2 つを守る:
+   * - 古い版を持つ書き手の保存が遅れて着いて lastSeq が戻ると、先に進んだ行が残ったまま同じイベントをもう一度畳むことになる
+   *   （スレッドを作るイベントなら「already exists」で投影が読めなくなる）
+   * - 消した直後の空の保存先に、古い土台からの差分が着くと、差分の行だけで lastSeq が進み、残りのスレッドは作り直されない
+   * 条件は行の挿入にも掛ける（`ON CONFLICT DO UPDATE` の WHERE は更新しか守らない）ので、各文は
+   * `INSERT … SELECT … FROM (VALUES …) WHERE <条件> ON CONFLICT … DO UPDATE …` の形にする（WHERE があるので、
+   * SQLite が ON を結合の条件と読み違えない）。条件は同じ batch（1 つのトランザクション）の中で保存済みの lastSeq を見て決め、
+   * meta は最後に書く（どの文も書き換える前の lastSeq を見る）。弾かれた保存は何も書かない
    */
   private async saveChanges(p: Projections, changes: ProjectionChanges): Promise<void> {
-    const meta = { id: META_ID, lastSeq: p.lastSeq, idx: p.index };
     // lastSeq は整数（シェルが数える）。バインド変数を使わず、100 個の上限に数えない
-    const newer = sql.raw(`coalesce((SELECT last_seq FROM projection_meta WHERE id = ${META_ID}), -1) < ${Math.trunc(p.lastSeq)}`);
-    await batch(this.db, [
+    const base = Math.trunc(changes.baseSeq);
+    const next = Math.trunc(p.lastSeq);
+    const stored = `coalesce((SELECT last_seq FROM projection_meta WHERE id = ${META_ID}), 0)`;
+    const cond = `${stored} >= ${base} AND ${stored} < ${next}`;
+    // drizzle の batch はパラメータ付きの生 SQL を扱えないので、ここだけ D1 の API を直に使う（追記と同じ）
+    const d1 = this.db.$client;
+    const statements = [
       ...this.threadRows(p, changes.threadIds).map((rows) =>
-        this.db
-          .insert(schema.threads)
-          .values(rows)
-          .onConflictDoUpdate({ target: schema.threads.id, set: { dataSourceId: sql`excluded.data_source_id`, data: sql`excluded.data` }, setWhere: newer }),
+        d1
+          .prepare(
+            `INSERT INTO threads (id, data_source_id, data) SELECT column1, column2, column3 FROM (VALUES ${rows.map(() => '(?, ?, ?)').join(', ')}) WHERE ${cond} ON CONFLICT (id) DO UPDATE SET data_source_id = excluded.data_source_id, data = excluded.data`,
+          )
+          .bind(...rows.flatMap((r) => [r.id, r.dataSourceId, JSON.stringify(r.data)])),
       ),
       ...this.signalRows(p, changes.signalIds).map((rows) =>
-        this.db
-          .insert(schema.signals)
-          .values(rows)
-          .onConflictDoUpdate({
-            target: schema.signals.id,
-            set: { dataSourceId: sql`excluded.data_source_id`, threadId: sql`excluded.thread_id`, data: sql`excluded.data` },
-            setWhere: newer,
-          }),
+        d1
+          .prepare(
+            `INSERT INTO signals (id, data_source_id, thread_id, data) SELECT column1, column2, column3, column4 FROM (VALUES ${rows.map(() => '(?, ?, ?, ?)').join(', ')}) WHERE ${cond} ON CONFLICT (id) DO UPDATE SET data_source_id = excluded.data_source_id, thread_id = excluded.thread_id, data = excluded.data`,
+          )
+          .bind(...rows.flatMap((r) => [r.id, r.dataSourceId, r.threadId, JSON.stringify(r.data)])),
       ),
-      this.db
-        .insert(schema.projectionMeta)
-        .values(meta)
-        .onConflictDoUpdate({
-          target: schema.projectionMeta.id,
-          set: changes.index ? { lastSeq: meta.lastSeq, idx: meta.idx } : { lastSeq: meta.lastSeq },
-          setWhere: sql`excluded.last_seq > projection_meta.last_seq`,
-        }),
-    ]);
+      d1
+        .prepare(
+          `INSERT INTO projection_meta (id, last_seq, idx) SELECT ${META_ID}, ${next}, ? WHERE ${cond} ON CONFLICT (id) DO UPDATE SET last_seq = excluded.last_seq${changes.index ? ', idx = excluded.idx' : ''}`,
+        )
+        .bind(JSON.stringify(p.index)),
+    ];
+    await d1.batch(statements);
   }
 
   async clear(): Promise<void> {
