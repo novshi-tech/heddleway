@@ -117,22 +117,23 @@ export class D1ProjectionStore implements ProjectionStore {
     ]);
   }
 
-  /** 変わったスレッドとシグナルだけを upsert する（スレッドもシグナルも消えないので、消す行はない） */
+  /**
+   * 変わったスレッドとシグナルだけを upsert する（スレッドもシグナルも消えないので、消す行はない）。
+   * 保存は単調: 保存済みの lastSeq 以下の投影は何も書かない。書き込みは追記のあと（読み取りの追いつきも）別々に着くので、
+   * 古い版を持つ書き手の保存が遅れて着くと、lastSeq が戻り、先に進んだ行が残ったまま同じイベントをもう一度畳むことになる
+   * （スレッドを作るイベントなら「already exists」で投影が読めなくなる）。守る条件は同じ batch（1 つのトランザクション）の中で、
+   * 保存済みの lastSeq を見て決める。meta は最後に書く（行の条件が書き換える前の lastSeq を見るため）
+   */
   private async saveChanges(p: Projections, changes: ProjectionChanges): Promise<void> {
     const meta = { id: META_ID, lastSeq: p.lastSeq, idx: p.index };
+    // lastSeq は整数（シェルが数える）。バインド変数を使わず、100 個の上限に数えない
+    const newer = sql.raw(`coalesce((SELECT last_seq FROM projection_meta WHERE id = ${META_ID}), -1) < ${Math.trunc(p.lastSeq)}`);
     await batch(this.db, [
-      this.db
-        .insert(schema.projectionMeta)
-        .values(meta)
-        .onConflictDoUpdate({
-          target: schema.projectionMeta.id,
-          set: changes.index ? { lastSeq: meta.lastSeq, idx: meta.idx } : { lastSeq: meta.lastSeq },
-        }),
       ...this.threadRows(p, changes.threadIds).map((rows) =>
         this.db
           .insert(schema.threads)
           .values(rows)
-          .onConflictDoUpdate({ target: schema.threads.id, set: { dataSourceId: sql`excluded.data_source_id`, data: sql`excluded.data` } }),
+          .onConflictDoUpdate({ target: schema.threads.id, set: { dataSourceId: sql`excluded.data_source_id`, data: sql`excluded.data` }, setWhere: newer }),
       ),
       ...this.signalRows(p, changes.signalIds).map((rows) =>
         this.db
@@ -141,8 +142,17 @@ export class D1ProjectionStore implements ProjectionStore {
           .onConflictDoUpdate({
             target: schema.signals.id,
             set: { dataSourceId: sql`excluded.data_source_id`, threadId: sql`excluded.thread_id`, data: sql`excluded.data` },
+            setWhere: newer,
           }),
       ),
+      this.db
+        .insert(schema.projectionMeta)
+        .values(meta)
+        .onConflictDoUpdate({
+          target: schema.projectionMeta.id,
+          set: changes.index ? { lastSeq: meta.lastSeq, idx: meta.idx } : { lastSeq: meta.lastSeq },
+          setWhere: sql`excluded.last_seq > projection_meta.last_seq`,
+        }),
     ]);
   }
 

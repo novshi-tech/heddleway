@@ -23,13 +23,17 @@ export class MemoryProjectionStore implements ProjectionStore {
   async load() {
     return this.saved ? structuredClone(this.saved) : null;
   }
-  /** 差分は保存済みのものに当てる（差分の取りこぼしがあれば、読み出した投影がリプレイと食い違って H1 で見つかる） */
+  /**
+   * 差分は保存済みのものに当てる（差分の取りこぼしがあれば、読み出した投影がリプレイと食い違って H1 で見つかる）。
+   * 保存は単調: 保存済みの lastSeq 以下の差分は捨てる（古い版を持つ書き手の保存が遅れて着いても、投影を戻さない）
+   */
   async save(p: Projections, changes?: ProjectionChanges) {
     if (!changes || !this.saved) {
       this.saved = structuredClone(p);
       return;
     }
     const saved = this.saved;
+    if (p.lastSeq <= saved.lastSeq) return;
     saved.lastSeq = p.lastSeq;
     if (changes.index) saved.index = structuredClone(p.index);
     for (const id of changes.threadIds) saved.threads[id] = structuredClone(p.threads[id]!);
