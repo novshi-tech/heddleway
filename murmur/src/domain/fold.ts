@@ -17,7 +17,7 @@ export function foldChanges(events: readonly DomainEvent[], base?: Projections):
   const state: Projections = base ? structuredClone(base) : emptyProjections();
   const c: Changes = { threads: new Set(), signals: new Set(), index: false };
   for (const e of events) apply(state, e, c);
-  return { projections: state, changes: { threadIds: [...c.threads].sort(), signalIds: [...c.signals].sort(), index: c.index } };
+  return { projections: state, changes: { baseSeq: base?.lastSeq ?? 0, threadIds: [...c.threads].sort(), signalIds: [...c.signals].sort(), index: c.index } };
 }
 
 export class FoldError extends Error {}

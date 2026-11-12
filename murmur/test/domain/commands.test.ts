@@ -7,6 +7,7 @@ import {
   getThreadView,
   linkThreads,
   moveSignal,
+  recordSent,
   reopenThread,
   unlinkThreads,
 } from '../../src/domain';
@@ -147,6 +148,16 @@ describe('担当する（claim_thread）', () => {
     expect(() => claimThread(log.state(), alice, dir, { threadId: t, userId: 'u_alice' })).toThrow(/mirrored/);
     expect(() => dismissThread(log.state(), alice, dir, { threadId: t, reason: '済んだ' })).toThrow(/at the source/);
     expect(() => reopenThread(log.state(), alice, dir, { threadId: t })).toThrow(/at the source/);
+  });
+
+  it('H2 タスクのリストでも、写しが届いていないスレッド（記録だけでできたもの）は片付けられる', () => {
+    const { log, ctx } = world();
+    const sent = recordSent(log.state(), alice, ctx, { dataSourceId: 'ds_tasks_alice', to: [], toContactIds: [], subject: '取り違えた記録', body: 'x', sentRef: 'wrong-id' });
+    log.push(sent.events, '2026-10-16T10:00:00.000Z');
+    const dismissed = dismissThread(log.state(), alice, dir, { threadId: sent.threadId, reason: '区切りの取り違えの残り' });
+    expect(dismissed).toHaveLength(1);
+    log.push(dismissed, '2026-10-16T10:01:00.000Z');
+    expect(reopenThread(log.state(), alice, dir, { threadId: sent.threadId })).toHaveLength(1);
   });
 });
 

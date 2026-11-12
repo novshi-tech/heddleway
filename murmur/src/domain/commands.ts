@@ -28,10 +28,14 @@ export function visibleSignalOrThrow(p: Projections, viewer: Viewer, signalId: s
 
 // ---- 片付けと開き直し ----
 
-/** タスクのサービスのスレッドは、完了も開き直しもソースで付ける（写しの closed。0039 の決定 3） */
+/**
+ * タスクのサービスのスレッドは、完了も開き直しもソースで付ける（写しの closed。0039 の決定 3）。
+ * 写しが 1 度も届いていないスレッド（記録だけでできて、ソースのタスクに結び付かなかったもの。区切りの取り違えの残り）は、
+ * ソースで閉じる手段がないので、片付け・開き直しを許す
+ */
 function refuseTask(dir: Directory, t: Thread): void {
   const ds = dir.dataSource(t.dataSourceId);
-  if (isTaskSource(ds)) throw new DomainError('invalid', `thread ${t.id} is a task in ${ds?.name ?? t.dataSourceId}; complete or reopen it at the source`);
+  if (isTaskSource(ds) && t.sourceKey != null) throw new DomainError('invalid', `thread ${t.id} is a task in ${ds?.name ?? t.dataSourceId}; complete or reopen it at the source`);
 }
 
 export function dismissThread(p: Projections, viewer: Viewer, dir: Directory, input: { threadId: string; reason: string }): DraftEvent[] {

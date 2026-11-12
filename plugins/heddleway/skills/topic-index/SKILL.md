@@ -261,7 +261,7 @@ Teams はチャネルを 1 つの**共有リスト**にする。メンバーは�
 - 宛先の人にアテンションが付く(メンバーでない相手なら返事待ち)。返事は同じリストに戻り、送ったトピックに入る
 - **Jira の起票**: `sent_ref` に課題キー、`anchors.thread_key` にも同じ課題キーを入れる。`to_contact_ids` は担当者、`source_thread_id` に起票の元になったトピック(LINE・メール・Slack など)。課題のトピックができて元のトピックと `sent` のきっかけで結ばれ、課題の状態(写し)とコメントはそのトピックに入る
 - **Jira のコメント**: `sent_ref` にコメント ID、`anchors.thread_key` に課題キー、`reply_to_thread_id` に課題のトピック
-- **To Do / Google Tasks のタスクを作った**: `data_source` にタスクのリスト、`sent_ref` にタスクの `id`、`subject` にタスクの名前、`source_thread_id` に元のトピック。`to` は要らない。タスクの ID がそのトピックの区切りになり、あとから届く写し(件名・期限・完了)も同じトピックに入る
+- **To Do / Google Tasks のタスクを作った**: `data_source` にタスクのリスト、`sent_ref` にタスクの `id`(To Do は「変わらない ID」。microsoft-graph スキルの To Do の手順どおり `Prefer: IdType="ImmutableId"` を付けて作ったときに返る、`AAkALgAAAAAA` で始まる短い ID。`AAMk` で始まる長い ID を渡すと、同じタスクが 2 つのトピックに分かれる)、`subject` にタスクの名前、`source_thread_id` に元のトピック。`to` は要らない。タスクの ID がそのトピックの区切りになり、あとから届く写し(件名・期限・完了)も同じトピックに入る
 
 ## よくある流れ
 

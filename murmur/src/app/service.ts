@@ -110,23 +110,29 @@ export class MurmurService {
   /** 投影を読み、取りこぼしたイベントがあれば追いつく */
   async state(): Promise<Projections> {
     const { repo } = this.deps;
-    let saved = (await repo.projections.load()) ?? emptyProjections();
-    if (isStaleProjections(saved)) {
-      // 投影の形が古い（0038 で名指しを足した前のもの）。イベントから作り直す
-      await repo.projections.clear();
-      saved = emptyProjections();
-    }
+    const saved = (await repo.projections.load()) ?? emptyProjections();
+    // 投影の形が古い（0038 で名指しを足した前のもの）。イベントから作り直す（消さずに、丸ごとの保存 1 回で入れ替える）
+    if (isStaleProjections(saved)) return this.refold();
     const missing = await repo.events.read(saved.lastSeq);
     if (missing.length === 0) return saved;
     const { projections, changes } = foldChanges(missing, saved);
+    // 土台より先の保存先や、すでに先へ進んだ保存先には当たらない（弾かれる）。そのときも投影は返し、次の state() が追いつく
     await repo.projections.save(projections, changes);
     return projections;
   }
 
-  /** 投影を消してイベントから作り直す（H1 の検証にも使う） */
+  /**
+   * イベントを頭から畳み、保存済みの投影を丸ごと 1 回の保存で入れ替える（H1 の検証にも使う）。
+   * 保存先を先に空にしない: 空の間に別の書き手の差分が着いて、足りない行のまま lastSeq が進むことがない
+   */
   async rebuild(): Promise<Projections> {
-    await this.deps.repo.projections.clear();
-    return this.state();
+    return this.refold();
+  }
+
+  private async refold(): Promise<Projections> {
+    const projections = fold(await this.deps.repo.events.read());
+    await this.deps.repo.projections.save(projections);
+    return projections;
   }
 
   private context(dir: Directory): CoreContext {
