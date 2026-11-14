@@ -69,7 +69,7 @@ button.danger { background: var(--alert); border-color: var(--alert); color: var
 button:hover { filter: brightness(1.1); }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 label { display: block; font-size: .875rem; color: var(--muted); margin: 0 0 .9rem; }
-input[type=text], input[type=password] {
+input[type=text], input[type=password], input[type=url] {
   display: block;
   width: 100%;
   margin-top: .3rem;
