@@ -13,6 +13,8 @@ type GrantEnv = Env & { OAUTH_PROVIDER: OAuthHelpers };
 export interface GrantMetadata {
   name: string;
   client?: string;
+  // The registered app the grant is for (docs/adr/0008); absent for a stand.
+  app?: string;
 }
 
 const grantedOn = new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", year: "numeric", month: "long", day: "numeric" });

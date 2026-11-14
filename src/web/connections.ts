@@ -36,7 +36,7 @@ function addable(directory: Directory): [string, ServiceConfig][] {
 
 export function masthead(env: Env, user: Session): Html {
   return html`<header class="masthead"><a class="home" href="/">Heddleway · ${organizationName(env)}</a>
-<div class="who"><a href="/setup">Claude につなぐ</a>${isAdmin(env, user) && html`<a href="/admin/services">接続先の管理</a><a href="/admin/plugins">プラグインの配布</a>`}<span>${user.name}</span><form method="post" action="/logout"><button class="quiet">サインアウト</button></form></div></header>`;
+<div class="who"><a href="/setup">Claude につなぐ</a>${isAdmin(env, user) && html`<a href="/admin/services">接続先の管理</a><a href="/admin/apps">アプリの管理</a><a href="/admin/plugins">プラグインの配布</a>`}<span>${user.name}</span><form method="post" action="/logout"><button class="quiet">サインアウト</button></form></div></header>`;
 }
 
 function notice(url: URL, credentials: CredentialInfo[], services: Services): Html | false {

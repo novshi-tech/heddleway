@@ -135,6 +135,10 @@ input[type=search] {
 .notice { max-width: none; padding: .7rem 1rem; border-radius: .5rem; background: var(--ok-bg); color: var(--ok); font-weight: 600; }
 .empty { max-width: none; padding: 1.25rem; border: 2px dashed var(--line); border-radius: .6rem; color: var(--muted); }
 .hint { color: var(--muted); font-size: .875rem; }
+.ports { width: 100%; border-collapse: collapse; margin: .5rem 0 1rem; font-size: .875rem; display: block; overflow-x: auto; }
+.ports th, .ports td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+.ports code { overflow-wrap: anywhere; }
+.examples { padding-left: 1.2rem; font-size: .875rem; }
 
 fieldset { border: 1px solid var(--line); border-radius: .5rem; padding: .9rem 1rem .2rem; margin: 0 0 1.25rem; }
 legend { padding: 0 .35rem; font-weight: 700; font-size: .9375rem; }

@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
+import { appServices, getApp, type AppDefinition } from "./apps";
 import { organizationName, publicUrl } from "./config";
 import { feature, features } from "./features";
 import { IDENTITY_CREDENTIAL, identityCredentialId, serviceOfIdentityCredential } from "./identity";
@@ -12,6 +13,8 @@ import { vaultFor } from "./vault";
 export interface McpProps {
   userId: string;
   name: string;
+  // Set on a grant for a registered app (docs/adr/0008): the tools reach only the app's services.
+  app?: string;
 }
 
 function json(value: unknown) {
@@ -48,21 +51,38 @@ export function buildServer(env: Env, props: McpProps, ctx: ExecutionContext): M
   );
   const vault = vaultFor(env, props.userId);
 
+  // The app's registration as it is now, read on every call so that narrowing or removing it
+  // takes effect at once. null for a stand.
+  async function currentApp(): Promise<{ app: AppDefinition | null } | { error: string }> {
+    if (!props.app) return { app: null };
+    const entry = await getApp(env, props.app);
+    if (!entry) {
+      console.warn(JSON.stringify({ type: "app_refused", app: props.app, user: props.userId, reason: "unregistered", via: "mcp" }));
+      return { error: `the app "${props.app}" is no longer registered at this gateway` };
+    }
+    return { app: entry.definition };
+  }
+  const reaches = (app: AppDefinition | null, service: string) => app === null || appServices(app).includes(service);
+
   // Credential IDs to the credential each service uses, at most one per service.
   async function resolveCredentials(ids: string[]): Promise<{ creds: Record<string, string> } | { error: string }> {
     const creds: Record<string, string> = {};
+    const current = await currentApp();
+    if ("error" in current) return current;
     const services = await getServices(env);
     for (const id of new Set(ids)) {
       const identityService = serviceOfIdentityCredential(id);
       if (identityService !== null) {
         const known = feature(env, identityService) || (Object.hasOwn(services, identityService) && services[identityService].auth.type === "identity");
         if (!known) return { error: `unknown credential: ${id}` };
+        if (!reaches(current.app, identityService)) return { error: `the app may not use service: ${identityService}` };
         if (creds[identityService]) return { error: `more than one credential for service: ${identityService}` };
         creds[identityService] = IDENTITY_CREDENTIAL;
         continue;
       }
       const info = await vault.get(id);
       if (!info) return { error: `unknown credential: ${id}` };
+      if (!reaches(current.app, info.service)) return { error: `the app may not use service: ${info.service}` };
       if (info.needsReconnect) return { error: `credential ${id} must be reconnected by the user at ${base}/` };
       if (creds[info.service]) return { error: `more than one credential for service: ${info.service}` };
       creds[info.service] = id;
@@ -82,6 +102,9 @@ export function buildServer(env: Env, props: McpProps, ctx: ExecutionContext): M
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async () => {
+      const current = await currentApp();
+      if ("error" in current) return error(current.error);
+      const app = current.app;
       const directory = await getDirectory(env);
       const config = directory.services;
       // Features of this Worker (src/features.ts) are reached like identity services; one takes
@@ -94,7 +117,13 @@ export function buildServer(env: Env, props: McpProps, ctx: ExecutionContext): M
           .map(([service, c]) => ({ id: identityCredentialId(service), service, label: `${c.display_name}(サインイン中のユーザー)` })),
       ];
       const services = [...new Set([...own.map((f) => f.name), ...Object.keys(config).filter((name) => directory.available(name))])];
-      return json({ gateway, services, credentials: [...(await vault.list()), ...identity], register_url: `${base}/` });
+      const credentials = [...(await vault.list()), ...identity];
+      return json({
+        gateway,
+        services: services.filter((s) => reaches(app, s)),
+        credentials: credentials.filter((c) => reaches(app, c.service)),
+        register_url: `${base}/`,
+      });
     },
   );
 
@@ -125,7 +154,7 @@ export function buildServer(env: Env, props: McpProps, ctx: ExecutionContext): M
         base,
         "api",
         props.userId,
-        { creds },
+        { creds, ...(props.app ? { app: props.app } : {}) },
         GATEWAY_TOKEN_TTL_SECONDS,
       );
       return json({
@@ -168,6 +197,7 @@ export function buildServer(env: Env, props: McpProps, ctx: ExecutionContext): M
     if ("error" in resolved) return error(resolved.error);
     const [[service, credential]] = Object.entries(resolved.creds);
     const outcome = await callApi(env, ctx, base, props.userId, {
+      app: props.app,
       method,
       service,
       credential,

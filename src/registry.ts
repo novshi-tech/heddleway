@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import type { AppEntry } from "./apps";
 import type { ServiceConfig } from "./config";
 import { decryptJson, encryptJson, importAesKey } from "./crypto";
 import type { OAuthClient } from "./upstream-oauth";
@@ -85,6 +86,23 @@ export class Registry extends DurableObject<Env> {
   async removePlugin(name: string): Promise<boolean> {
     await this.ctx.storage.delete(`pluginzip:${name}`);
     return this.ctx.storage.delete(`plugin:${name}`);
+  }
+
+  // Apps (src/apps.ts) under "app:", the definition as the admin approved it.
+  async listApps(): Promise<AppEntry[]> {
+    return [...(await this.ctx.storage.list<AppEntry>({ prefix: "app:" })).values()];
+  }
+
+  async getApp(name: string): Promise<AppEntry | null> {
+    return (await this.ctx.storage.get<AppEntry>(`app:${name}`)) ?? null;
+  }
+
+  async putApp(entry: AppEntry): Promise<void> {
+    await this.ctx.storage.put<AppEntry>(`app:${entry.definition.name}`, entry);
+  }
+
+  async removeApp(name: string): Promise<boolean> {
+    return this.ctx.storage.delete(`app:${name}`);
   }
 
   async remove(name: string): Promise<boolean> {

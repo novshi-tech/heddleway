@@ -171,10 +171,47 @@ async function appLogin(request: Request): Promise<Response> {
   return Response.json({ access_token: `app-token-${n}`, token_type: "Bearer", expires_in: scope.startsWith("short") ? 0 : 3599 });
 }
 
+// Client metadata documents of apps (test/apps.test.ts, docs/adr/0008). The path names the
+// document: /<variant>/<name>.json, where the variant changes the definition. /live/<name>.json
+// serves the variant last set with POST /_set/<name>/<variant>, so one document can change.
+const APPS = "https://apps.example";
+const liveVariants = new Map<string, string>();
+function appDocument(request: Request): Response {
+  const url = new URL(request.url);
+  const set = url.pathname.match(/^\/_set\/([a-z0-9-]+)\/([a-z0-9-]+)$/);
+  if (set && request.method === "POST") {
+    liveVariants.set(set[1], set[2]);
+    return new Response(null, { status: 204 });
+  }
+  const m = url.pathname.match(/^\/([a-z0-9-]+)\/([a-z0-9-]+)\.json$/);
+  if (!m) return new Response("not found", { status: 404 });
+  const name = m[2];
+  const variant = m[1] === "live" ? (liveVariants.get(name) ?? "plain") : m[1];
+  const ports: { service: string; method: string; path: string }[] = [{ service: "murmur", method: "GET", path: "^/threads$" }];
+  if (variant === "wide") ports.push({ service: "murmur", method: "POST", path: "^/notes$" });
+  const app: Record<string, unknown> = {
+    name,
+    description: "決まったリストを見張り、エージェントを起動します",
+    ports: variant === "unanchored" ? [{ service: "murmur", method: "GET", path: "/threads" }] : ports,
+    examples: {
+      allow: ["GET murmur /threads?since=2026-11-01T00:00:00Z"],
+      deny: variant === "wrong-example" ? ["GET murmur /threads"] : ["POST murmur /sent", "GET murmur /threads/thr_1"],
+    },
+  };
+  return Response.json({
+    client_id: `${APPS}${url.pathname}`,
+    client_name: `App ${name}`,
+    redirect_uris: ["https://client.test/callback"],
+    token_endpoint_auth_method: "none",
+    ...(variant === "missing" ? {} : { heddleway_app: app }),
+  });
+}
+
 // Stands in for every upstream API: echoes the request it received.
 async function upstream(request: Request): Promise<Response> {
   const url = new URL(request.url);
   if (url.origin === IDP) return idp(request);
+  if (url.origin === APPS) return appDocument(request);
   if (url.origin === FREEE_ACCOUNTS) return oauthServer(request, FREEE);
   if (url.origin === ENTRA) return oauthServer(request, GRAPH);
   if (url.origin === GOOGLE_OAUTH) return oauthServer(request, DOCS);
