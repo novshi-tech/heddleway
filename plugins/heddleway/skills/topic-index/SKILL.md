@@ -29,7 +29,7 @@ description: Heddleway のトピック索引(メール(Outlook・Gmail)・Teams�
 | 返事の期限・期限超過 | 送ったときに決めた返事の期限と、それを過ぎたもの | `reply_expected_by`・`overdue` |
 | メモ | 人とエージェントが個人リストのトピックに書く経過の記録 | `note` |
 | 結ぶ | 関係するトピック同士をリンクでつなぐ。親子ではなく対等 | `links` |
-| 写し | ソースの状態(完了・担当者・件名・期限・状態の名前)をトピックに写したもの | `source`・`closedAtSource` |
+| 写し | ソースの状態(完了・担当者・件名・期限・状態の名前)をトピックに写したもの。`source.key` はソースでその件を指す ID(タスクの ID・課題キー) | `source`・`closedAtSource` |
 | 連絡先 | チームで共有する連絡の相手(人か会社の窓口かは区別しない) | `contact` |
 
 **トピック索引は外に何も書かない。** メール・LINE・Slack の送信や Jira の起票は、それぞれのスキル(gmail・microsoft-graph・google-tasks など)でユーザーの確認を取ってから送り、送った直後に `record_sent` で事実を記録する。トピック索引がするのは、どのトピックに入れるかと、担当・アテンションを機械的に追うことだけ。対応が要るのか FYI かは判断しない(アテンションが付いた人が読んで決める)。何をするか・どのトピックを結ぶかは、ユーザーとあなた(エージェント)が決める。
@@ -171,6 +171,18 @@ Teams はチャネルを 1 つの**共有リスト**にする。メンバーは�
 - トピック索引は参加者に通知しない。`GET /threads/{タスクのトピックの id} -q since=<前回見た時刻>` か、外のサービスのきっかけ(PR のイベントなど)で拾う
 - To Do / Google Tasks のタスクとメモが見えるのは本人(とその代理)だけ。チームの別の人に渡すことは、PR や課題など外のサービスに書く
 
+### 元のデータを読む
+
+トピック索引が持つのは写しと経過だけで、中身の全部ではない(タスクの詳細(notes)・メールの本文の全体・添付・課題の説明など)。要るときは、トピックからソースの ID を取り、そのサービスのスキルで元を読む。
+
+- トピックの `source.key`: ソースでその件を指す ID。Google Tasks・To Do はタスクの ID、Jira は課題キー。写しのないトピック(メール・Teams の投稿)は `source` が `null`
+- `dataSource.origin`: ソースの入れ物。`kind` で形が決まる
+  - `google-tasks` / `graph-todo`: `listId`。Google Tasks は `GET /tasks/v1/lists/{listId}/tasks/{source.key}`(google の tasks の接続)、To Do は `GET /v1.0/me/todo/lists/{listId}/tasks/{source.key}`(microsoft-graph スキル)
+  - `jira`: `cloudId`・`site`・`projectKey`。課題は `source.key`(jira スキル)。画面の URL は `{site}/browse/{source.key}`
+  - `teams`: `teamId`・`channelId`。投稿はタイムラインのメッセージの `anchors.messageId`、返信の親は `anchors.threadTs`(`/teams/{teamId}/channels/{channelId}/messages/{id}`)
+  - `graph-mail` / `gmail`: `mailbox`(本人の箱)。メールはタイムラインのメッセージの `anchors.messageId`(Message-ID)で探す。Outlook は `$filter=internetMessageId eq '<…>'`、Gmail は `q=rfc822msgid:<…>`
+- 読むときも、そのリストと同じ組織のコネクタを使う
+
 ## 守ること
 
 - **送ったら記録する。** あなた(エージェント)経由で外へ送った・起票した・コメントしたら、その直後に `record_sent` を呼ぶ。送る前には呼ばない(送れなかったものを記録しない)。`sent_ref` は送信の API が返した ID(メールの Message-ID、Slack の ts、LINE の sentMessages[].id、Jira の課題キーやコメント ID、To Do / Google Tasks のタスクの ID)。Gmail は送ったメッセージのヘッダーの Message-ID(gmail スキルの `references/send.md`)。同じ `sent_ref` で 2 回呼んでも 1 回分しか残らない
@@ -193,10 +205,10 @@ Teams はチャネルを 1 つの**共有リスト**にする。メンバーは�
 | ツール | メソッドとパス | 入力 | 返すもの |
 | --- | --- | --- | --- |
 | me | `GET /me` | | User(`user`)、自分の連絡先(`contact`。まだなければ `null`)、メンバーになっているリスト(`lists`) |
-| list_lists | `GET /lists` | | 見えるリストの一覧(リスト・メンバー(`userId`・`name`・`contactId`)) |
+| list_lists | `GET /lists` | | 見えるリストの一覧(リスト・メンバー(`userId`・`name`・`contactId`))。`dataSource.origin` はソースの入れ物の ID(下の「元のデータを読む」) |
 | get_list | `GET /lists/{list_id}` | | リスト・メンバー |
 | list_threads | `GET /threads` | `-q filter=my_turn\|mine\|open\|awaiting\|overdue\|triage\|all`(既定 `open`。`my_turn` は自分のタスク = 自分が担当か自分へのアテンションが残っているもの、`awaiting` は返事待ち = こちらから送ったメンバーでない相手へのアテンションが残っているもの、`triage` は割当待ち = 共有リストで担当のいないもの、`mine` は自分の To Do / Google Tasks のタスク(閉じたものも))、`-q data_source=...`、`-q since=<ISO 8601>`(それより後に動いたものだけ。To Do / Google Tasks のタスクは結んだ先が動いても入る) | トピックの一覧(自分か見える結んだ先の最新の更新 `lastActivityAt` の新しい順)。各トピックに `assignee`(担当。`by` は `source` / `claim`、`userIds`・`contactIds`・`addresses`。個人リストと担当のいないものは `null`)・`attention`(残っているアテンション。`named`: `[{address, userId, contactId, signalId, at}]`(`userId` はメンバーなら本人、メンバーでなければ `null`)、`list`: リスト宛てのアテンションが残っているメンバー `{userIds, signalId, at}` か `null`)・`myTurn`(自分の番の理由 `assignee`(担当) / `named`(アテンション) / `list`(リスト宛て)。空なら自分の番でない)・`triage`・`awaiting`・`links`・`source`(写し)・`derivedBall`(結んだ先から見た番)・`linkCandidates`(結ぶ候補)・`overdue`・`closedAtSource`(ソースで完了) など |
-| get_thread | `GET /threads/{thread_id}` | `-q since=<ISO 8601>`(省略可。タイムラインをそれより後に絞る) | `thread`(一覧と同じ項目)、`dataSource`(リスト)、`linked`(結んだ先。両端を読めるものだけ。見えないトピックへのリンクは、あることも出ない)、`timeline`(このトピックのメッセージ・メモ・操作と、結んだ先のメッセージを時刻順に。メモは `kind: "note"` で `note: {noteId, body, author}`) |
+| get_thread | `GET /threads/{thread_id}` | `-q since=<ISO 8601>`(省略可。タイムラインをそれより後に絞る) | `thread`(一覧と同じ項目)、`dataSource`(リスト。`origin` にソースの入れ物の ID)、`linked`(結んだ先。両端を読めるものだけ。見えないトピックへのリンクは、あることも出ない)、`timeline`(このトピックのメッセージ・メモ・操作と、結んだ先のメッセージを時刻順に。メモは `kind: "note"` で `note: {noteId, body, author}`) |
 | add_note | `POST /notes` | `{"thread_id", "body", "author"?}`。個人リスト(自分の To Do / Google Tasks のタスク・自分のメール)のトピックにメモ(経過)を書く。共有リストのトピックは `invalid`。新しく追うものは To Do / Google Tasks のタスクを作って `record_sent` する(トピックは作らない)。`author` は書き手で、人の言葉(中継を含む)なら省略か `{"kind":"user"}`、エージェント自身が書いたもの(judge・結果の要約・提案)なら `{"kind":"agent","name":"orchestrator"}` のように名前を付ける。タイムラインのメモに `note.author` で出る(誰の番には使わない) | そのトピック(`get_thread` と同じ) |
 | claim_thread | `POST /threads/{thread_id}/claim` | `{"user_id"?, "reason"?}`。省略で自分が担当する、`null` で手放す、ほかのメンバーの User ID で引き継ぐ。状態を持つソース(Jira など)と個人リストでは `invalid` | `get_thread` と同じ |
 | acknowledge | `POST /threads/{thread_id}/acknowledge` | `{"until_signal_id"?, "addresses"?, "reason"?}`。`until_signal_id`(メッセージの ID。省略で最新のメッセージ)までのアテンションを外す。`addresses` を省けば自分へのアテンション(自分のアドレスとリスト宛て)、渡せば `[{"channel","value"}]` のアドレス(自分のものか、このリストのメンバーでないもの。ほかのメンバーのものは `forbidden`)。外すものがなければ何もしない | `get_thread` と同じ(`timeline` に `kind: "acknowledged"`) |
