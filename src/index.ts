@@ -19,6 +19,7 @@ import {
   home,
 } from "./web/connections";
 import { deleteClient, editClient, saveClient } from "./web/admin-clients";
+import { confirmDeleteApp, deleteApp, listAppsPage, previewApp, saveApp } from "./web/admin-apps";
 import { confirmDeletePlugin, deletePlugin, listPluginsPage, uploadPlugin } from "./web/admin-plugins";
 import { consentPage, consentSubmit, disableFeature } from "./web/features";
 import { confirmRevoke, revoke } from "./web/grants";
@@ -73,6 +74,11 @@ const ROUTES: Route[] = [
   ["GET", /^\/admin\/clients\/([a-z0-9][a-z0-9-]*)$/, (request, env, [name]) => editClient(request, env, name)],
   ["POST", /^\/admin\/clients\/([a-z0-9][a-z0-9-]*)$/, (request, env, [name]) => saveClient(request, env, name)],
   ["POST", /^\/admin\/clients\/([a-z0-9][a-z0-9-]*)\/delete$/, (request, env, [name]) => deleteClient(request, env, name)],
+  ["GET", "/admin/apps", listAppsPage],
+  ["POST", "/admin/apps", saveApp],
+  ["POST", "/admin/apps/preview", previewApp],
+  ["GET", /^\/admin\/apps\/([a-z0-9][a-z0-9-]*)\/delete$/, (request, env, [name]) => confirmDeleteApp(request, env, name)],
+  ["POST", /^\/admin\/apps\/([a-z0-9][a-z0-9-]*)\/delete$/, (request, env, [name]) => deleteApp(request, env, name)],
   ["GET", "/admin/plugins", listPluginsPage],
   ["POST", "/admin/plugins", uploadPlugin],
   ["GET", /^\/admin\/plugins\/([a-z0-9][a-z0-9-]*)\/delete$/, (request, env, [name]) => confirmDeletePlugin(request, env, name)],

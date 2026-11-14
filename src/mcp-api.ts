@@ -9,6 +9,8 @@ import { signToken } from "./tokens";
 export type QueryValue = string | number | boolean | string[];
 
 export interface ApiCall {
+  // The app the call is made for, carried into the token so the proxy checks its ports.
+  app?: string;
   method: string;
   service: string;
   credential: string;
@@ -80,7 +82,7 @@ export async function callApi(env: Env, ctx: ExecutionContext, base: string, use
     body = call.text;
     if (!headers.has("content-type")) headers.set("content-type", "text/plain; charset=utf-8");
   }
-  const { token } = await signToken(env.SIGNING_KEY, base, "api", userId, { creds: { [call.service]: call.credential } }, CALL_TOKEN_TTL_SECONDS);
+  const { token } = await signToken(env.SIGNING_KEY, base, "api", userId, { creds: { [call.service]: call.credential }, ...(call.app ? { app: call.app } : {}) }, CALL_TOKEN_TTL_SECONDS);
   headers.set("authorization", `Bearer ${token}`);
 
   const response = await handleProxy(new Request(url, { method: call.method, headers, body }), env, ctx, "mcp");

@@ -1,4 +1,5 @@
 import { AuthorizationError, CimdFetchError, type AuthRequest, type ClientInfo, type OAuthHelpers } from "@cloudflare/workers-oauth-provider";
+import { appScope, appServices, getApp, requestedApps, serviceNames, type AppEntry } from "./apps";
 import { publicUrl } from "./config";
 import { randomToken, s256 } from "./crypto";
 import { html } from "./web/html";
@@ -15,6 +16,40 @@ type EnvWithOAuth = Env & { OAUTH_PROVIDER: OAuthHelpers };
 interface UpstreamData {
   verifier: string;
   nonce: string;
+  // The app the grant is for (docs/adr/0008); absent for a stand.
+  app?: string;
+}
+
+// The registered app a request asks for, or null for a stand's request (scope `gateway` or none).
+// An app scope must come alone and from the client ID the admin registered.
+async function appOf(env: Env, request: AuthRequest): Promise<{ entry: AppEntry } | { error: string } | null> {
+  const names = requestedApps(request.scope);
+  if (names.length === 0) return null;
+  if (names.length > 1 || request.scope.length > 1) return { error: "アプリのアクセスは、ほかの範囲と一緒には許可できません。" };
+  const entry = await getApp(env, names[0]);
+  if (!entry || entry.definition.clientId !== request.clientId) return { error: "このアプリは、この組織のゲートウェイに登録されていません。管理者に登録を頼んでください。" };
+  return { entry };
+}
+
+async function appConsentPage(env: Env, entry: AppEntry, request: AuthRequest, handle: string, headers: Headers): Promise<Response> {
+  const app = entry.definition;
+  const names = await serviceNames(env, appServices(app));
+  const redirectHost = new URL(request.redirectUri).hostname;
+  return page(
+    `${app.displayName} の接続`,
+    html`<div class="card">
+<h1>${app.displayName} に Heddleway へのアクセスを許可しますか?</h1>
+<p>${app.description}</p>
+<p>このアプリが使えるのは、${names.join("、")} の決まった API だけです。管理者が登録したアプリです(発行元: <strong>${new URL(app.clientId).hostname}</strong>)。</p>
+<p>アクセス権は <strong>${redirectHost}</strong> に送られます。</p>
+<form method="post" class="actions">
+  <input type="hidden" name="handle" value="${handle}">
+  <button name="decision" value="approve">許可して会社のアカウントでサインイン</button>
+  <button name="decision" value="deny" class="quiet">許可しない</button>
+</form>
+</div>`,
+    headers,
+  );
 }
 
 function consentPage(client: ClientInfo, request: AuthRequest, handle: string, headers: Headers): Response {
@@ -76,7 +111,10 @@ export function authorizeGet(request: Request, env: EnvWithOAuth): Promise<Respo
     const authRequest = await oauth.parseAuthRequest(request);
     const client = await oauth.lookupClient(authRequest.clientId);
     if (!client) return renderError("不明なクライアントです。");
+    const app = await appOf(env, authRequest);
+    if (app && "error" in app) return renderError(app.error);
     const consent = await oauth.beginConsent(authRequest);
+    if (app) return appConsentPage(env, app.entry, authRequest, consent.handle, consent.headers);
     return consentPage(client, authRequest, consent.handle, consent.headers);
   });
 }
@@ -89,9 +127,14 @@ export function authorizePost(request: Request, env: EnvWithOAuth): Promise<Resp
       const denied = await oauth.denyConsent(request, handleValue);
       return new Response(null, { status: 302, headers: denied.headers });
     }
-    const approved = await oauth.approveConsent(request, handleValue, { scope: [MCP_SCOPE] });
-    const data: UpstreamData = { verifier: randomToken(), nonce: randomToken() };
-    const { state, headers } = await oauth.beginUpstream(approved.request, { data, headers: approved.headers });
+    // What is granted follows the stored request, not the form: an app's request gets its app
+    // scope, checked again against the registration; anything else gets the stand's scope.
+    const approved = await oauth.approveConsent(request, handleValue);
+    const app = await appOf(env, approved.request);
+    if (app && "error" in app) return renderError(app.error);
+    const granted = { ...approved.request, scope: app ? [appScope(app.entry.definition.name)] : [MCP_SCOPE] };
+    const data: UpstreamData = { verifier: randomToken(), nonce: randomToken(), ...(app ? { app: app.entry.definition.name } : {}) };
+    const { state, headers } = await oauth.beginUpstream(granted, { data, headers: approved.headers });
     headers.set(
       "location",
       await authorizationUrl(env, {
@@ -130,10 +173,14 @@ export function authorizeCallback(request: Request, env: EnvWithOAuth): Promise<
       throw error;
     }
 
-    const props: McpProps = { userId: user.id, name: user.name };
+    const props: McpProps = { userId: user.id, name: user.name, ...(data.app ? { app: data.app } : {}) };
     // Kept on the grant so the list of allowed apps can name it without looking the client up.
     const client = await oauth.lookupClient(original.clientId).catch(() => null);
-    const metadata: GrantMetadata = { name: user.name, ...(client?.clientName ? { client: client.clientName } : {}) };
+    const metadata: GrantMetadata = {
+      name: user.name,
+      ...(client?.clientName ? { client: client.clientName } : {}),
+      ...(data.app ? { app: data.app } : {}),
+    };
     const { redirectTo } = await oauth.completeAuthorization({
       request: original,
       userId: user.id,

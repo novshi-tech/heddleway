@@ -1,7 +1,8 @@
 import { jwtVerify, SignJWT, type JWTPayload } from "jose";
 
 // One HS256 key signs every token; the audience keeps the kinds apart.
-export type TokenKind = "api" | "session" | "login" | "connect" | "consent";
+// "appdef" carries an app definition from the admin's confirmation page to the approval.
+export type TokenKind = "api" | "session" | "login" | "connect" | "consent" | "appdef";
 
 export const GATEWAY_TOKEN_TTL_SECONDS = 15 * 60;
 
@@ -56,6 +57,8 @@ export async function verifyToken<T extends JWTPayload>(
 // Claims of a gateway token: which credential to use for each service.
 export interface GatewayClaims extends JWTPayload {
   creds: Record<string, string>;
+  // Set for a token issued to an app (docs/adr/0008): the proxy lets through only its ports.
+  app?: string;
 }
 
 export function bearer(request: Request): string | null {

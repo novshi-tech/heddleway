@@ -70,6 +70,32 @@ Claude の Cowork で動作を確認しています。MCP の OAuth に従って
 curl -H "Authorization: Bearer $TOKEN" "https://<ゲートウェイ>/api/freee/api/1/companies"
 ```
 
+### アプリをつなぐ
+
+Claude のようなエージェント(スタンド)のほかに、決まった処理をするツール(**アプリ**。カレンダーの同期、トピック索引のリストを見張ってエージェントを起動する [heddleway-dispatcher](https://github.com/novshi-tech/heddleway-dispatcher) など)をつなげます。アプリが呼べるのは、管理者が登録した口(サービス・メソッド・パス)だけです([ADR 0008](docs/adr/0008-narrow-grants-for-apps.md))。
+
+1. アプリは、OAuth のクライアントのメタデータ文書(クライアント ID の URL)に、定義 `heddleway_app` を載せて公開します。
+   ```json
+   {
+     "client_id": "https://app.example/oauth/client.json",
+     "client_name": "Dispatcher",
+     "redirect_uris": ["https://app.example/oauth/callback"],
+     "token_endpoint_auth_method": "none",
+     "heddleway_app": {
+       "name": "dispatcher",
+       "description": "トピック索引のエージェント用のリストを見張り、エージェントを起動します",
+       "ports": [
+         { "service": "murmur", "method": "GET", "path": "^/threads$" },
+         { "service": "murmur", "method": "POST", "path": "^/notes$" }
+       ],
+       "examples": { "allow": ["GET murmur /threads?since=2026-11-01T00:00:00Z"], "deny": ["POST murmur /sent"] }
+     }
+   }
+   ```
+   `path` はサービスのベース URL からのパス(クエリの前)に全体一致させる正規表現で、`^/` で始めて `$` で終えます。`examples` は「メソッド サービス パス」で書いた、通る呼び出しと通らない呼び出しの例です。
+2. 管理者が「アプリの管理」(`/admin/apps`)にクライアント ID の URL を入れ、表示された口と例の結果を確かめて承認します。保存されるのは、承認した時点の定義です。文書を書き換えたら、もう一度読み込んで差分を確かめ、承認し直します。登録を消すと、そのアプリへの許可はすぐにすべて使えなくなります。
+3. 利用者は、アプリから OAuth の認可(スコープ `app:<name>`)を受けて同意します。アプリは MCP の `list_credentials`・`issue_token`・`api_get`・`api_request` と REST の中継を、スタンドと同じように使えますが、届くのは口のサービスだけで、口にない呼び出しは上流に送る前に 403 で断られます(操作ログの `app_refused`)。
+
 ## スキル
 
 このリポジトリは Claude のプラグインのマーケットプレイスを兼ねています。共通の `heddleway` を入れ、使う提供元のプラグインを足します。Microsoft 365 だけ、Google だけ、という使い方ができます。

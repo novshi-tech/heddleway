@@ -1,3 +1,4 @@
+import { appAllows, getApp } from "./apps";
 import { publicUrl, type ServiceConfig } from "./config";
 import { feature, withPath } from "./features";
 import { IDENTITY_CREDENTIAL, signIdentity } from "./identity";
@@ -55,6 +56,20 @@ export async function handleProxy(request: Request, env: Env, ctx: ExecutionCont
   const claims = await verifyToken<GatewayClaims>(env.SIGNING_KEY, publicUrl(env), "api", token);
   if (!claims) return denied(401, "invalid or expired gateway token");
 
+  // A token issued to an app (docs/adr/0008) reaches only the app's ports, checked against the
+  // registration as it is now, before anything else (features included) sees the request.
+  if (claims.app !== undefined) {
+    const entry = await getApp(env, claims.app);
+    const refuse = (reason: string, status: number, message: string) => {
+      console.warn(JSON.stringify({ type: "app_refused", app: claims.app, user: claims.sub, service, method: request.method, path: upstreamPath || "/", reason, via }));
+      return denied(status, message);
+    };
+    if (!entry) return refuse("unregistered", 403, `the app "${claims.app}" is no longer registered at this gateway`);
+    if (!appAllows(entry.definition, service, request.method, upstreamPath)) {
+      return refuse("outside_ports", 403, `not allowed for the app "${claims.app}": ${request.method} ${service} ${upstreamPath || "/"}`);
+    }
+  }
+
   // A feature of this Worker (src/features.ts) takes its name over a configured service. The
   // request keeps the gateway token: the feature checks it again through the gateway's port.
   const f = feature(env, service);
@@ -96,6 +111,7 @@ export async function handleProxy(request: Request, env: Env, ctx: ExecutionCont
     credential: credentialId,
     service,
     via,
+    ...(claims.app !== undefined ? { app: claims.app } : {}),
   });
 }
 
