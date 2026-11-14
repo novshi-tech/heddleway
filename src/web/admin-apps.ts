@@ -43,7 +43,7 @@ async function listing(env: Env, user: Session, message?: Html | false, error?: 
     apps.map(async ({ definition: d, approvedAt }) => {
       const names = await serviceNames(env, appServices(d));
       return html`<li>
-<div class="row-main"><p class="row-title">${d.displayName} <code>${d.name}</code></p><p class="row-sub">${names.join("、")} · ${d.ports.length} 個の口 · ${approvedOn.format(approvedAt)}に承認</p><p class="row-sub">${d.clientId}</p></div>
+<div class="row-main"><p class="row-title">${d.displayName} <code>${d.name}</code></p><p class="row-sub">${names.join("、")} · API ${d.ports.length} 件 · ${approvedOn.format(approvedAt)}に承認</p><p class="row-sub">${d.clientId}</p></div>
 <div class="row-actions"><a class="button quiet" href="/admin/apps/${d.name}/delete">登録を消す</a></div>
 </li>`;
     }),
@@ -53,7 +53,7 @@ async function listing(env: Env, user: Session, message?: Html | false, error?: 
     html`${masthead(env, user)}
 ${message}
 <h1>アプリの管理</h1>
-<p>アプリは、決まった処理をするツール(カレンダーの同期、決まったリストの見張りなど)です。登録したアプリは、利用者が同意すると、登録した口(サービス・メソッド・パス)だけを、その人の接続で呼べます。登録することが、この組織としての了承になります。</p>
+<p>アプリは、決まった処理をするツール(カレンダーの同期、決まったリストの見張りなど)です。登録したアプリは、利用者が同意すると、ここで許可した API(サービス・メソッド・パスの組み合わせ)だけを、その人の接続で呼べます。それ以外の呼び出しは、ゲートウェイが断ります。登録することが、この組織としての了承になります。</p>
 ${rows.length > 0 ? html`<ul class="list">${rows}</ul>` : html`<p class="empty">登録したアプリはありません。</p>`}
 <h2>アプリを登録する・定義を更新する</h2>
 ${error && html`<p class="error" role="alert">${error}</p>`}
@@ -137,23 +137,25 @@ ${conflict && html`<p class="error" role="alert">同じ名前「${definition.nam
 <p>クライアント ID: <code>${definition.clientId}</code></p>
 <p>同意の画面に出す説明: ${definition.description}</p>
 ${existing && existing.definition.description !== definition.description && html`<p class="hint">今の説明: ${existing.definition.description}</p>`}
-<h2>使える口</h2>
+<h2>許可する API</h2>
+<p class="hint">アプリが呼べるのは、次の組み合わせだけです。パスは正規表現で、全体が一致したときだけ許可します。</p>
 ${await portRows(env, definition.ports, mark)}
-${removed.length > 0 && html`<h3>なくなる口</h3>${await portRows(env, removed)}`}
-<p class="hint">口の中で何をするか(読んだ中身をどう扱うか)は、ゲートウェイでは縛れません。アプリの説明とコードを確かめてから承認してください。ボディで対象が決まる API(Graph のサブスクリプションなど)は、パスでは絞れません。</p>
-<h2>テスト用の例</h2>
+${removed.length > 0 && html`<h3>許可から外れる API</h3>${await portRows(env, removed)}`}
+<p class="hint">許可した API の中で何をするか(読んだ中身をどう扱うか)は、ゲートウェイでは縛れません。アプリの説明とコードを確かめてから承認してください。ボディで対象が決まる API(Graph のサブスクリプションなど)は、パスでは絞れません。</p>
+<h2>許可のテスト</h2>
+<p class="hint">アプリが用意した呼び出しの例を、上の許可に当てた結果です。</p>
 ${
   results.length === 0
-    ? html`<p class="hint">例がありません。通る呼び出しと通らない呼び出しの例(<code>examples.allow</code>・<code>examples.deny</code>)があると、正規表現の書き間違いに気づけます。</p>`
-    : html`<ul class="examples">${results.map((r) => html`<li>${r.expected === r.actual ? "✓" : "✗"} <code>${r.example}</code>: ${r.expected ? "通るはず" : "通らないはず"}${r.expected !== r.actual && html`(結果は${r.actual ? "通る" : "通らない"})`}</li>`)}</ul>`
+    ? html`<p class="hint">例がありません。許可される呼び出しと断られる呼び出しの例(<code>examples.allow</code>・<code>examples.deny</code>)があると、正規表現の書き間違いに気づけます。</p>`
+    : html`<ul class="examples">${results.map((r) => html`<li>${r.expected === r.actual ? "✓" : "✗"} <code>${r.example}</code>: ${r.expected ? "許可されるはず" : "断られるはず"}${r.expected !== r.actual && html`(実際は${r.actual ? "許可される" : "断られる"})`}</li>`)}</ul>`
 }
-${failed.length > 0 && html`<p class="error" role="alert">例のとおりに照合できないものがあります。定義を直してもらってから、読み込み直してください。</p>`}
+${failed.length > 0 && html`<p class="error" role="alert">例のとおりにならないものがあります。定義を直してもらってから、読み込み直してください。</p>`}
 </div>
 ${
   !blocked &&
   html`<form method="post" action="/admin/apps" class="card">
 <input type="hidden" name="approval" value="${token}">
-<p>${existing ? "この定義で登録を置き換えます。口が減った分は、同意済みの利用者にもすぐ効きます。" : "承認すると、利用者がこのアプリに同意できるようになります。"}この画面の定義をそのまま保存し、あとで文書が書き換わっても登録は変わりません。</p>
+<p>${existing ? "この定義で登録を置き換えます。許可から外れる API は、同意済みの利用者にもすぐ効きます。" : "承認すると、利用者がこのアプリに同意できるようになります。"}この画面の定義をそのまま保存し、あとで文書が書き換わっても登録は変わりません。</p>
 <div class="actions"><button>${existing ? "更新を承認する" : "登録を承認する"}</button><a class="button quiet" href="/admin/apps">やめる</a></div>
 </form>`
 }`,
