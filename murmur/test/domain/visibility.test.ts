@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveViewer, getListView, getThreadView, listLists, listThreads, visibleSignals } from '../../src/domain';
+import { deriveViewer, getListView, getThreadView, listLists, listThreads, originOf, visibleSignals } from '../../src/domain';
 import { alice, answer, bob, dir, email, eve, EventLog, ingestPure, line, makeCtx, mallory } from '../helpers/world';
 
 // クエリ層の可視性（H3）: 見えるのはリストの読者だけ。個人のメールボックスやタスクのリストは本人だけ。テナント外は 0 件
@@ -36,7 +36,7 @@ describe('可視性', () => {
   it('H3 getThreadView は読者にだけ生の中身を返す', () => {
     const { p, shared, personal } = world();
     const view = getThreadView(dir, alice, p, personal);
-    expect(view?.dataSource).toEqual({ id: 'ds_alice', name: 'Alice のメールボックス', kind: 'service', channel: 'email' });
+    expect(view?.dataSource).toEqual({ id: 'ds_alice', name: 'Alice のメールボックス', kind: 'service', channel: 'email', origin: null });
     expect(JSON.stringify(view)).toContain('個人宛ての見積');
     expect(getThreadView(dir, bob, p, personal)).toBeNull();
     expect(getThreadView(dir, eve, p, shared)).toBeNull();
@@ -75,5 +75,19 @@ describe('可視性', () => {
     expect(listThreads(dir, bob, p, { filter: 'all', since: '2026-10-16T10:30:00.000Z' }).map((t) => t.id)).toEqual([l]);
     expect(listThreads(dir, bob, p, { filter: 'all', since: '2026-10-16T12:00:00.000Z' })).toEqual([]);
     expect(listThreads(dir, alice, p, { filter: 'all', since: '2026-01-01T00:00:00.000Z' }).map((t) => t.id)).toEqual([personal, shared]);
+  });
+
+  it('H7 データソースの入れ物の ID を出す（スタンドがソースのデータを読みに行けるように）', () => {
+    expect(originOf(undefined)).toBeNull();
+    expect(originOf({ kind: 'google-tasks', listId: 'L1', listName: 'エージェント用' })).toEqual({ kind: 'google-tasks', listId: 'L1' });
+    expect(originOf({ kind: 'graph-todo', listId: 'L2', listName: 'タスク' })).toEqual({ kind: 'graph-todo', listId: 'L2' });
+    expect(originOf({ kind: 'teams', teamId: 'T', channelId: 'C' })).toEqual({ kind: 'teams', teamId: 'T', channelId: 'C' });
+    expect(originOf({ kind: 'jira', cloudId: 'c', site: 'https://x.atlassian.net', jql: 'project = X', projectKey: 'X' })).toEqual({
+      kind: 'jira',
+      cloudId: 'c',
+      site: 'https://x.atlassian.net',
+      projectKey: 'X',
+    });
+    expect(originOf({ kind: 'gmail', mailbox: 'me' })).toEqual({ kind: 'gmail', mailbox: 'me' });
   });
 });

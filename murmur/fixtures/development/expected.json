@@ -43,7 +43,7 @@
       "after": "m01",
       "threads": {
         "$issueThread": {
-          "source": { "holders": ["acct-kato"], "statusLabel": "未着手", "due": null },
+          "source": { "holders": ["acct-kato"], "statusLabel": "未着手", "due": null, "key": "NVT-42" },
           "closedAtSource": false,
           "assignee": { "addresses": [], "by": "source", "contactIds": [], "userIds": ["u_kato"] },
           "named": [],
@@ -58,7 +58,7 @@
         { "as": "u_nose", "threads": { "filter": "my_turn", "dataSource": "ds_jira" }, "expect": ["$issueThread"] }
       ]
     },
-    { "after": "m02", "threads": { "$issueThread": { "source": { "holders": ["acct-kato"], "statusLabel": "進行中", "due": null } } } },
+    { "after": "m02", "threads": { "$issueThread": { "source": { "holders": ["acct-kato"], "statusLabel": "進行中", "due": null, "key": "NVT-42" } } } },
     { "after": "s05", "threads": { "$prThread": { "assignee": null, "named": [], "listReaders": ["u_kato", "u_nose"], "triage": true, "awaiting": false } } },
     {
       "after": "s06",
@@ -93,7 +93,7 @@
     },
     {
       "after": "m04",
-      "threads": { "$docThread": { "source": { "holders": ["acct-nose"], "statusLabel": "未着手", "due": null } } },
+      "threads": { "$docThread": { "source": { "holders": ["acct-nose"], "statusLabel": "未着手", "due": null, "key": "NVT-50" } } },
       "views": [{ "as": "u_nose", "threads": { "filter": "my_turn" }, "expect": ["$pipelineThread", "$docThread", "$clientThread", "$prThread"] }]
     },
     {
@@ -136,7 +136,7 @@
     { "after": "c01", "threads": { "$regThread": { "signalCount": 1 } } },
     {
       "after": "m05",
-      "threads": { "$regThread": { "source": { "holders": ["acct-kato"], "statusLabel": "未着手", "due": null } } },
+      "threads": { "$regThread": { "source": { "holders": ["acct-kato"], "statusLabel": "未着手", "due": null, "key": "NVT-51" } } },
       "views": [
         { "as": "u_kato", "threads": { "filter": "my_turn" }, "expect": ["$pipelineThread", "$docThread", "$regThread"] },
         { "as": "u_kato", "thread": "$regThread", "access": "full", "item": { "myTurn": ["assignee", "named"] } },
@@ -203,7 +203,7 @@
         "counterpartContactIds": ["p_jira"],
         "signalCount": 2,
         "closedAtSource": true,
-        "source": { "holders": ["acct-kato"], "statusLabel": "完了", "due": null },
+        "source": { "holders": ["acct-kato"], "statusLabel": "完了", "due": null, "key": "NVT-42" },
         "links": { "$clientThread": "anchor", "$prThread": "anchor" },
         "assignee": { "addresses": [], "by": "source", "contactIds": [], "userIds": ["u_kato"] },
         "named": [],
@@ -247,7 +247,7 @@
         "closedAtSource": true,
         "signalCount": 3,
         "counterpartContactIds": ["p_kato", "p_nose"],
-        "source": { "holders": ["acct-kato"], "statusLabel": "完了", "due": null },
+        "source": { "holders": ["acct-kato"], "statusLabel": "完了", "due": null, "key": "NVT-51" },
         "links": { "$clientThread": "sent" },
         "assignee": { "addresses": [], "by": "source", "contactIds": [], "userIds": ["u_kato"] },
         "named": ["acct-kato"],

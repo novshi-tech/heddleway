@@ -1,5 +1,5 @@
 import type { Directory } from './directory';
-import type { DataSource } from './entities';
+import type { DataSource, SourceConnector } from './entities';
 import type { AddressRef, Author, MirrorFields } from './events';
 import { sortLog } from './comm';
 import type { Projections, SignalRecord, SourceState, Thread, ThreadLink, ThreadLogEntry } from './projections';
@@ -43,6 +43,42 @@ import { canReadDataSource, type Viewer } from './viewer';
  */
 export type ThreadFilter = 'my_turn' | 'mine' | 'open' | 'awaiting' | 'overdue' | 'triage' | 'all';
 
+/**
+ * 写しの状態に、ソースでの区切り（key）を足したもの。key はソースでその件を指す ID（Google Tasks・To Do はタスクの ID、
+ * Jira は課題キー）。スタンドがソースのデータ（タスクの詳細など）を読みに行くのに使う。dataSource.origin と組み合わせる
+ */
+export interface SourceView extends SourceState {
+  key: string | null;
+}
+
+/**
+ * データソースが取り込んでいるソースの入れ物（つないだリスト・チャネル・プロジェクト）。スタンドがソースの API を呼ぶのに使う。
+ * 見えるのはそのリストの読者だけで、読者はソースでも同じものを見られる
+ */
+export type SourceOrigin =
+  | { kind: 'graph-mail'; mailbox: string }
+  | { kind: 'gmail'; mailbox: string }
+  | { kind: 'jira'; cloudId: string; site: string; projectKey: string | null }
+  | { kind: 'teams'; teamId: string; channelId: string }
+  | { kind: 'graph-todo'; listId: string }
+  | { kind: 'google-tasks'; listId: string };
+
+export function originOf(connector: SourceConnector | undefined): SourceOrigin | null {
+  if (!connector) return null;
+  switch (connector.kind) {
+    case 'graph-mail':
+    case 'gmail':
+      return { kind: connector.kind, mailbox: connector.mailbox };
+    case 'jira':
+      return { kind: 'jira', cloudId: connector.cloudId, site: connector.site, projectKey: connector.projectKey ?? null };
+    case 'teams':
+      return { kind: 'teams', teamId: connector.teamId, channelId: connector.channelId };
+    case 'graph-todo':
+    case 'google-tasks':
+      return { kind: connector.kind, listId: connector.listId };
+  }
+}
+
 export interface ThreadSummary {
   id: string;
   dataSourceId: string;
@@ -67,7 +103,7 @@ export interface ThreadSummary {
   overdue: boolean;
   closedAtSource: boolean;
   links: ThreadLink[];
-  source: SourceState | null;
+  source: SourceView | null;
   signalCount: number;
   updatedAt: string;
 }
@@ -104,7 +140,7 @@ export function summarizeThread(dir: Directory, p: Projections, t: Thread): Thre
     ...replyStateOf(dir, t),
     closedAtSource: t.closedAtSource,
     links: t.links,
-    source: t.source,
+    source: t.source ? { ...t.source, key: t.sourceKey ?? null } : null,
     signalCount: t.signalIds.length,
     updatedAt: t.updatedAt,
   };
@@ -230,7 +266,7 @@ export interface LinkView extends ThreadLink {
 
 export interface ThreadView {
   thread: ThreadItem;
-  dataSource: { id: string; name: string; kind: DataSource['kind']; channel: string };
+  dataSource: { id: string; name: string; kind: DataSource['kind']; channel: string; origin: SourceOrigin | null };
   linked: LinkView[];
   /**
    * 時刻順のタイムライン: このスレッドに綴じたもの（シグナル・メモ・操作）と、結んだ先のうち見えるスレッドのシグナル。
@@ -294,7 +330,7 @@ export function getThreadView(
     });
   return {
     thread: threadItem(dir, viewer, p, t),
-    dataSource: { id: t.dataSourceId, name: ds?.name ?? t.dataSourceId, kind: ds?.kind ?? 'service', channel: ds?.channel ?? '' },
+    dataSource: { id: t.dataSourceId, name: ds?.name ?? t.dataSourceId, kind: ds?.kind ?? 'service', channel: ds?.channel ?? '', origin: originOf(ds?.connector) },
     linked,
     timeline,
   };
@@ -307,7 +343,7 @@ export function visibleSignals(viewer: Viewer, p: Projections): SignalRecord[] {
 
 export interface ListView {
   id: string;
-  dataSource: { id: string; kind: DataSource['kind']; name: string; description: string; channel: string };
+  dataSource: { id: string; kind: DataSource['kind']; name: string; description: string; channel: string; origin: SourceOrigin | null };
   /** 読者（User）と、その Contact（あれば） */
   readers: { userId: string; name: string; contactId: string | null }[];
 }
@@ -323,7 +359,7 @@ export function getListView(dir: Directory, viewer: Viewer, listId: string): Lis
   if (!list || !ds || !canReadDataSource(viewer, ds.id)) return null;
   return {
     id: list.id,
-    dataSource: { id: ds.id, kind: ds.kind, name: ds.name, description: ds.description, channel: ds.channel },
+    dataSource: { id: ds.id, kind: ds.kind, name: ds.name, description: ds.description, channel: ds.channel, origin: originOf(ds.connector) },
     readers: dir.readersOfList(list.id).map((u) => {
       const c = dir.contactOfUser(u);
       return { userId: u, name: c?.name ?? dir.user(u)?.name ?? u, contactId: c?.id ?? null };
