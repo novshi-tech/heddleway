@@ -85,11 +85,22 @@
 - API: `POST /connections/shared-mailbox`（`mailbox` にアドレス。読めなければ `forbidden`、既にあれば読者に足す）。`GET /connections` の `kind` に足す
 - スキル（`heddleway:topic-index`）: 共有メールボックスをつなぐ手順、チームの人にもつなぐよう伝えること、送るときの `from` は窓口（今の `record_sent` の決まりのまま）
 
+## 実物で確かめたこと（2026-11-16）
+
+箱のフルアクセスを持つメンバーの委任（`graph` の接続。スコープに `Mail.ReadWrite.Shared` が入ったデプロイ）で、実物の共有メールボックスを読んだ。本体のコネクタと同じ `$select`（`MESSAGE_SELECT`）と `Prefer`（`GRAPH_PREFER`）。
+
+- `GET /v1.0/users/{箱}/mailFolders/inbox?$select=id` は 200（決定 4 の「読めるかを試す」に使える）
+- **`GET /v1.0/users/{箱}/mailFolders/inbox/messages/delta?$filter=receivedDateTime ge <3 日前>` は 200。** 3 ページ（102 件）で deltaLink まで届き、deltaLink をすぐ読むと 0 件で新しい deltaLink が返った。nextLink・deltaLink は本人の箱と同じ形で、`deltaNext` がそのまま使える
+- 受信トレイの 102 件すべてに `internetMessageHeaders`・`uniqueBody`・`internetMessageId` があり、95 件に In-Reply-To があった
+- 送信済み（`sentitems`）の delta も 200。30 日で 10 件あり、どれも from が箱だった（箱から送ったメールが箱の送信済みに入っている）。送信済みには本人の箱と同じく `internetMessageHeaders` がない（`uniqueBody` はある）
+
+これで S0 の 1 と 2 は済み。delta の権限の表に `Mail.Read.Shared` が出てこないのは、表が足りていないだけと見る。
+
 ## 実物で確かめること（S0）
 
-1. 委任の `Mail.Read.Shared` で、`/users/{共有の箱}/mailFolders/inbox/messages/delta` が通るか（上の「調べたこと」の 4 つめ）。通らなければ、ドキュメントで読めることが確かな一覧（`/users/{箱}/mailFolders('Inbox')/messages` を `$filter=receivedDateTime ge <最後に取り込んだ受信時刻>` と `$orderby=receivedDateTime` で）で見回る形に落とす。その場合、取り込んだあとに変わったメッセージ（移動・削除）は追わない
-2. delta で `internetMessageHeaders`（In-Reply-To）と `uniqueBody` が取れるか（本人の箱では取れた。`docs/research/2026-10-30-graph-delta.md`）
-3. 箱から送ったメールがどの送信済みに入るか（既定では送った人の送信済みに入り、箱の送信済みには入らない。`MessageCopyForSentAsEnabled` を付けるか、送信は記録した送信だけで扱うか）
+1. （済み。上の「実物で確かめたこと」）委任の `Mail.Read.Shared` で、`/users/{共有の箱}/mailFolders/inbox/messages/delta` が通るか（上の「調べたこと」の 4 つめ）。通らなければ、ドキュメントで読めることが確かな一覧（`/users/{箱}/mailFolders('Inbox')/messages` を `$filter=receivedDateTime ge <最後に取り込んだ受信時刻>` と `$orderby=receivedDateTime` で）で見回る形に落とす。その場合、取り込んだあとに変わったメッセージ（移動・削除）は追わない
+2. （済み）delta で `internetMessageHeaders`（In-Reply-To）と `uniqueBody` が取れるか
+3. 箱から送ったメールがどの送信済みに入るか（既定では送った人の送信済みに入り、箱の送信済みには入らない。試した箱では箱の送信済みに入っていたので、`MessageCopyForSentAsEnabled` が付いているか、箱の画面から送っている。付いていない箱で、送信を記録した送信だけで扱えるか）
 4. フルアクセスを外した人の委任が、どれくらいで 403 になるか（Exchange の権限の反映の遅れ）
 5. 0025 の分: 共有メールボックスをグループのメンバー・購読者にでき、グループ宛てのメールと中の返信のコピーが届き、In-Reply-To でつながるか
 
