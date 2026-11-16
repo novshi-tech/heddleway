@@ -1,0 +1,126 @@
+# 0042 共有メールボックスは、メンバーの委任の権限で、見回りで読む
+
+- 状態: 採用（2026-11-16、直樹。委任で共有の箱の delta が通ることを実物で確かめてから）。同じ日に実装した（下の「実装の記録」。スキルは heddleway 0.27.0）。0024 の決定 4 と 0025 の決定 2 を改める
+- 関連: 0024（決定 2: 通知はヒントで正は delta。決定 4: 共有の箱はアプリの権限）、0025（グループのメールボックスは購読者にした共有メールボックスで読む）、0030（窓口のアドレス）、0037（共有リストはスペース単位、経路は作った人の委任）、0038（担当する操作）、0041（Google の取り込みは見回りから始める）、ゲートウェイの `docs/background-access.md`
+
+## 背景
+
+0024 は、共有メールボックスをアプリの権限で読むことにした。理由はひとつで、**委任の権限（`Mail.Read.Shared`）では共有の箱の変更通知が作れない**から。通知を受けるためにアプリの権限が要り、アプリの権限を絞るために Exchange の RBAC for Applications が要り、管理者が登録するために、ゲートウェイに `client_credentials` と `Background` の入口を足した。
+
+この経路は重い。
+
+- テナントの管理者の作業が多い: Entra にアプリを登録し、Exchange の管理スコープを作って箱に印を付け、役割を割り当て、ゲートウェイの管理画面に登録する。箱を足すたびにスコープの手入れが要る
+- Entra で `Mail.Read` のアプリの権限に同意すると全員の箱に届く、という落とし穴を手順で避けている
+- 読者の根拠を Graph から確かめられない（0024 の決定 4 の割り切り）。読者は seed で宣言するしかなく、0037 の「共有リストは作れる人が作り、読者はソースから写す」から外れる
+- まだ実物で一度も通していない（0025 の「実物で確かめること」も残ったまま）
+
+一方で、通知がなくても困らないことは 0041 で確かめた。Gmail と Google Tasks は 5 分ごとの見回りで差分を取っていて、トピック索引は「エージェントが見に来たときに誰の番かを答える」ものなので、遅れが最大 5 分でも用が足りる。Outlook でも、通知を取りこぼしたときの保険はもともと同じ見回りの delta（0024 の決定 2）。
+
+通知をあきらめれば、アプリの権限を使う理由がなくなる。
+
+## 調べたこと（2026-11-16、Microsoft Graph の公式ドキュメント）
+
+- 委任の `Mail.Read.Shared`（`Mail.ReadWrite.Shared`）で、共有・委任されたフォルダのメッセージを `GET /users/{id}/mailFolders('Inbox')/messages` で読める。フォルダの共有だけでなく、箱全体の委任（フルアクセス）でも同じ。権限がなければエラーになる（Get Outlook messages in a shared or delegated folder）
+- `Mail.Read.Shared` は管理者の同意が要らない（permissions reference の AdminConsentRequired が No）。説明は「ユーザーがアクセスできるメール（本人と共有のもの）を読む」
+- この 2 つの権限では、共有・委任されたフォルダの変更通知は作れない。作るならアプリの `Mail.Read`（Create subscription・同じページ）。0024 の背景のとおり
+- message の delta には `GET /users/{id}/mailFolders/{id}/messages/delta` の形がある。ただし権限の表は `Mail.ReadBasic`・`Mail.Read`・`Mail.ReadWrite`（委任）と `Mail.ReadBasic.All` ほか（アプリ）だけで、`Mail.Read.Shared` は出てこない。delta の概要とメッセージの delta のページにも、共有の箱についての記述はない。**委任で共有の箱の delta が通るかは、ドキュメントからは決まらない**（S0 の 1）
+
+## 決定
+
+### 1. 共有メールボックスは、見回りの delta だけで取り込む
+
+- 変更通知（Graph のサブスクリプション）は作らない。5 分ごとの見回り（`maintain`）で、フォルダごとに delta を読む。Gmail と同じ形（0041 の決定 1）
+- delta の扱いは本人の箱と同じ: 初回は `receivedDateTime ge <つないだ時刻>`、1 回の仕事で 20 ページまで、cursor は取り込み終えてから進める、410 なら最後に取り込んだ受信時刻から取り直す、`sourceRef` で重複を落とす
+- 本人の箱（Outlook の個人リスト）は今のまま通知 + delta。共有の箱だけ見回りにする
+
+### 2. 経路はメンバーの委任（`Mail.Read.Shared`）。アプリの権限は使わない
+
+- 共有の箱は、つないだ人のゲートウェイの `graph` の接続（委任）で `/users/{箱}/mailFolders/{フォルダ}/messages/delta` を読む。0037 の決定 3（共有リストは作った人の委任）と同じ形になる
+- 前提は、その人が Exchange で箱のフルアクセス（またはフォルダの読み取りの権限）を持っていること。これは共有メールボックスを使うチームなら普段から付いている
+- `Mail.Read.Shared` は管理者の同意が要らないので、スコープを足しても本人の同意し直しだけで済む
+- 0024 の決定 4（アプリの権限・RBAC for Applications・`Background` の入口）は、本体の経路としては使わない。ゲートウェイの `client_credentials` と `Background` の入口は、ゲートウェイの機能として残す（ほかの用途がありうる）が、トピック索引の共有メールボックスの手順からは外す
+
+### 3. 共有メールボックスは共有リストにする。スペースは箱
+
+- 0037 のスペースに「共有メールボックス」を足す。1 つの箱に共有リストは 1 つ。`spaceKey` は箱のアドレス（小文字）。箱の Entra のオブジェクト ID とエイリアス（`proxyAddresses`）は、委任の `User.Read` では読めない（`/users/{箱}` は 403。2026-11-16 に実物で確かめた）ので使わない
+- 窓口のアドレス（0030）は、つないだときのアドレス。エイリアスで別につなぐと別の共有リストになるので、スキルで主のアドレスでつなぐよう案内する（未決 5）
+- 誰の番は、状態を持たない共有リストの形（0038: 担当する操作 `ThreadClaimed` と、宛先からの名指し）
+- 作れるのは、その箱を読める人なら誰でも。サービスは管理者がデプロイの設定で許す（`MURMUR_SHARED_SERVICES` に `shared-mailbox` を足す。0037 の決定 4）
+
+### 4. 読者は「自分の委任で箱が読めた人」。本人がつないで入り、見回りで確かめ直す
+
+0037 の決定 2 は「読者はソースの一覧から写す」だが、Graph には箱のアクセス権の一覧を読む口がない（Exchange の `Get-MailboxPermission` だけ）。そこで、一覧から写す代わりに、**本人の委任で読めること**を根拠にする。
+
+- 入る: メンバーがその箱を「つなぐ」と、本人の委任で箱を読めるか試す（受信トレイの `$select=id` を 1 回）。読めたら読者に足す。2 人目以降のつなぎは同じリストに入るだけ（0037 の決定 1）
+- 確かめ直す: 見回りで 60 分ごとに、読者それぞれの委任で同じ読み取りを試す。403・404 なら読者から外す。本人がトピック索引を無効にした・接続を消したときも外す（読めることを確かめられないので）
+- 取り込みに使う資格情報が読めなくなったら、まだ読める読者の 1 人の委任に入れ替える（0037 の `replaceSharedCredential`）。誰も読めなければ broken
+- Jira（本人の接続で `myself` を名乗る）と同じく、本人がつないだ人だけが読者になる。推測では足さない。読者がソースの読める人より広がらないことは、この確かめで保たれる
+- 割り切り: 箱にアクセスできても、トピック索引でつないでいない人は読者にならない（気づかない）。スキルで「チームの人にもつなぐよう伝える」を案内する
+
+### 5. グループのメールボックスは 0025 のまま、購読者にした共有メールボックスで読む
+
+- 0025 の決定 1（共有メールボックスをグループのメンバー・購読者にする）は変えない。その箱をこの ADR の形で読む
+- 0025 で避けた理由のうち「通知も delta もない」は、グループの会話を直接読むときの話で、共有メールボックスを挟めば delta がある。挟むやり方のほうが、取り込みの作りが 1 つで済む
+- 0025 の決定 2 の「0024 の決定 4 のとおり読む」は、この ADR の決定 2 に読み替える
+
+### 6. ゲートウェイの側
+
+- `graph` の委任のスコープに `Mail.Read.Shared` を足す（`src/catalog.ts` の `GRAPH_SCOPE`）。足すと、今つないでいる人は同意し直しになる（つなぎ直すまで共有の箱は読めないだけで、ほかは今のまま動く）。スタンドが共有の箱から送る・下書きするなら `Mail.ReadWrite.Shared`・`Mail.Send.Shared` も要るが、それはスタンドのスキルの話で、この ADR では決めない（未決 4）
+- 読める口（`src/connectors/graph/scope.ts`）に、`/v1.0/users/{箱}/mailFolders/{フォルダ}/messages/delta` と、読めるかを試す `/v1.0/users/{箱}/mailFolders/{フォルダ}?$select=id`（と `/v1.0/users/{箱}?$select=id,mail,proxyAddresses`）の GET を足す。`{箱}` は、その経路のデータソースが持つ箱に限る（入口で固定できないので、コネクタの側で `connector.mailbox` と一致するものだけを呼ぶ。口の許可リストは形だけ）
+- サブスクリプションの口は、共有の箱には使わない
+
+## 代案
+
+- **0024 のまま、アプリの権限で通知を受ける**: 通知の分だけ早いが、管理者の作業・落とし穴・seed で宣言する読者がそのまま残る。トピック索引の用途では 5 分の遅れに見合わない
+- **アプリの権限で、見回りだけにする**: 通知をあきらめるなら、アプリの権限を使う理由が残らない。重さだけが残る
+- **委任で、本人の箱に転送ルールを作ってもらう**: 本人の箱の通知に乗れるが、ソースの側に人の設定が要り、転送のメールは元のヘッダーが崩れる（In-Reply-To・宛先）
+- **グループの会話を委任で直接ポーリングする**: delta がなく、スレッドの `lastDeliveredDateTime` で見回る別の作りになる。0025 のやり方（共有メールボックスを挟む）で足りる
+
+## 帰結
+
+- 0024 の状態に「決定 4 は 0042 で改めた（共有の箱は委任で見回り）」、0025 の決定 2 に読み替えの注記を足す
+- ゲートウェイの `docs/background-access.md` と README の「人がいないときに Worker が使う接続先」の手順に、「トピック索引の共有メールボックスはこの経路を使わない（0042）」と書く。`client_credentials` と `Background` の実装は消さない
+- マスタ: `DataSource.connector` の `graph-mail` の `mailbox` を `'me'` だけから、`'me'` か箱の ID に広げる。共有の箱は `shared` を持つ（0037）
+- コネクタ: `graph/` に共有の箱の見回り（delta だけ）と、読者の確かめ直しを足す。サブスクリプションの計画（`planMaintenance`）は、共有の箱では何もしない計画を返す
+- API: `POST /connections/shared-mailbox`（`mailbox` にアドレス。読めなければ `forbidden`、既にあれば読者に足す）。`GET /connections` の `kind` に足す
+- スキル（`heddleway:topic-index`）: 共有メールボックスをつなぐ手順、チームの人にもつなぐよう伝えること、送るときの `from` は窓口（今の `record_sent` の決まりのまま）
+
+## 実物で確かめたこと（2026-11-16）
+
+箱のフルアクセスを持つメンバーの委任（`graph` の接続。スコープに `Mail.ReadWrite.Shared` が入ったデプロイ）で、実物の共有メールボックスを読んだ。本体のコネクタと同じ `$select`（`MESSAGE_SELECT`）と `Prefer`（`GRAPH_PREFER`）。
+
+- `GET /v1.0/users/{箱}/mailFolders/inbox?$select=id` は 200（決定 4 の「読めるかを試す」に使える）
+- **`GET /v1.0/users/{箱}/mailFolders/inbox/messages/delta?$filter=receivedDateTime ge <3 日前>` は 200。** 3 ページ（102 件）で deltaLink まで届き、deltaLink をすぐ読むと 0 件で新しい deltaLink が返った。nextLink・deltaLink は本人の箱と同じ形で、`deltaNext` がそのまま使える
+- 受信トレイの 102 件すべてに `internetMessageHeaders`・`uniqueBody`・`internetMessageId` があり、95 件に In-Reply-To があった
+- 送信済み（`sentitems`）の delta も 200。30 日で 10 件あり、どれも from が箱だった（箱から送ったメールが箱の送信済みに入っている）。送信済みには本人の箱と同じく `internetMessageHeaders` がない（`uniqueBody` はある）
+
+これで S0 の 1 と 2 は済み。delta の権限の表に `Mail.Read.Shared` が出てこないのは、表が足りていないだけと見る。
+
+## 実物で確かめること（S0）
+
+1. （済み。上の「実物で確かめたこと」）委任の `Mail.Read.Shared` で、`/users/{共有の箱}/mailFolders/inbox/messages/delta` が通るか（上の「調べたこと」の 4 つめ）。通らなければ、ドキュメントで読めることが確かな一覧（`/users/{箱}/mailFolders('Inbox')/messages` を `$filter=receivedDateTime ge <最後に取り込んだ受信時刻>` と `$orderby=receivedDateTime` で）で見回る形に落とす。その場合、取り込んだあとに変わったメッセージ（移動・削除）は追わない
+2. （済み）delta で `internetMessageHeaders`（In-Reply-To）と `uniqueBody` が取れるか
+3. 箱から送ったメールがどの送信済みに入るか（既定では送った人の送信済みに入り、箱の送信済みには入らない。試した箱では箱の送信済みに入っていたので、`MessageCopyForSentAsEnabled` が付いているか、箱の画面から送っている。付いていない箱で、送信を記録した送信だけで扱えるか）
+4. フルアクセスを外した人の委任が、どれくらいで 403 になるか（Exchange の権限の反映の遅れ）
+5. 0025 の分: 共有メールボックスをグループのメンバー・購読者にでき、グループ宛てのメールと中の返信のコピーが届き、In-Reply-To でつながるか
+
+## 未決
+
+5. 箱のエイリアス: 窓口はつないだアドレスだけ。エイリアス宛てのメールは受信として取り込むが、リスト宛てのアテンションにならない。エイリアスを窓口に足す手段（読める権限か、管理者の宣言か）
+
+1. 見回りの間隔を箱ごとに変えるか（既定は 5 分。0041 の Tasks と同じく、デプロイの設定で延ばせるようにするか）
+2. 読者の確かめ直しの間隔（60 分）と、外れた人が担当していたスレッド（0037 の未決 3 と同じ）
+3. 箱のフォルダ: 受信トレイだけか、送信済み・アーカイブ・サブフォルダも見るか（チームが受信トレイからフォルダに振り分けている場合）
+4. スタンドが共有の箱から送る経路（`Mail.Send.Shared`、下書き → 送信で `internetMessageId` を保つ。H5）を、ゲートウェイのスコープにいつ足すか
+
+## 実装の記録（2026-11-16）
+
+- マスタ: `graph-mail` の `mailbox` を `'me'` か共有メールボックスのアドレスにした（`z.literal('me')` → 文字列）。イベント型は変えていない
+- ドメイン: `connectSharedMailbox`（`src/domain/connection.ts`）が `connectSharedSpace` で箱の共有リストを作る（チャネル `email`、窓口は箱のアドレス、名乗りはつなぐ人の主のアドレス、`group: false`）。同じ窓口のアドレスの共有リストがあればそれを返す。本人のアドレスと、User の Contact に付いたアドレス（だれかの個人の箱）は断る。`connectSharedSpace` に `selfAddresses` を足した。読者を 1 人足す `addSharedReader`（`src/domain/shared.ts`）を足した
+- 直したもの: 個人のリストの重複の確かめ（`createPersonalDataSource`）と `connectMailbox` が、共有リストの資格情報（principal がつないだ人で、名乗りが本人のアドレス）を本人の箱と取り違えていた。共有リストを外して数える
+- Graph の口: `GraphApi.deltaStart` に箱を渡す（`/v1.0/users/{箱}/…`）、`mailboxReadable`（受信トレイの `$select=id`）。Graph の 403 は `GraphAccessDenied`（`GatewayAuthError` の仲間）にして、読めないこととゲートウェイの同意の問題を分けた。読める口（`GRAPH_SCOPE`）に、箱のフォルダとその delta の GET だけを足した（`/users/{箱}/messages`・`sendMail` などは入れない）
+- 同期: `GraphMailSync` で、箱が `'me'` でないものはサブスクリプションを作らず（残っていれば消す）、見回り（`maintain`、5 分ごと）のたびに全フォルダの delta を読む。broken は 60 分ごとに試し直す。読者は 60 分ごとに、読者それぞれのゲートウェイの graph の接続で箱を読めるか確かめ（`graphsOfUser`）、読めた人だけを `syncSharedReaders` に渡す。取り込みの委任の人が読めなくなったら、読める読者に `replaceSharedCredential` で入れ替える。誰も読めなければ broken。一時的な失敗では読者を減らさない
+- 運用の状態: `SourceState.kind` に `shared-mailbox`、`mailbox.readersSyncedAt`。D1 は JSON なのでマイグレーションは要らない
+- API: `POST /connections/shared-mailbox`（`{mailbox, credential_id?}`）。デプロイの設定（`MURMUR_SHARED_SERVICES` に `shared-mailbox`）で許していなければ `forbidden`、委任で読めなければ `forbidden`。あれば読者に足し、止まっていればその人の委任でつなぎ直す（位置は残す）。`GET /connections` に `kind: shared-mailbox` と `mailbox`
+- ゲートウェイ: カタログの `graph` の委任のスコープに `Mail.Read.Shared` を足した（今つないでいる人は、つなぎ直すまで共有の箱を読めない）
+- テスト: `test/connectors/shared-mailbox.test.ts`（作り方・読める口・見回り・読者の確かめ直し・入れ替え・broken と戻り・一時的な失敗）と、`connections.test.ts` のつなぐ流れ

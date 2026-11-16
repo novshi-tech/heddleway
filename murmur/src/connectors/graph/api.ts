@@ -17,8 +17,13 @@ export interface CreatedSubscription {
 
 export interface GraphApi {
   me(): Promise<GraphMe>;
-  /** 最初の delta。since 以降に受信したものだけ */
-  deltaStart(folder: string, since: string): Promise<DeltaPage>;
+  /** 最初の delta。since 以降に受信したものだけ。mailbox は 'me'（本人の箱）か共有メールボックスのアドレス（0042） */
+  deltaStart(folder: string, since: string, mailbox?: string): Promise<DeltaPage>;
+  /**
+   * 共有メールボックスの受信トレイを、この委任で読めるか（0042 の決定 4）。Graph が 403・404 を返せば false。
+   * ゲートウェイ自身の同意の問題は GatewayAuthError のまま投げる
+   */
+  mailboxReadable(mailbox: string): Promise<boolean>;
   /** nextLink か deltaLink の続き */
   deltaNext(link: string): Promise<DeltaPage>;
   createSubscription(input: { folder: string; notificationUrl: string; clientState: string; expiresAt: string }): Promise<CreatedSubscription>;
@@ -40,6 +45,19 @@ export class GraphError extends Error {
 
 export const GRAPH_ORIGIN = 'https://graph.microsoft.com';
 
+/** Graph 自身が 403 で断った（箱を読む権限がない・スコープが足りない）。同意の問題の 1 つとして GatewayAuthError の仲間にする */
+export class GraphAccessDenied extends GatewayAuthError {
+  constructor(code: string) {
+    super(`graph 403 ${code}`);
+    this.name = 'GraphAccessDenied';
+  }
+}
+
+/** 本人の箱は /me、共有メールボックスは /users/{アドレス}（0042） */
+export function mailboxRoot(mailbox: string): string {
+  return mailbox === 'me' ? '/v1.0/me' : `/v1.0/users/${encodeURIComponent(mailbox.trim().toLowerCase())}`;
+}
+
 /** ゲートウェイの口（本人の接続）で Graph を呼ぶ。呼べる口は GRAPH_SCOPE（scope.ts）で、口の実装が強制する */
 export class GatewayGraphApi implements GraphApi {
   constructor(private readonly upstream: UpstreamCall) {}
@@ -58,9 +76,21 @@ export class GatewayGraphApi implements GraphApi {
     return { id: r.id, displayName: r.displayName ?? '', addresses: [primary, r.mail ?? '', ...aliases, r.userPrincipalName ?? ''].filter(Boolean) };
   }
 
-  async deltaStart(folder: string, since: string): Promise<DeltaPage> {
+  async deltaStart(folder: string, since: string, mailbox = 'me'): Promise<DeltaPage> {
     const q = `$select=${MESSAGE_SELECT}&$filter=receivedDateTime ge ${since}`;
-    return DeltaPage.parse(await this.call('GET', `/v1.0/me/mailFolders/${encodeURIComponent(folder)}/messages/delta?${q}`));
+    return DeltaPage.parse(await this.call('GET', `${mailboxRoot(mailbox)}/mailFolders/${encodeURIComponent(folder)}/messages/delta?${q}`));
+  }
+
+  async mailboxReadable(mailbox: string): Promise<boolean> {
+    if (mailbox === 'me') return true;
+    try {
+      await this.call('GET', `${mailboxRoot(mailbox)}/mailFolders/inbox?$select=id`);
+      return true;
+    } catch (err) {
+      if (err instanceof GraphError && err.status === 404) return false;
+      if (err instanceof GraphAccessDenied) return false;
+      throw err;
+    }
   }
 
   async deltaNext(link: string): Promise<DeltaPage> {
@@ -118,6 +148,7 @@ export async function graphRequest(upstream: UpstreamCall, method: 'GET' | 'POST
     throw new GatewayError(json.error, res.status);
   }
   const code = (json.error as { code?: string } | undefined)?.code ?? String(res.status);
-  if (res.status === 401 || res.status === 403) throw new GatewayAuthError(`graph ${res.status} ${code}`);
+  if (res.status === 403) throw new GraphAccessDenied(code);
+  if (res.status === 401) throw new GatewayAuthError(`graph ${res.status} ${code}`);
   throw new GraphError(res.status, code);
 }

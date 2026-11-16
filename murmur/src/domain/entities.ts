@@ -66,7 +66,8 @@ export type CredentialRef = z.infer<typeof CredentialRef>;
 
 /**
  * 取り込みの経路（0024）。なければダミーコネクタ（チャネルで選ぶ）。
- * - graph-mail: Outlook のメールボックス。本人の委任（ゲートウェイの OAuth）で読む個人の箱。
+ * - graph-mail: Outlook のメールボックス。mailbox が 'me' なら本人の委任（ゲートウェイの OAuth）で読む個人の箱。
+ *   それ以外は共有メールボックスのアドレスで、メンバーの委任（Mail.Read.Shared）で見回りで読む共有リスト（0042）
  * - gmail: Gmail のメールボックス（0041）。同じく個人の箱。見回りで履歴を読む
  * - jira: Jira のサイトの、本人の JQL の範囲の課題（0034）。
  *   folders は delta とサブスクリプションの単位（Graph のよく知られたフォルダ名）
@@ -74,7 +75,8 @@ export type CredentialRef = z.infer<typeof CredentialRef>;
 export const SourceConnector = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('graph-mail'),
-    mailbox: z.literal('me'),
+    /** 'me'（本人の箱）か、共有メールボックスのアドレス（0042） */
+    mailbox: z.string().min(1),
     folders: z.array(z.string()).min(1).default(['inbox', 'sentitems']),
   }),
   /** Gmail のメールボックス（0041）。本人の委任で読む個人の箱。取り込みは見回りで履歴を読む（購読はない） */

@@ -95,9 +95,9 @@ export interface GmailRecovery {
 
 /** 実行時に作ったデータソースの取り込みの状態。kind がなければ Outlook（Jira より前の行） */
 export interface SourceState {
-  kind?: 'outlook' | 'jira' | 'teams' | 'todo' | 'gtasks' | 'gmail';
+  kind?: 'outlook' | 'shared-mailbox' | 'jira' | 'teams' | 'todo' | 'gtasks' | 'gmail';
   dataSourceId: string;
-  /** 個人の箱の本人（ゲートウェイの User） */
+  /** 個人の箱の本人（ゲートウェイの User）。共有リストでは、取り込みに委任を使っている読者 */
   userId: string;
   gatewayCredentialId: string;
   status: SourceStatus;
@@ -113,6 +113,8 @@ export interface SourceState {
   gtasks?: GtasksCursor;
   /** Gmail: 取り込みの位置（見回りの最後の読み切りの時刻は lastSyncAt） */
   gmail?: GmailCursor;
+  /** 共有メールボックス（0042）: 読者を最後に確かめ直した時刻。delta の位置は folders */
+  mailbox?: { readersSyncedAt?: string };
   connectedAt: string;
   /** 最後に全フォルダの delta を終えた時刻（Google Tasks: 見回りでリストを最後まで読み終えた時刻。間隔の判定に使う） */
   lastSyncAt: string | null;

@@ -73,7 +73,7 @@
   // Optional vars: MURMUR_CLAUDE_MODEL, MURMUR_GRAPH_SERVICE (default graph), MURMUR_JIRA_SERVICE (default jira),
   // MURMUR_GMAIL_SERVICE (default gmail), MURMUR_TASKS_SERVICE (default tasks),
   // MURMUR_TASKS_POLL_MINUTES (patrol interval of the Google Tasks connector in minutes; unset = every cron tick. Murmur's 0041),
-  // MURMUR_SHARED_SERVICES (services whose spaces may become shared lists, e.g. "jira,teams"; none by default. Murmur's 0037).
+  // MURMUR_SHARED_SERVICES (services whose spaces may become shared lists, e.g. "jira,teams,shared-mailbox"; none by default. Murmur's 0037・0042).
   // Create the database and queue with `npx wrangler d1 create <name>-murmur` and `npx wrangler queues create <name>-murmur-sync`,
   // then `npm run d1-migrate -- <name>` before deploying.
 }

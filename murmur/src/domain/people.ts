@@ -93,9 +93,11 @@ export function createPersonalDataSource(
   if (!input.identity.trim()) throw new DomainError('invalid', 'identity is required');
   if (!input.gatewayCredentialId.trim()) throw new DomainError('invalid', 'gateway_credential_id is required');
   const address: AddressRef = { channel: input.channel, value: input.identity.trim() };
+  // 共有リスト（0037。共有メールボックスは名乗りが本人のアドレスになる。0042）は個人のリストと重ならない
   const dup = draft.dataSources.find(
     (d) =>
       d.kind === 'service' &&
+      !d.shared &&
       d.channel === input.channel &&
       draft.credentialRefs.some((c) => c.id === d.credentialRefId && c.principal.kind === 'user' && c.principal.userId === userId && sameAddress(c.address, address)),
   );

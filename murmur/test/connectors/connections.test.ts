@@ -48,7 +48,8 @@ class FakeGatewayPort implements GatewayPort {
   async upstream(userId: string, credentialId: string) {
     if (!this.consents.has(userId)) throw new ConsentRequired();
     if (this.reconnect.has(credentialId)) throw new GatewayAuthError(`credential ${credentialId} must be reconnected`);
-    return async () => new Response('{}');
+    // 共有メールボックスのテストが、だれの口かで偽の Graph を選べるように本人を付けておく
+    return Object.assign(async () => new Response('{}'), { userId });
   }
 
   readonly consent: GatewayPort['consent'] = {
@@ -81,6 +82,8 @@ describe('H3 個人の箱をつなぐ', () => {
   let todo: FakeTodo;
   let gtasks: FakeGtasks;
   let gmail: FakeGmail;
+  /** 共有メールボックス（0042）: 人ごとの偽の Graph（なければ Bob の箱の偽物） */
+  let graphsOf: Map<string, FakeGraph>;
 
   async function setup(world = seed) {
     const made = await makeService(world);
@@ -91,7 +94,7 @@ describe('H3 個人の箱をつなぐ', () => {
       service: made.service,
       queue: { send: async (j) => void queued.push(j) },
       newId: counterIds(),
-      graphFor: () => new FakeGraph({ id: 'oid', displayName: 'Bob', addresses: ['bob@ubs.example', 'bob.alias@ubs.example'] }),
+      graphFor: (call) => graphsOf.get((call as { userId?: string }).userId ?? '') ?? new FakeGraph({ id: 'oid', displayName: 'Bob', addresses: ['bob@ubs.example', 'bob.alias@ubs.example'] }),
       jiraFor: () => jira,
       teamsFor: () => teams,
       todoFor: () => todo,
@@ -130,6 +133,7 @@ describe('H3 個人の箱をつなぐ', () => {
     gw.credentialsOf.set('u_bob', [...gw.credentialsOf.get('u_bob')!, { id: 'gw_gmail', service: 'gmail', label: 'gws' }]);
     gw.credentialsOf.set('u_bob', [...gw.credentialsOf.get('u_bob')!, { id: 'gw_tasks', service: 'tasks', label: 'gws' }]);
     sharedServices = ['jira'];
+    graphsOf = new Map();
     ctx = await setup();
   });
 
@@ -745,6 +749,72 @@ describe('H3 個人の箱をつなぐ', () => {
       ctx = await setup();
       gw.approve('u_bob');
       await expect(ctx.connections.connectTeams('u_bob', { teamId: 'team-1', channelId: '19:ch@thread.skype' })).rejects.toMatchObject({ code: 'forbidden' });
+    });
+  });
+  describe('H3 共有メールボックスの共有リスト（0042）', () => {
+    const BOX = 'external@ubs.example';
+
+    beforeEach(async () => {
+      sharedServices = ['shared-mailbox'];
+      ctx = await setup();
+      const bob = new FakeGraph({ id: 'oid_bob', displayName: 'Bob', addresses: ['bob@ubs.example'] });
+      const alice = new FakeGraph({ id: 'oid_alice', displayName: 'Alice', addresses: ['alice@ubs.example'] });
+      bob.readable.add(BOX);
+      graphsOf.set('u_bob', bob);
+      graphsOf.set('u_alice', alice);
+      gw.approve('u_bob');
+      gw.approve('u_alice');
+    });
+
+    const sharedDs = async () => (await ctx.service.directory()).seed.dataSources.find((d) => d.kind === 'service' && d.shared)!;
+    const readers = async (dsId: string) => {
+      const dir = await ctx.service.directory();
+      return dir.readersOfList(dir.seed.lists.find((l) => l.dataSourceId === dsId)!.id).sort();
+    };
+
+    it('委任で箱が読めればつなぐ: 箱の共有リストを作り、作った人が読者、キューに setup。一覧に箱のアドレスが出る', async () => {
+      const r = await ctx.connections.connectSharedMailbox('u_bob', { mailbox: BOX });
+      expect(r).toMatchObject({ status: 'connected', created: true, data_source: { name: `${BOX}（共有メールボックス）` } });
+      const ds = await sharedDs();
+      expect(ds).toMatchObject({ channel: 'email', selfAddresses: [{ value: BOX }], connector: { kind: 'graph-mail', mailbox: BOX }, shared: { createdBy: 'u_bob' } });
+      expect(await readers(ds.id)).toEqual(['u_bob']);
+      expect(await state.source(ds.id)).toMatchObject({ kind: 'shared-mailbox', userId: 'u_bob', gatewayCredentialId: 'gw_bob', status: 'setup', connectedAt: now });
+      expect(queued).toEqual([{ kind: 'setup', dataSourceId: ds.id }]);
+      expect(await ctx.connections.list('u_bob')).toEqual([expect.objectContaining({ kind: 'shared-mailbox', mailbox: BOX, shared: true, created_by: 'u_bob', status: 'setup' })]);
+    });
+
+    it('委任で読めない箱はつながない（何も作らない）。デプロイの設定で許していなければつながない', async () => {
+      await expect(ctx.connections.connectSharedMailbox('u_alice', { mailbox: BOX })).rejects.toMatchObject({ code: 'forbidden', message: expect.stringMatching(/読めない/) });
+      expect((await ctx.service.directory()).seed.dataSources.some((d) => d.kind === 'service' && d.shared)).toBe(false);
+      sharedServices = ['jira'];
+      ctx = await setup();
+      await expect(ctx.connections.connectSharedMailbox('u_bob', { mailbox: BOX })).rejects.toMatchObject({ code: 'forbidden', message: expect.stringMatching(/MURMUR_SHARED_SERVICES/) });
+    });
+
+    it('2 人目が読めればその場で読者に入る。動いていれば資格情報は変えない。止まっていれば、その人の委任でつなぎ直す（位置は残す）', async () => {
+      await ctx.connections.connectSharedMailbox('u_bob', { mailbox: BOX });
+      const ds = await sharedDs();
+      await state.putSource({ ...(await state.source(ds.id))!, status: 'ok' });
+      graphsOf.get('u_alice')!.readable.add(BOX);
+      queued.length = 0;
+      expect(await ctx.connections.connectSharedMailbox('u_alice', { mailbox: 'External@ubs.example' })).toMatchObject({ status: 'connected', created: false, data_source: { id: ds.id } });
+      expect(await readers(ds.id)).toEqual(['u_alice', 'u_bob']);
+      expect(await state.source(ds.id)).toMatchObject({ userId: 'u_bob', status: 'ok' });
+      expect(queued).toEqual([]);
+      // 止まった: Alice がつなぎ直すと Alice の委任で読む
+      const folders = { inbox: { link: 'https://graph.microsoft.com/x', lastReceivedAt: '2026-10-29T00:00:00.000Z' } };
+      await state.putSource({ ...(await state.source(ds.id))!, status: 'broken', reason: 'x', folders });
+      expect(await ctx.connections.connectSharedMailbox('u_alice', { mailbox: BOX })).toMatchObject({ status: 'connected', created: false });
+      expect(await state.source(ds.id)).toMatchObject({ userId: 'u_alice', gatewayCredentialId: 'gw_alice', status: 'setup', folders, connectedAt: now });
+      expect(queued).toEqual([{ kind: 'setup', dataSourceId: ds.id }]);
+      expect((await sharedDs()).shared?.createdBy).toBe('u_bob');
+    });
+
+    it('共有メールボックスをつないだあとに本人の Outlook をつないでも、別のデータソース', async () => {
+      await ctx.connections.connectSharedMailbox('u_bob', { mailbox: BOX });
+      expect(await ctx.connections.connectOutlook('u_bob')).toMatchObject({ status: 'connected', created: true });
+      const kinds = (await ctx.connections.list('u_bob')).map((c) => c.kind).sort();
+      expect(kinds).toEqual(['outlook', 'shared-mailbox']);
     });
   });
 });
