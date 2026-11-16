@@ -1,6 +1,6 @@
 # 0042 共有メールボックスは、メンバーの委任の権限で、見回りで読む
 
-- 状態: 採用（2026-11-16、直樹。委任で共有の箱の delta が通ることを実物で確かめてから）。同じ日に実装した（下の「実装の記録」。スキルは heddleway 0.27.0）。0024 の決定 4 と 0025 の決定 2 を改める
+- 状態: 採用（2026-11-16、直樹。委任で共有の箱の delta が通ることを実物で確かめてから）。同じ日に実装した（下の「実装の記録」。スキルは heddleway 0.27.0、0.27.1 で許可の案内を直した）。0024 の決定 4 と 0025 の決定 2 を改める
 - 関連: 0024（決定 2: 通知はヒントで正は delta。決定 4: 共有の箱はアプリの権限）、0025（グループのメールボックスは購読者にした共有メールボックスで読む）、0030（窓口のアドレス）、0037（共有リストはスペース単位、経路は作った人の委任）、0038（担当する操作）、0041（Google の取り込みは見回りから始める）、ゲートウェイの `docs/background-access.md`
 
 ## 背景
@@ -37,7 +37,7 @@
 
 - 共有の箱は、つないだ人のゲートウェイの `graph` の接続（委任）で `/users/{箱}/mailFolders/{フォルダ}/messages/delta` を読む。0037 の決定 3（共有リストは作った人の委任）と同じ形になる
 - 前提は、その人が Exchange で箱のフルアクセス（またはフォルダの読み取りの権限）を持っていること。これは共有メールボックスを使うチームなら普段から付いている
-- `Mail.Read.Shared` は管理者の同意が要らないので、スコープを足しても本人の同意し直しだけで済む
+- `Mail.Read.Shared`（か `Mail.ReadWrite.Shared`）は、Entra のアプリの API のアクセス許可に足して同意する（管理者の同意は要らないが、組織でまとめて同意しておくと本人の同意し直しが要らない）
 - 0024 の決定 4（アプリの権限・RBAC for Applications・`Background` の入口）は、本体の経路としては使わない。ゲートウェイの `client_credentials` と `Background` の入口は、ゲートウェイの機能として残す（ほかの用途がありうる）が、トピック索引の共有メールボックスの手順からは外す
 
 ### 3. 共有メールボックスは共有リストにする。スペースは箱
@@ -65,7 +65,7 @@
 
 ### 6. ゲートウェイの側
 
-- `graph` の委任のスコープに `Mail.Read.Shared` を足す（`src/catalog.ts` の `GRAPH_SCOPE`）。足すと、今つないでいる人は同意し直しになる（つなぎ直すまで共有の箱は読めないだけで、ほかは今のまま動く）。スタンドが共有の箱から送る・下書きするなら `Mail.ReadWrite.Shared`・`Mail.Send.Shared` も要るが、それはスタンドのスキルの話で、この ADR では決めない（未決 4）
+- 共有の箱を読む許可（`Mail.Read.Shared` か `Mail.ReadWrite.Shared`）は、ゲートウェイのカタログのスコープ（`src/catalog.ts` の `GRAPH_SCOPE`）には足さず、管理者が Entra のアプリの API のアクセス許可に足して組織で同意する。Entra は同意済みの許可をトークンに入れるので、カタログの要求に書かなくても使える。カタログに足すと、ゲートウェイはリフレッシュのたびにそのスコープを送るので、まだ同意していない人の接続がリフレッシュで切れるおそれがある（2026-11-16、一度足してから戻した）。スタンドが共有の箱から送る・下書きするなら `Mail.ReadWrite.Shared`・`Mail.Send.Shared` も要るが、それはスタンドのスキルの話で、この ADR では決めない（未決 4）
 - 読める口（`src/connectors/graph/scope.ts`）に、`/v1.0/users/{箱}/mailFolders/{フォルダ}/messages/delta` と、読めるかを試す `/v1.0/users/{箱}/mailFolders/{フォルダ}?$select=id`（と `/v1.0/users/{箱}?$select=id,mail,proxyAddresses`）の GET を足す。`{箱}` は、その経路のデータソースが持つ箱に限る（入口で固定できないので、コネクタの側で `connector.mailbox` と一致するものだけを呼ぶ。口の許可リストは形だけ）
 - サブスクリプションの口は、共有の箱には使わない
 
@@ -122,5 +122,5 @@
 - 同期: `GraphMailSync` で、箱が `'me'` でないものはサブスクリプションを作らず（残っていれば消す）、見回り（`maintain`、5 分ごと）のたびに全フォルダの delta を読む。broken は 60 分ごとに試し直す。読者は 60 分ごとに、読者それぞれのゲートウェイの graph の接続で箱を読めるか確かめ（`graphsOfUser`）、読めた人だけを `syncSharedReaders` に渡す。取り込みの委任の人が読めなくなったら、読める読者に `replaceSharedCredential` で入れ替える。誰も読めなければ broken。一時的な失敗では読者を減らさない
 - 運用の状態: `SourceState.kind` に `shared-mailbox`、`mailbox.readersSyncedAt`。D1 は JSON なのでマイグレーションは要らない
 - API: `POST /connections/shared-mailbox`（`{mailbox, credential_id?}`）。デプロイの設定（`MURMUR_SHARED_SERVICES` に `shared-mailbox`）で許していなければ `forbidden`、委任で読めなければ `forbidden`。あれば読者に足し、止まっていればその人の委任でつなぎ直す（位置は残す）。`GET /connections` に `kind: shared-mailbox` と `mailbox`
-- ゲートウェイ: カタログの `graph` の委任のスコープに `Mail.Read.Shared` を足した（今つないでいる人は、つなぎ直すまで共有の箱を読めない）
+- ゲートウェイ: カタログの `graph` の委任のスコープは変えない（一度 `Mail.Read.Shared` を足したが、リフレッシュで未同意のスコープを要求して接続が切れるおそれがあるので戻した。決定 6）。許可は管理者が Entra のアプリに足す
 - テスト: `test/connectors/shared-mailbox.test.ts`（作り方・読める口・見回り・読者の確かめ直し・入れ替え・broken と戻り・一時的な失敗）と、`connections.test.ts` のつなぐ流れ
