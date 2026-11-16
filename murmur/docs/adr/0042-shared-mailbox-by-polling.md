@@ -18,6 +18,13 @@
 
 通知をあきらめれば、アプリの権限を使う理由がなくなる。
 
+## 調べたこと（2026-11-16、Microsoft Graph の公式ドキュメント）
+
+- 委任の `Mail.Read.Shared`（`Mail.ReadWrite.Shared`）で、共有・委任されたフォルダのメッセージを `GET /users/{id}/mailFolders('Inbox')/messages` で読める。フォルダの共有だけでなく、箱全体の委任（フルアクセス）でも同じ。権限がなければエラーになる（Get Outlook messages in a shared or delegated folder）
+- `Mail.Read.Shared` は管理者の同意が要らない（permissions reference の AdminConsentRequired が No）。説明は「ユーザーがアクセスできるメール（本人と共有のもの）を読む」
+- この 2 つの権限では、共有・委任されたフォルダの変更通知は作れない。作るならアプリの `Mail.Read`（Create subscription・同じページ）。0024 の背景のとおり
+- message の delta には `GET /users/{id}/mailFolders/{id}/messages/delta` の形がある。ただし権限の表は `Mail.ReadBasic`・`Mail.Read`・`Mail.ReadWrite`（委任）と `Mail.ReadBasic.All` ほか（アプリ）だけで、`Mail.Read.Shared` は出てこない。delta の概要とメッセージの delta のページにも、共有の箱についての記述はない。**委任で共有の箱の delta が通るかは、ドキュメントからは決まらない**（S0 の 1）
+
 ## 決定
 
 ### 1. 共有メールボックスは、見回りの delta だけで取り込む
@@ -30,6 +37,7 @@
 
 - 共有の箱は、つないだ人のゲートウェイの `graph` の接続（委任）で `/users/{箱}/mailFolders/{フォルダ}/messages/delta` を読む。0037 の決定 3（共有リストは作った人の委任）と同じ形になる
 - 前提は、その人が Exchange で箱のフルアクセス（またはフォルダの読み取りの権限）を持っていること。これは共有メールボックスを使うチームなら普段から付いている
+- `Mail.Read.Shared` は管理者の同意が要らないので、スコープを足しても本人の同意し直しだけで済む
 - 0024 の決定 4（アプリの権限・RBAC for Applications・`Background` の入口）は、本体の経路としては使わない。ゲートウェイの `client_credentials` と `Background` の入口は、ゲートウェイの機能として残す（ほかの用途がありうる）が、トピック索引の共有メールボックスの手順からは外す
 
 ### 3. 共有メールボックスは共有リストにする。スペースは箱
@@ -79,7 +87,7 @@
 
 ## 実物で確かめること（S0）
 
-1. 委任の `Mail.Read.Shared` で、`/users/{共有の箱}/mailFolders/inbox/messages/delta` が通るか（公式の delta の権限の表には `Mail.Read.Shared` が出てこない。通らなければ、`$filter=receivedDateTime ge ...` と `$orderby` の一覧で見回る形に落とす）
+1. 委任の `Mail.Read.Shared` で、`/users/{共有の箱}/mailFolders/inbox/messages/delta` が通るか（上の「調べたこと」の 4 つめ）。通らなければ、ドキュメントで読めることが確かな一覧（`/users/{箱}/mailFolders('Inbox')/messages` を `$filter=receivedDateTime ge <最後に取り込んだ受信時刻>` と `$orderby=receivedDateTime` で）で見回る形に落とす。その場合、取り込んだあとに変わったメッセージ（移動・削除）は追わない
 2. delta で `internetMessageHeaders`（In-Reply-To）と `uniqueBody` が取れるか（本人の箱では取れた。`docs/research/2026-10-30-graph-delta.md`）
 3. 箱から送ったメールがどの送信済みに入るか（既定では送った人の送信済みに入り、箱の送信済みには入らない。`MessageCopyForSentAsEnabled` を付けるか、送信は記録した送信だけで扱うか）
 4. フルアクセスを外した人の委任が、どれくらいで 403 になるか（Exchange の権限の反映の遅れ）
