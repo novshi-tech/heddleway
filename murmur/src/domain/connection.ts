@@ -1,6 +1,6 @@
 import type { CoreContext } from './context';
 import { sameAddress } from './comm';
-import { sameValue } from './directory';
+import { Directory, sameValue } from './directory';
 import type { DataSource, Seed, ServiceDataSource } from './entities';
 import { DomainError } from './errors';
 import { bindIdentity, createPersonalDataSource, type IdentityOutcome } from './people';
@@ -44,7 +44,8 @@ export function connectMailbox(draft: Seed, ctx: CoreContext, input: MailboxInpu
 
   const values = dedupe(input.addresses.map((a) => a.trim()).filter((a) => a.includes('@')));
   const mine = draft.dataSources.flatMap((ds) => {
-    if (ds.kind !== 'service' || ds.connector?.kind !== service) return [];
+    // 共有メールボックス（0042）は同じ経路でも本人の箱ではない
+    if (ds.kind !== 'service' || ds.connector?.kind !== service || ds.shared || ds.connector.mailbox !== 'me') return [];
     const cred = draft.credentialRefs.find((c) => c.id === ds.credentialRefId);
     return cred?.principal.kind === 'user' && cred.principal.userId === input.userId ? [{ ds, cred }] : [];
   });
@@ -236,6 +237,53 @@ export function connectTeamsChannel(draft: Seed, ctx: CoreContext, input: TeamsC
     identity: teamsAddress(input.tenantId, input.objectId),
     connector: { kind: 'teams', teamId: input.teamId, channelId: input.channelId },
     group: true,
+  });
+}
+
+// ---- 共有メールボックス（0042）: メンバーの委任で見回りで読む共有リスト ----
+
+export interface SharedMailboxInput {
+  userId: string;
+  /** つなぐ人のゲートウェイの graph の接続 */
+  gatewayCredentialId: string;
+  /** 共有メールボックスのアドレス（つなぐ人の委任で読めることはシェルが確かめる） */
+  mailbox: string;
+  /** つなぐ人の主のアドレス（本人の Graph の /me）。リストでの名乗りになる */
+  readerAddress: string;
+}
+
+/** 共有メールボックスのスペースのキー。委任の User.Read では箱のオブジェクト ID が読めないので、アドレスで決める */
+export function sharedMailboxSpaceKey(mailbox: string): string {
+  return `mailbox:${mailbox.trim().toLowerCase()}`;
+}
+
+/**
+ * 共有メールボックスを共有リストとしてつなぐ（0042 の決定 3）。箱に 1 つで、箱のアドレスが窓口。
+ * 本人の箱（つなぐ人のアドレス）や、ほかの User の Contact に付いたアドレス（だれかの個人の箱）はつながない
+ */
+export function connectSharedMailbox(draft: Seed, ctx: CoreContext, input: SharedMailboxInput): SharedSpacePlan {
+  const mailbox = input.mailbox.trim();
+  if (!/^[^@\s]+@[^@\s]+$/.test(mailbox)) throw new DomainError('invalid', `mailbox ${input.mailbox} がメールアドレスではない`);
+  const reader = input.readerAddress.trim();
+  if (!reader.includes('@')) throw new DomainError('invalid', 'つなぐ人のアドレスがわからない');
+  if (sameValue(mailbox, reader)) throw new DomainError('invalid', '本人の箱は共有メールボックスではない（Outlook をつなぐ）');
+  const address = { channel: 'email' as const, value: mailbox };
+  // 窓口のアドレスが同じ共有リスト（同じ箱）があればそれを使う
+  const existing = draft.dataSources.find((d): d is ServiceDataSource => d.kind === 'service' && !!d.shared && d.connector?.kind === 'graph-mail' && d.selfAddresses.some((a) => sameAddress(a, address)));
+  const dir = new Directory(draft);
+  const owner = dir.contactIdOfAddress(address, ctx.now);
+  if (!existing && owner && dir.contact(owner)?.userId) throw new DomainError('conflict', `${mailbox} はだれかの個人のアドレス（共有メールボックスではない）`);
+  return connectSharedSpace(draft, ctx, {
+    userId: input.userId,
+    gatewayCredentialId: input.gatewayCredentialId,
+    channel: 'email',
+    spaceKey: existing?.shared?.spaceKey ?? sharedMailboxSpaceKey(mailbox),
+    name: `${mailbox}（共有メールボックス）`,
+    description: `共有メールボックス ${mailbox}。読者は、自分の委任でこの箱を読めた人（0042）`,
+    identity: reader,
+    connector: { kind: 'graph-mail', mailbox, folders: ['inbox', 'sentitems'] },
+    group: false,
+    selfAddresses: [address],
   });
 }
 

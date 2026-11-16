@@ -21,6 +21,8 @@ export interface SharedSpaceInput {
   identity: string;
   connector?: SourceConnector;
   group?: boolean;
+  /** 窓口のアドレス（共有メールボックスの箱のアドレス。0042）。省けば持たない */
+  selfAddresses?: AddressRef[];
 }
 
 export type SharedSpacePlan = { kind: 'exists'; dataSource: ServiceDataSource } | { kind: 'created'; dataSource: ServiceDataSource };
@@ -53,7 +55,7 @@ export function connectSharedSpace(draft: Seed, ctx: CoreContext, input: SharedS
     name: input.name.trim(),
     description: input.description ?? '',
     credentialRefId,
-    selfAddresses: [],
+    selfAddresses: input.selfAddresses ?? [],
     group: input.group ?? true,
     ...(input.connector ? { connector: input.connector } : {}),
     shared: { spaceKey: input.spaceKey, createdBy: input.userId },
@@ -121,6 +123,26 @@ export function syncSharedReaders(draft: Seed, ctx: CoreContext, dataSourceId: s
   const cred = draft.credentialRefs.find((c) => c.id === ds.credentialRefId);
   const owner = cred?.principal.kind === 'user' ? cred.principal.userId : null;
   return { readers: [...readers], added, removed, ownerLost: owner !== null && !readers.has(owner) };
+}
+
+/**
+ * 読者を 1 人足す（共有メールボックス。0042 の決定 4）。ソースから読める人の一覧が取れないので、本人がつないで、
+ * 本人の委任で読めたことをシェルが確かめてから足す。address は本人のアカウント（名乗り）で、本人の Contact に付ける
+ */
+export function addSharedReader(draft: Seed, ctx: CoreContext, dataSourceId: string, userId: string, address: AddressRef): { added: boolean } {
+  const ds = draft.dataSources.find((d) => d.id === dataSourceId);
+  if (!ds || ds.kind !== 'service' || !ds.shared) throw new DomainError('not_found', `shared data source ${dataSourceId} not found`);
+  if (!draft.users.some((u) => u.id === userId)) throw new DomainError('forbidden', `user ${userId} はまだサインインしていない`);
+  const list = draft.lists.find((l) => l.dataSourceId === ds.id);
+  if (!list) throw new DomainError('not_found', `list of ${dataSourceId} not found`);
+  try {
+    bindIdentity(draft, userId, address, ctx);
+  } catch (err) {
+    if (!(err instanceof DomainError && err.code === 'conflict')) throw err;
+  }
+  if (draft.listMembers.some((m) => m.listId === list.id && m.userId === userId)) return { added: false };
+  draft.listMembers.push({ listId: list.id, userId });
+  return { added: true };
 }
 
 /** つなぎ直し: 読者の 1 人の委任に資格情報を入れ替える（スレッドとリストはそのまま。0037 の決定 3） */

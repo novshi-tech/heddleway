@@ -1,6 +1,8 @@
 # 人がいないときの利用者(Murmur)に接続を使わせる
 
 > 2026-11-05: Murmur はゲートウェイの Worker の機能になった([adr/0005](adr/0005-murmur-as-a-feature.md))。個人の箱は、Murmur が OAuth のクライアントになる形(下の CIMD)ではなく、本人がゲートウェイの画面で Murmur を有効にし、ゲートウェイの中核が本人の接続を読む関数を渡す形になった。共有の箱(`client_credentials`)の考え方はこのまま。
+>
+> 2026-11-16: Murmur の共有メールボックスは、この経路を使わないことにした(Murmur の [0042](../murmur/docs/adr/0042-shared-mailbox-by-polling.md))。変更通知をあきらめ、メンバーの委任(`Mail.Read.Shared`)で見回りの delta だけで読む。`client_credentials` と `Background` の入口はゲートウェイの機能として残す。
 
 更新日: 2026-10-29
 

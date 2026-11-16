@@ -1,4 +1,4 @@
-import { canDisconnect, connectJiraProject, connectorOwner, connectTaskList, connectTeamsChannel, deriveViewer, DomainError, teamsAddress, connectMailbox, replaceSharedCredential, syncSharedReaders, type ServiceDataSource } from '../domain';
+import { addSharedReader, canDisconnect, connectSharedMailbox, connectJiraProject, connectorOwner, connectTaskList, connectTeamsChannel, deriveViewer, DomainError, teamsAddress, connectMailbox, replaceSharedCredential, syncSharedReaders, type ServiceDataSource } from '../domain';
 import { jiraMembers } from '../connectors/jira/readers';
 import type { TeamRef, TeamsApi } from '../connectors/teams/api';
 import type { TodoApi } from '../connectors/todo/api';
@@ -23,6 +23,7 @@ import type { MurmurService } from './service';
 // Jira（0034）も同じ同意で、ゲートウェイの jira の接続からサイトを選び、本人の JQL の範囲を個人リストにする。
 // Gmail（0041）も同じ同意で、ゲートウェイの gmail の接続から本人のメールボックスを個人リストにする（Outlook と同じ流れ）。
 // To Do（0039）も同じ同意で、ゲートウェイの graph の接続からタスクのリストを 1 つ選んで個人リストにする。
+// 共有メールボックス（0042）も同じ同意で、ゲートウェイの graph の接続（委任の Mail.Read.Shared）で箱を読み、共有リストにする。
 
 /** 認可の途中の state の寿命 */
 const PENDING_MINUTES = 15;
@@ -91,7 +92,9 @@ export interface ConnectGoogleTasksInput {
 export interface ConnectionView {
   data_source: string;
   name: string;
-  kind: 'outlook' | 'gmail' | 'jira' | 'teams' | 'todo' | 'google-tasks';
+  kind: 'outlook' | 'shared-mailbox' | 'gmail' | 'jira' | 'teams' | 'todo' | 'google-tasks';
+  /** 共有メールボックス: 箱のアドレス */
+  mailbox?: string;
   /** Jira: サイトとプロジェクト */
   site?: string;
   project?: string;
@@ -121,6 +124,11 @@ export class Connections {
   /** Gmail のメールボックスを個人リストとしてつなぐ（0041。同意は同じもの。ゲートウェイの Gmail の接続で読む。流れは Outlook と同じ） */
   async connectGmail(userId: string, credentialId?: string): Promise<ConnectResult> {
     return this.connect(userId, credentialId ?? null, { kind: 'gmail' });
+  }
+
+  /** 共有メールボックスを共有リストとしてつなぐ（0042。同意は Outlook と同じもの。ゲートウェイの graph の接続で読む） */
+  async connectSharedMailbox(userId: string, input: { credentialId?: string; mailbox: string }): Promise<ConnectResult> {
+    return this.connect(userId, input.credentialId ?? null, { kind: 'shared-mailbox', mailbox: input.mailbox });
   }
 
   /** Jira のプロジェクトを共有リストとしてつなぐ（0037。同意は Outlook と同じもの） */
@@ -228,6 +236,7 @@ export class Connections {
     if (request.kind === 'todo') return this.connectTodoWith(userId, chosen.id, request);
     if (request.kind === 'google-tasks') return this.connectGoogleTasksWith(userId, chosen.id, request);
     if (request.kind === 'gmail') return this.connectGmailWith(userId, chosen.id);
+    if (request.kind === 'shared-mailbox') return this.connectSharedMailboxWith(userId, chosen.id, request.mailbox);
 
     const me = await this.deps.graphFor(await this.deps.gateway.upstream(userId, chosen.id, 'graph')).me();
     const { result: plan } = await this.deps.service.changeMaster(userId, 'Outlook をつなぐ', (d, ctx) =>
@@ -288,6 +297,52 @@ export class Connections {
       });
       await this.deps.queue.send({ kind: 'setup', dataSourceId: ds.id });
     }
+    return { status: 'connected', data_source: { id: ds.id, name: ds.name }, created: plan.kind === 'created' };
+  }
+
+  /**
+   * 共有メールボックス（0042）。つなぐ人の委任で箱が読めることを確かめてから、箱の共有リストを作る（あればその読者に足す）。
+   * 取り込みは見回りの delta だけで、サブスクリプションは作らない
+   */
+  private async connectSharedMailboxWith(userId: string, credentialId: string, mailbox: string): Promise<ConnectResult> {
+    if (!this.deps.sharedServices.includes('shared-mailbox')) {
+      throw new DomainError('forbidden', 'このデプロイでは共有メールボックスの共有リストを許していない（管理者がデプロイの設定 MURMUR_SHARED_SERVICES に shared-mailbox を足す）');
+    }
+    const graph = this.deps.graphFor(await this.deps.gateway.upstream(userId, credentialId, 'graph'));
+    if (!(await graph.mailboxReadable(mailbox))) {
+      throw new DomainError('forbidden', `${mailbox} をこの接続で読めない（Exchange で箱のフルアクセスがあるか、ゲートウェイの graph の接続に Mail.Read.Shared があるかを確かめる）`);
+    }
+    const me = await graph.me();
+    const readerAddress = me.addresses[0] ?? '';
+    const { result: plan } = await this.deps.service.changeMaster(userId, '共有メールボックスをつなぐ', (d, ctx) =>
+      connectSharedMailbox(d, ctx, { userId, gatewayCredentialId: credentialId, mailbox, readerAddress }),
+    );
+    const ds = plan.dataSource;
+    const current = await this.deps.state.source(ds.id);
+    if (plan.kind === 'exists') {
+      // 読めたので、その場で読者に足す（ソースから読める人の一覧は取れない。0042 の決定 4）
+      await this.deps.service.changeMaster(userId, '共有メールボックスの読者に入る', (d, ctx) => addSharedReader(d, ctx, ds.id, userId, { channel: 'email', value: readerAddress }));
+      if (current && current.status === 'ok') return { status: 'connected', data_source: { id: ds.id, name: ds.name }, created: false };
+      await this.deps.service.changeMaster(userId, '共有メールボックスをつなぎ直す', (d, ctx) =>
+        replaceSharedCredential(d, ctx, ds.id, { userId, gatewayCredentialId: credentialId, identity: readerAddress }),
+      );
+    }
+    // 止まっていたもの（broken）は位置とつないだ時刻を残す（止まっていた間のメールも取る）。外したあとは、その時点から取る
+    const keep = current && current.status !== 'disconnected' ? current : null;
+    await this.deps.state.putSource({
+      kind: 'shared-mailbox',
+      dataSourceId: ds.id,
+      userId,
+      gatewayCredentialId: credentialId,
+      status: 'setup',
+      reason: null,
+      folders: keep ? keep.folders : {},
+      mailbox: {},
+      connectedAt: keep ? keep.connectedAt : this.deps.now(),
+      lastSyncAt: current?.lastSyncAt ?? null,
+      lastRetryAt: null,
+    });
+    await this.deps.queue.send({ kind: 'setup', dataSourceId: ds.id });
     return { status: 'connected', data_source: { id: ds.id, name: ds.name }, created: plan.kind === 'created' };
   }
 
@@ -511,6 +566,7 @@ export class Connections {
       const jira = ds?.connector?.kind === 'jira' ? ds.connector : undefined;
       const teams = ds?.connector?.kind === 'teams' ? ds.connector : undefined;
       const todo = ds?.connector?.kind === 'graph-todo' || ds?.connector?.kind === 'google-tasks' ? ds.connector : undefined;
+      const box = ds?.connector?.kind === 'graph-mail' && ds.connector.mailbox !== 'me' ? ds.connector.mailbox : undefined;
       return {
         data_source: s.dataSourceId,
         name: ds?.name ?? s.dataSourceId,
@@ -518,6 +574,7 @@ export class Connections {
         ...(jira ? { site: jira.site, ...(jira.projectKey ? { project: jira.projectKey } : {}) } : {}),
         ...(teams ? { team: teams.teamId, channel: teams.channelId } : {}),
         ...(todo ? { list: todo.listName } : {}),
+        ...(box ? { mailbox: box } : {}),
         ...(ds?.shared ? { shared: true, created_by: ds.shared.createdBy } : {}),
         status: s.status,
         reason: s.reason,

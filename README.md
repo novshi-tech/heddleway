@@ -261,6 +261,8 @@ node -e "crypto.subtle.generateKey({name:'Ed25519'},true,['sign','verify']).then
 
 Murmur のように、夜中の通知や定期の見回りでユーザーがいないときにも上流を呼ぶ Worker のために、OAuth 2.0 の client credentials でゲートウェイ自身がトークンを取る接続先を置けます(設計は [docs/background-access.md](docs/background-access.md))。持ち主はユーザーではなくデプロイで、Web 画面にも `list_credentials` にも出ず、REST(`/api/`)からも使えません。
 
+> トピック索引(Murmur)の共有メールボックスは、この接続先を使いません。メンバーの委任(`Mail.Read.Shared`)で見回りで読みます(Murmur の [0042](murmur/docs/adr/0042-shared-mailbox-by-polling.md))。デプロイの設定 `MURMUR_SHARED_SERVICES` に `shared-mailbox` を足すと使えます。
+
 - 管理画面の「接続先を追加」で認証方式に「OAuth 2.0(client credentials)」を選び、トークンの URL・スコープ・クライアント ID・シークレットを入れます。設定ファイルに書くこともできます(クライアントは `OAUTH_<CLIENT>_CLIENT_ID` / `_CLIENT_SECRET`)。
 - 呼べるのは、同じ Cloudflare アカウントの Worker が名前付きのエントリポイント `Background` に張った Service Binding からだけです。名前付きのエントリポイントはインターネットに出ないので、呼び出し元との間のシークレットは要りません。そのアカウントに Worker をデプロイできる人は使える、という信頼の置き方です。
 - パスは `/<サービス名>/<上流のパス>`(`/api` は付けない)。ヘッダーの扱いとリダイレクトは REST と同じです。

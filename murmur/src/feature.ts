@@ -10,7 +10,7 @@ import { AnthropicLlm } from './ingest/llm';
 import { createApp, type ConnectorHttp } from './http/app';
 import { d1Repo, type Db } from './store/d1';
 import { Connections } from './app/connections';
-import type { GatewayPort, UpstreamCall } from './ports/gateway';
+import { GatewayAuthError, type GatewayPort, type UpstreamCall } from './ports/gateway';
 import { GatewayGraphApi } from './connectors/graph/api';
 import { SyncJob, type SyncQueue } from './connectors/graph/jobs';
 import { jobsFromNotifications } from './connectors/graph/notifications';
@@ -133,6 +133,25 @@ function buildConnectors(config: MurmurConfig, service: MurmurService, waitUntil
     state,
     queue,
     graphFor: async (source) => graphFor(await gateway.upstream(source.userId, source.gatewayCredentialId, 'graph')),
+    // 共有メールボックスの読者の確かめ直し（0042）: 読者それぞれの graph の接続。同意がなければ読めない人として扱う
+    graphsOfUser: async (userId) => {
+      let creds;
+      try {
+        creds = await gateway.credentials(userId, 'graph');
+      } catch (err) {
+        if (err instanceof GatewayAuthError) return [];
+        throw err;
+      }
+      const out = [];
+      for (const cred of creds) {
+        try {
+          out.push({ credentialId: cred.id, graph: graphFor(await gateway.upstream(userId, cred.id, 'graph')) });
+        } catch (err) {
+          if (!(err instanceof GatewayAuthError)) throw err;
+        }
+      }
+      return out;
+    },
     now,
     notificationUrl: `${publicUrl}/webhooks/graph`,
     newClientState: () => randomHex(32),

@@ -1,4 +1,4 @@
-import { GraphError, GRAPH_ORIGIN, type CreatedSubscription, type GraphApi, type GraphMe } from '../../src/connectors/graph/api';
+import { GraphAccessDenied, GraphError, GRAPH_ORIGIN, type CreatedSubscription, type GraphApi, type GraphMe } from '../../src/connectors/graph/api';
 import { GatewayAuthError } from '../../src/ports/gateway';
 import type { DeltaPage } from '../../src/connectors/graph/message';
 
@@ -10,6 +10,8 @@ export class FakeGraph implements GraphApi {
   pageSize = 2;
   /** これを立てると同意の問題（ゲートウェイの 403）になる */
   authBroken = false;
+  /** 共有メールボックス（0042）: 読める箱のアドレス（小文字）。delta の呼び出しは calls に `deltaStart <フォルダ> @<箱>` で残る */
+  readonly readable = new Set<string>();
   /** 無効にした delta の位置 */
   readonly invalidLinks = new Set<string>();
   private seq = 0;
@@ -32,9 +34,15 @@ export class FakeGraph implements GraphApi {
     return this.meInfo;
   }
 
-  async deltaStart(folder: string, since: string): Promise<DeltaPage> {
-    this.check(`deltaStart ${folder}`);
+  async deltaStart(folder: string, since: string, mailbox = 'me'): Promise<DeltaPage> {
+    this.check(mailbox === 'me' ? `deltaStart ${folder}` : `deltaStart ${folder} @${mailbox}`);
+    if (mailbox !== 'me' && !this.readable.has(mailbox.toLowerCase())) throw new GraphAccessDenied('ErrorAccessDenied');
     return this.page(folder, since, 0);
+  }
+
+  async mailboxReadable(mailbox: string) {
+    this.check(`readable ${mailbox}`);
+    return mailbox === 'me' || this.readable.has(mailbox.toLowerCase());
   }
 
   async deltaNext(link: string): Promise<DeltaPage> {

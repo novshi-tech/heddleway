@@ -23,6 +23,8 @@ const GRAPH_SCOPE = [
   "Files.ReadWrite.All",
   "Sites.ReadWrite.All",
   "Mail.ReadWrite",
+  // Shared mailboxes the user has access to: Murmur polls them with the member's delegation (Murmur's 0042).
+  "Mail.Read.Shared",
   "Mail.Send",
   "Calendars.ReadWrite",
   "Chat.ReadWrite",

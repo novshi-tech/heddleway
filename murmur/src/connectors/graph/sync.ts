@@ -1,6 +1,6 @@
 import type { MurmurService } from '../../app/service';
 import { onceDirectory, type DirectoryLoader } from '../directory-once';
-import type { ServiceDataSource } from '../../domain';
+import { replaceSharedCredential, syncSharedReaders, type ServiceDataSource, type SpaceMember } from '../../domain';
 import type { ConnectorStateStore } from '../../store/connector-state';
 import { GatewayAuthError } from '../../ports/gateway';
 import { GraphError, type GraphApi } from './api';
@@ -8,13 +8,15 @@ import type { SyncJob, SyncQueue } from './jobs';
 import { GraphMessage } from './message';
 import { normalizeMessage } from './normalize';
 import type { SourceState, SubscriptionRecord } from './state';
-import { expiresAfter, planLifecycle, planMaintenance, type SubscriptionAction } from './subscriptions';
+import { expiresAfter, planLifecycle, planMaintenance, RETRY_MINUTES, type SubscriptionAction } from './subscriptions';
 
 // キューの仕事を 1 つずつこなす（同時実行 1）。通知はヒントで、正は delta（0024 の決定 2）。
 // cursor は取り込みが終わったページの分だけ進めるので、途中で落ちても同じ差分を取り直し、sourceRef の重複排除で二重にならない。
 
 /** 1 回の仕事で読むページの上限。超えたら続きをキューに積む */
 export const MAX_PAGES_PER_JOB = 20;
+/** 共有メールボックスの読者を確かめ直す間隔（0042 の決定 4） */
+export const MAILBOX_READERS_MINUTES = 60;
 
 export interface GraphSyncDeps {
   service: MurmurService;
@@ -22,6 +24,11 @@ export interface GraphSyncDeps {
   queue: SyncQueue;
   /** データソースの本人の同意で Graph を呼ぶ口を作る（issue_token する） */
   graphFor(source: SourceState): Promise<GraphApi>;
+  /**
+   * 共有メールボックスの読者を確かめ直すとき（0042 の決定 4）: その人のゲートウェイの graph の接続ごとの口。
+   * 同意がない・接続がなければ空。なければ共有メールボックスの読者は確かめ直さない
+   */
+  graphsOfUser?(userId: string): Promise<{ credentialId: string; graph: GraphApi }[]>;
   now(): string;
   /** /webhooks/graph の URL */
   notificationUrl: string;
@@ -77,7 +84,7 @@ export class GraphMailSync {
     if (source.status === 'disconnected' && !opts.allowDisconnected) return;
     const ds = (await (opts.directory ?? (() => this.deps.service.directory()))()).dataSource(dataSourceId);
     if (!ds || ds.kind !== 'service' || ds.connector?.kind !== 'graph-mail') return;
-    const ctx: SourceContext = { source, ds, folders: ds.connector.folders, subs: await this.deps.state.subscriptions(dataSourceId), graph: null };
+    const ctx: SourceContext = { source, ds, mailbox: ds.connector.mailbox, folders: ds.connector.folders, subs: await this.deps.state.subscriptions(dataSourceId), graph: null };
     try {
       await run(ctx);
     } catch (err) {
@@ -94,6 +101,7 @@ export class GraphMailSync {
   }
 
   private async maintain(ctx: SourceContext): Promise<void> {
+    if (isShared(ctx)) return this.maintainShared(ctx);
     const plan = planMaintenance(ctx.source, ctx.subs, ctx.folders, this.deps.now(), this.deps.notificationUrl);
     if (plan.kind === 'idle') return;
     if (plan.kind === 'retry') {
@@ -106,6 +114,14 @@ export class GraphMailSync {
 
   /** サブスクリプションをそろえ、全フォルダを取り直して ok にする（つないだ直後・broken からの戻り） */
   private async setup(ctx: SourceContext): Promise<void> {
+    if (isShared(ctx)) {
+      // 共有メールボックス（0042）: サブスクリプションは作らない。読者を確かめ、全フォルダを取り直して ok にする
+      await this.syncReaders(ctx);
+      await this.apply(ctx, ctx.subs.map((s) => ({ kind: 'delete', subscription: s })));
+      await this.syncFolders(ctx, ctx.folders);
+      await this.putSource(ctx, { status: 'ok', reason: null });
+      return;
+    }
     const now = this.deps.now();
     const plan = planMaintenance({ ...ctx.source, status: 'ok', lastSyncAt: now }, ctx.subs, ctx.folders, now, this.deps.notificationUrl);
     if (plan.kind === 'maintain') await this.apply(ctx, plan.actions);
@@ -136,6 +152,69 @@ export class GraphMailSync {
         await this.create(ctx, a.folder);
       }
     }
+  }
+
+  /**
+   * 共有メールボックスの見回り（0042 の決定 1）: 通知がないので、見回りのたびに全フォルダの delta を読む。
+   * broken は間をおいて試し直し、読者は間をおいて確かめ直す
+   */
+  private async maintainShared(ctx: SourceContext): Promise<void> {
+    const now = this.deps.now();
+    if (ctx.source.status === 'broken') {
+      if (ctx.source.lastRetryAt && minutesBetween(ctx.source.lastRetryAt, now) < RETRY_MINUTES) return;
+      await this.putSource(ctx, { lastRetryAt: now });
+      return this.setup(ctx);
+    }
+    // setup の仕事が落ちたきり（キューの試し直しの上限）でも止まらないように、見回りが setup をやり直す。
+    // キューは直列で、delta の位置と sourceRef の重複排除があるので、setup の仕事と重なっても二重にならない
+    if (ctx.source.status === 'setup') return this.setup(ctx);
+    const at = ctx.source.mailbox?.readersSyncedAt;
+    if (!at || minutesBetween(at, now) >= MAILBOX_READERS_MINUTES) await this.syncReaders(ctx);
+    await this.syncFolders(ctx, ctx.folders);
+  }
+
+  /**
+   * 共有メールボックスの読者を確かめ直す（0042 の決定 4）。読者それぞれの委任で箱を読めるか試し、読めた人だけを読者に残す。
+   * 取り込みに委任を使っている人が読めなくなったら、読める読者の 1 人に入れ替える。誰も読めなければ broken。
+   * 一時的な失敗（ゲートウェイ・Graph の障害）は投げて、読者を減らさない
+   */
+  private async syncReaders(ctx: SourceContext): Promise<void> {
+    const of = this.deps.graphsOfUser;
+    if (!of) return;
+    const dir = await this.deps.service.directory();
+    const list = dir.seed.lists.find((l) => l.dataSourceId === ctx.ds.id);
+    if (!list) return;
+    const ownerId = ctx.source.userId;
+    const candidates = [...new Set([ownerId, ...dir.readersOfList(list.id)])];
+    const readable: (SpaceMember & { userId: string; credentialId: string })[] = [];
+    for (const userId of candidates) {
+      const tries = userId === ownerId ? [...(await this.ownGraph(ctx)), ...(await of(userId)).filter((g) => g.credentialId !== ctx.source.gatewayCredentialId)] : await of(userId);
+      for (const t of tries) {
+        const r = await probe(t.graph, ctx.mailbox);
+        if (!r) continue;
+        readable.push({ userId, credentialId: t.credentialId, address: { channel: 'email', value: r } });
+        break;
+      }
+    }
+    const { result } = await this.deps.service.changeMaster(null, '共有メールボックスの読者の確かめ直し', (d, c) => syncSharedReaders(d, c, ctx.ds.id, readable));
+    if (result.added.length > 0 || result.removed.length > 0) {
+      this.deps.log?.({ msg: 'mailbox_readers_synced', dataSourceId: ctx.ds.id, added: result.added.length, removed: result.removed.length });
+    }
+    const owner = readable.find((r) => r.userId === ownerId);
+    const next = owner ?? readable[0];
+    if (!next) {
+      await this.putSource(ctx, { mailbox: { ...ctx.source.mailbox, readersSyncedAt: this.deps.now() } });
+      throw new GatewayAuthError('共有メールボックスを読める読者がいない。読める人がつなぎ直す');
+    }
+    if (next.userId !== ownerId || next.credentialId !== ctx.source.gatewayCredentialId) {
+      await this.deps.service.changeMaster(null, '共有メールボックスの資格情報を入れ替える', (d, c) =>
+        replaceSharedCredential(d, c, ctx.ds.id, { userId: next.userId, gatewayCredentialId: next.credentialId, identity: next.address.value }),
+      );
+      this.deps.log?.({ msg: 'mailbox_credential_replaced', dataSourceId: ctx.ds.id });
+      ctx.graph = null;
+      await this.putSource(ctx, { userId: next.userId, gatewayCredentialId: next.credentialId });
+    }
+    await this.putSource(ctx, { mailbox: { ...ctx.source.mailbox, readersSyncedAt: this.deps.now() } });
   }
 
   /** 作成の最中に Graph が受け口を検証しに来るので、台帳は作れたあとに書く。照合に間に合わない通知は捨てても delta が拾う */
@@ -173,7 +252,7 @@ export class GraphMailSync {
       const cursor = ctx.source.folders[folder] ?? { link: null, lastReceivedAt: null };
       let result;
       try {
-        result = cursor.link ? await graph.deltaNext(cursor.link) : await graph.deltaStart(folder, cursor.lastReceivedAt ?? ctx.source.connectedAt);
+        result = cursor.link ? await graph.deltaNext(cursor.link) : await graph.deltaStart(folder, cursor.lastReceivedAt ?? ctx.source.connectedAt, ctx.mailbox);
       } catch (err) {
         // delta の位置が無効になった: 最後に取り込んだ時刻から取り直す（取り込み済みは重複排除で落ちる）
         if (err instanceof GraphError && err.status === 410 && cursor.link) {
@@ -202,6 +281,16 @@ export class GraphMailSync {
     return false;
   }
 
+  /** 取り込みに使っている委任の口。ゲートウェイで使えなくなっていれば（同意の取り消しなど）空（読者の入れ替えに進む） */
+  private async ownGraph(ctx: SourceContext): Promise<{ credentialId: string; graph: GraphApi }[]> {
+    try {
+      return [{ credentialId: ctx.source.gatewayCredentialId, graph: await this.graph(ctx) }];
+    } catch (err) {
+      if (err instanceof GatewayAuthError) return [];
+      throw err;
+    }
+  }
+
   private async graph(ctx: SourceContext): Promise<GraphApi> {
     ctx.graph ??= await this.deps.graphFor(ctx.source);
     return ctx.graph;
@@ -220,7 +309,28 @@ export class GraphMailSync {
 interface SourceContext {
   source: SourceState;
   ds: ServiceDataSource;
+  /** 'me' か共有メールボックスのアドレス（0042） */
+  mailbox: string;
   folders: readonly string[];
   subs: SubscriptionRecord[];
   graph: GraphApi | null;
+}
+
+function isShared(ctx: SourceContext): boolean {
+  return ctx.mailbox !== 'me';
+}
+
+/** その委任で箱が読めれば、委任の本人の主のアドレスを返す。読めない・同意がない（GatewayAuthError）なら null */
+async function probe(graph: GraphApi, mailbox: string): Promise<string | null> {
+  try {
+    if (!(await graph.mailboxReadable(mailbox))) return null;
+    return (await graph.me()).addresses[0] ?? null;
+  } catch (err) {
+    if (err instanceof GatewayAuthError) return null;
+    throw err;
+  }
+}
+
+function minutesBetween(from: string, to: string): number {
+  return (Date.parse(to) - Date.parse(from)) / 60_000;
 }

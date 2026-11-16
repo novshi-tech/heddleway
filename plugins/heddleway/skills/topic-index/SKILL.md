@@ -57,7 +57,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/gw_request.py POST murmur /sent --json '{"da
 初めてつないだユーザーは名無しで、自分の連絡先もリストもない(`GET /me` が `contact: null`・`lists: []`)。次の順に案内する。
 
 1. 呼び方を聞いて `PATCH /me` で付ける
-2. 個人リストにするものは、組織のデプロイで決まる。Microsoft 365 の組織は Outlook(`POST /connections/outlook`)と To Do(`POST /connections/todo`)、Google Workspace の組織は Gmail(`POST /connections/gmail`)と Google Tasks(`POST /connections/google-tasks`)。コネクタの `list_credentials` を見て、あるサービス(`graph` か `gmail`・`tasks`)のものだけを案内する。共有リストは、Jira のプロジェクトなら `POST /connections/jira`、Teams のチャネルなら `POST /connections/teams`(下の「Outlook をつなぐ」「Gmail をつなぐ」「To Do をつなぐ」「Google Tasks をつなぐ」「Jira をつなぐ」「Teams をつなぐ」)。トピック索引が取り込み続けるのはこの経路だけ
+2. 個人リストにするものは、組織のデプロイで決まる。Microsoft 365 の組織は Outlook(`POST /connections/outlook`)と To Do(`POST /connections/todo`)、Google Workspace の組織は Gmail(`POST /connections/gmail`)と Google Tasks(`POST /connections/google-tasks`)。コネクタの `list_credentials` を見て、あるサービス(`graph` か `gmail`・`tasks`)のものだけを案内する。共有リストは、Jira のプロジェクトなら `POST /connections/jira`、Teams のチャネルなら `POST /connections/teams`、Microsoft 365 の共有メールボックスなら `POST /connections/shared-mailbox`(下の「Outlook をつなぐ」「Gmail をつなぐ」「To Do をつなぐ」「Google Tasks をつなぐ」「Jira をつなぐ」「Teams をつなぐ」「共有メールボックスをつなぐ」)。トピック索引が取り込み続けるのはこの経路だけ
 3. ほかの自分のアカウント(Slack・LINE など)をリストにするなら、ゲートウェイでそのサービスがつながっているか(`list_credentials`)を先に確かめ、つないだアカウントのアドレスを `identity` にして `POST /data-sources` を呼ぶ。結果の `identity.kind`:
    - `created`: 自分の連絡先を新しく作った / `bound`: チームが先に作っていた仮の連絡先(まだ本人が登録していない連絡先)が自分に結ばれた / `attached`・`already`: 自分の連絡先に付いた
    - `merge_candidate`: そのアドレスは別の仮の連絡先(`ghostContactId`)に付いている。同じ人なら、ユーザーに確かめてから `POST /contacts/{自分の contactId}/merge` で `from` に仮の連絡先を渡してまとめる
@@ -125,6 +125,16 @@ Teams はチャネルを 1 つの**共有リスト**にする。メンバーは�
 3. `connected` で `created: true` なら、新しく作った。**チャネルに「このチャネルをトピック索引で追い始めた」ことを知らせる**(ユーザーに文面を確かめて、Teams のスキルで投稿)。投稿したら `record_sent` で記録する
 4. 取り込むのはつないだあとの投稿と返信だけ(過去の投稿は取らない)。チャネルの投稿 1 つ(と返信)が 1 トピック。`created: false`・止めるとき・`broken` は Jira と同じ
 5. チャットのトピックには担当者がないので、メンションされた人にアテンション(`attention.named`)が付き、メンションのない投稿はチャネルのメンバー全員へのリスト宛てのアテンション(`attention.list`)になる。担当は `claim` で決める。「これは私がやる」と言われたら `claim` する。担当がいなければ割当待ち(`triage`)
+
+### 共有メールボックスをつなぐ(Microsoft 365 の共有メールボックスの共有リスト)
+
+共有メールボックス(`support@` のようなチームの共有のアドレス)は、箱を 1 つの**共有リスト**にする。読むのはゲートウェイの Microsoft Graph の接続(本人の委任。Exchange で箱のフルアクセスを持っている人なら読める)で、同意は Outlook と同じもの。メンバーは、**自分でこの箱をつないで、自分の接続で箱を読めた人**だけ(Graph からは箱のアクセス権の一覧が読めないため)。トピック索引が 1 時間ごとに、メンバーそれぞれの接続で読めるかを確かめ直し、読めなくなった人はメンバーから外れる。同じ箱を誰がつないでも同じリストになる。変更の通知は使わず、5 分ごとの見回りで取り込む(届いてから最大 5 分ほど遅れる)。
+
+1. ゲートウェイで Microsoft Graph がつながっているか(`list_credentials`)を確かめる。なければ先にゲートウェイでつないでもらう
+2. `POST /connections/shared-mailbox`(本文は `{"mailbox": "<箱のアドレス>", "credential_id"?}`)を呼び、`status` で分ける。`authorize`・`choose`・`no_credential` は Outlook と同じ。`forbidden` は、このデプロイで共有メールボックスの共有リストを管理者が許していない(管理者に伝える)か、その人の接続で箱を読めない(Exchange で箱のフルアクセスがあるか、ゲートウェイの Graph の接続を、共有メールボックスを読む許可(`Mail.Read.Shared`)の入った今の版でつなぎ直したかを確かめてもらう)。本人の箱やほかの人の個人のアドレスは `invalid`・`conflict` になる(本人の箱は「Outlook をつなぐ」)
+3. `connected` で `created: true` なら、新しく作った。**箱を使っているチームの人にも、それぞれつなぐよう伝える**(つないだ人だけがメンバーになる。ユーザーに文面を確かめて、Teams やメールで伝える)。`created: false` なら、もうあるリストにメンバーとして入った
+4. 取り込むのはつないだあとに届くメールだけ(過去のメールは取らない)。受信トレイと送信済みを読む。箱から送ったメールは、箱の送信済みに入る設定なら取り込まれる。止めるときと `broken` は Jira と同じ(メンバーの誰も読めなくなると `broken`。読める人がつなぎ直すと戻る。つないだ人が読めなくなっても、読めるメンバーがいればその人の接続に切り替わって続く)
+5. 共有メールボックスのトピックには担当者がないので、担当は `claim` で決める(Teams と同じ)。箱のアドレス宛てのメールは、メンバー全員へのリスト宛てのアテンション(`attention.list`)になる。箱から送るときの `record_sent` の `from` は省いてよい(箱のアドレスになる)
 
 ### 名寄せ(連絡先)
 
@@ -226,7 +236,8 @@ Teams はチャネルを 1 つの**共有リスト**にする。メンバーは�
 | connect_google_tasks | `POST /connections/google-tasks` | `{"credential_id"?, "list"?}`(`list` は `choose_list` の `lists[].id`) | `connect_todo` と同じ(`wellknown` は常に `null`)。リストごとに呼ぶ(いくつでもつなげる)。上の「Google Tasks をつなぐ」 |
 | connect_jira | `POST /connections/jira` | `{"credential_id"?, "site"?, "project"?}`(`site` は `choose_site` の `sites[].id`、`project` は `choose_project` の `projects[].key`) | `connect_outlook` と同じ + `choose_site`(`sites`)・`choose_project`(`projects`)。`forbidden` はデプロイで許していない。上の「Jira をつなぐ」 |
 | connect_teams | `POST /connections/teams` | `{"credential_id"?, "team"?, "channel"?}`(`team` は `choose_team` の `teams[].id`、`channel` は `choose_channel` の `channels[].id`) | `connect_outlook` と同じ + `choose_team`(`teams`)・`choose_channel`(`channels`)。`forbidden` はデプロイで許していないか Entra ID でない。上の「Teams をつなぐ」 |
-| list_connections | `GET /connections` | | 自分がつないだものと、メンバーになっている共有リスト(`kind`: `outlook` / `gmail` / `todo` / `google-tasks` / `jira` / `teams`、To Do と Google Tasks は `list`(リストの名前)、Jira は `site`・`project`、Teams は `team`・`channel`、共有リストは `shared: true`・`created_by`)と取り込みの状態(`status`: `setup` / `ok` / `broken`(`reason`) / `disconnected`)、`last_sync_at` |
+| connect_shared_mailbox | `POST /connections/shared-mailbox` | `{"mailbox", "credential_id"?}`(`mailbox` は共有メールボックスのアドレス) | `connect_outlook` と同じ。`forbidden` はデプロイで許していないか、その接続で箱を読めない。上の「共有メールボックスをつなぐ」 |
+| list_connections | `GET /connections` | | 自分がつないだものと、メンバーになっている共有リスト(`kind`: `outlook` / `shared-mailbox` / `gmail` / `todo` / `google-tasks` / `jira` / `teams`、共有メールボックスは `mailbox`(箱のアドレス)、To Do と Google Tasks は `list`(リストの名前)、Jira は `site`・`project`、Teams は `team`・`channel`、共有リストは `shared: true`・`created_by`)と取り込みの状態(`status`: `setup` / `ok` / `broken`(`reason`) / `disconnected`)、`last_sync_at` |
 | disconnect | `POST /connections/{data_source}/disconnect` | | 取り込みを止める。共有リストは作った人と管理者だけ。トピックとリストは残る |
 | create_data_source | `POST /data-sources` | `{"channel", "name", "identity", "gateway_credential_id", "description"?, "group"?}`。個人リスト(メンバーは自分だけ)を作る | `get_list` と同じ + `identity`(上の「初めてつないだとき」) |
 | set_identity | `POST /lists/{list_id}/identity` | `{"identity"}`(そのリストでの自分のアカウントを登録する) | `identity` の結果(`kind`・`contactId`) |

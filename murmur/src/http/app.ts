@@ -16,6 +16,7 @@ import {
   AcknowledgeManyBody,
   ClaimBody,
   ConnectGmailBody,
+  ConnectSharedMailboxBody,
   ConnectGoogleTasksBody, ConnectJiraBody, ConnectOutlookBody, ConnectTeamsBody, ConnectTodoBody,
   DismissBody,
   GetThreadQuery,
@@ -270,6 +271,11 @@ export function createApp(opts: HttpOptions) {
   api.post('/connections/gmail', async (c) => {
     const b = ConnectGmailBody.parse(await json(c));
     return c.json(await (await connectors(c)).connections.connectGmail(c.var.userId, b.credential_id));
+  });
+
+  api.post('/connections/shared-mailbox', async (c) => {
+    const b = ConnectSharedMailboxBody.parse(await json(c));
+    return c.json(await (await connectors(c)).connections.connectSharedMailbox(c.var.userId, { credentialId: b.credential_id, mailbox: b.mailbox }));
   });
 
   api.post('/connections/teams', async (c) => {

@@ -17,6 +17,7 @@ export interface PendingAuthorization {
   request?:
     | { kind: 'outlook' }
     | { kind: 'gmail' }
+    | { kind: 'shared-mailbox'; mailbox: string }
     | { kind: 'jira'; cloudId?: string; projectKey?: string }
     | { kind: 'teams'; teamId?: string; channelId?: string }
     | { kind: 'todo'; listId?: string }
