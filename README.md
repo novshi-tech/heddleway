@@ -23,7 +23,7 @@ Claude の Cowork で動作を確認しています。MCP の OAuth に従って
 
 ## トピック索引(Murmur)
 
-[`murmur/`](murmur/) は、ゲートウェイの機能の 1 つ「トピック索引」です(内部の名前は Murmur)。メール(Outlook・Gmail)・Teams・Jira・To Do・Google Tasks などのやりとりをトピック(アクションアイテムの候補になる会話)にまとめ、誰の番かを追います。自分が担当か、自分へのアテンションが残っているトピックが、自分のタスクです。利用者は意識せず、エージェント(Claude など)が裏で読んで「いまやるべきこと」に答えるための索引です([docs/adr/0005](docs/adr/0005-murmur-as-a-feature.md)、言葉は [murmur/docs/adr/0040](murmur/docs/adr/0040-surface-vocabulary.md))。
+[`murmur/`](murmur/) は、ゲートウェイの機能の 1 つ「トピック索引」です(内部の名前は Murmur)。メール(Outlook・Gmail)・Teams・Jira・To Do・Google Tasks などのやりとりをトピック(アクションアイテムの候補になる会話)にまとめ、担当とアテンションを追います。アテンションにはタスクと FYI が区別されずに入っていて、どちらかはエージェントが読んで決めます。利用者は意識せず、エージェント(Claude など)が裏で読んで「いまやるべきこと」に答えるための索引です([docs/adr/0005](docs/adr/0005-murmur-as-a-feature.md)、言葉は [murmur/docs/adr/0040](murmur/docs/adr/0040-surface-vocabulary.md))。
 
 - ゲートウェイの Worker に入っていて、デプロイの設定に Murmur の D1 を足すと有効になります(`wrangler.example.jsonc` の末尾)。足さなければ、ゲートウェイはトピック索引なしで今までどおり動きます
 - 利用者ごとに、ゲートウェイの画面で有効にします(エージェントにトピック索引への接続を頼むと、有効にする画面に案内されます)。有効にした人の接続だけを、読み取りだけで使います。「つないだサービス」の画面でいつでも無効にできます
@@ -107,7 +107,7 @@ Claude のようなエージェント(スタンド)のほかに、決まった�
 | | `gbizinfo` | `gbizinfo` | 経済産業省の法人情報(gBizINFO)の検索 |
 | | `serper` | `serper` | Serper 経由の Google 検索(ウェブ・画像・ニュース・地図・論文など) |
 | | `x` | `x` | X(旧 Twitter)のポストの検索・取得、投稿・返信・画像の添付、いいね・リポスト・ブックマーク(ユーザー本人として) |
-| | `topic-index` | `murmur` | トピック索引(このゲートウェイの機能)のトピック・誰の番・To Do / Google Tasks のタスクでの追跡と経過のメモ・送信の記録。有効にする手順は上の「トピック索引(Murmur)」 |
+| | `topic-index` | `murmur` | トピック索引(このゲートウェイの機能)のトピック・担当とアテンション・To Do / Google Tasks のタスクでの追跡と経過のメモ・送信の記録。有効にする手順は上の「トピック索引(Murmur)」 |
 | `heddleway-microsoft` | `microsoft-graph` | `graph` | Outlook メール、OneDrive / SharePoint、Teams、予定表 |
 | `heddleway-google` | `gmail` | `gmail` | メールの検索・送信・返信・下書き、添付ファイル |
 | | `google-drive` | `drive` | ファイルの検索・ダウンロード・エクスポート・アップロード、共有ドライブ |
