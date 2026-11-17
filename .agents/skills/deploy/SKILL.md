@@ -5,7 +5,7 @@ description: heddleway を自分の Cloudflare アカウントにセルフホス
 
 # ゲートウェイをデプロイする
 
-ゲートウェイは Cloudflare Workers で動く。デプロイ先ごとに、IdP のアプリ、設定ファイル `deployments/<名前>.jsonc`、KV、シークレットを 1 組ずつ持つ。1 つの clone で複数のデプロイを扱える。手順の正本は README の「デプロイ」の節なので、まず読んでから進める。
+ゲートウェイは Cloudflare Workers で動く。デプロイ先ごとに、IdP のアプリ、設定ファイル `deployments/<名前>.jsonc`、KV、シークレットを 1 組ずつ持つ。1 つの clone で複数のデプロイを扱える。手順の正本は `docs/deploy.md` なので、まず読んでから進める。
 
 wrangler は直接呼ばず、名前を付けてラッパーから呼ぶ。中で `--config deployments/<名前>.jsonc` を渡している(`tools/wrangler.mjs`)。リポジトリの直下に `wrangler.jsonc` は置かない。
 
@@ -20,7 +20,7 @@ wrangler は直接呼ばず、名前を付けてラッパーから呼ぶ。中�
 
 1. 現状を確かめる。
    - `deployments/` にどんな設定があるか。頼まれたデプロイの設定があれば、初回ではなく更新なので、手順 5 に進む。どれのことか分からなければ、ユーザーに聞く。
-   - `deployments/` が設定のリポジトリの clone か(`git -C deployments rev-parse --show-toplevel` が `deployments` を指すか)。このリポジトリの git は `deployments/` を見ない。設定は private リポジトリで管理し、`deployments/` に clone するのがおすすめ(README の「設定をリポジトリで管理する」)。
+   - `deployments/` が設定のリポジトリの clone か(`git -C deployments rev-parse --show-toplevel` が `deployments` を指すか)。このリポジトリの git は `deployments/` を見ない。設定は private リポジトリで管理し、`deployments/` に clone するのがおすすめ(`docs/deploy.md` の「設定をリポジトリで管理する」)。
      - `deployments/` がない、または空なら、設定のリポジトリがあるかユーザーに聞き、あれば `git clone <設定のリポジトリ> deployments` する。
      - `deployments/` にファイルはあるがリポジトリになっていなければ、リポジトリで管理するよう勧める。ユーザーが private リポジトリを作ったら、`git -C deployments init`、リモートの追加、最初のコミットとプッシュを手伝う(プッシュはユーザーの確認を取ってから)。
      - 設定のリポジトリにまだプッシュしていない変更やコミットしていない変更があれば(`git -C deployments status`)、デプロイの前にユーザーに知らせる。
@@ -33,14 +33,14 @@ wrangler は直接呼ばず、名前を付けてラッパーから呼ぶ。中�
    - 公開 URL(`PUBLIC_URL`)。workers.dev なら `https://heddleway.<サブドメイン>.workers.dev`。独自ドメインなら、その設定もする。
    - IdP: Microsoft 365 の組織なら Entra ID、Google Workspace なら Google。
    - 最初に使うサービス。組み込み(`src/catalog.ts`)のうち OAuth のもの(freee、Google、Microsoft Graph)は、クライアントを登録したものだけが使えるようになるので、どれを使うかを決める。組み込みにないサービスは、デプロイのあとで add-service スキルで足す。
-3. IdP にアプリを登録してもらう。Claude が IdP の管理画面を操作することはできないので、README の手順を示して、ユーザーにやってもらう。
+3. IdP にアプリを登録してもらう。Claude が IdP の管理画面を操作することはできないので、`docs/deploy.md` の手順を示して、ユーザーにやってもらう。
    - リダイレクト URI: `<PUBLIC_URL>/oauth/callback` と `<PUBLIC_URL>/login/callback`
    - 受け取るもの: クライアント ID と、Entra ならテナント ID。クライアントシークレットは会話に貼らせず、手順 4 で直接 `wrangler secret put` に入れてもらう。
 4. 設定とシークレット。
-   - 設定を `wrangler.example.jsonc` から作る。`$schema` と `main` のパスの先頭に `../` を付ける(README の `sed` のとおり)。そのうえで、`name`、`PUBLIC_URL`、`ORGANIZATION_NAME`、`IDP_TYPE`、`OIDC_ISSUER`、`OIDC_CLIENT_ID`、`ALLOWED_TENANTS` / `ALLOWED_DOMAINS` を書く。Microsoft Graph を使うなら `MICROSOFT_TENANT_ID`。`SERVICES` は組み込みにないサービスがあるときだけ。Google では `ALLOWED_DOMAINS` を必ず指定する(空だと誰でもサインインできてしまう)。
+   - 設定を `wrangler.example.jsonc` から作る。`$schema` と `main` のパスの先頭に `../` を付ける(`docs/deploy.md` の `sed` のとおり)。そのうえで、`name`、`PUBLIC_URL`、`ORGANIZATION_NAME`、`IDP_TYPE`、`OIDC_ISSUER`、`OIDC_CLIENT_ID`、`ALLOWED_TENANTS` / `ALLOWED_DOMAINS` を書く。Microsoft Graph を使うなら `MICROSOFT_TENANT_ID`。`SERVICES` は組み込みにないサービスがあるときだけ。Google では `ALLOWED_DOMAINS` を必ず指定する(空だと誰でもサインインできてしまう)。
    - `npx wrangler kv namespace create OAUTH_KV` の結果の ID を `kv_namespaces` に書く。
    - シークレット: `OIDC_CLIENT_SECRET` はユーザーに対話で入れてもらう(`npm run secret -- <名前> put OIDC_CLIENT_SECRET`)。`SIGNING_KEY` と `ENCRYPTION_KEY` は `openssl rand -base64 32 | npm run secret -- <名前> put <KEY>` で作る。値を表示したり、ファイルに残したりしない。
-   - OAuth の連携先は、クライアントごとに ID とシークレットが要る: `freee`、`google`(Google の 6 サービスで共通)、`microsoft`(Graph)、`slack`、`atlassian`(Jira・Confluence)、`x`。デプロイのあとに、管理者が Web 画面の「接続先の管理」→「OAuth のクライアント」で入れるのがおすすめ(デプロイし直さずに済む。`ADMINS` に管理者のユーザー ID が要る)。シークレット `OAUTH_<CLIENT>_CLIENT_ID` / `_CLIENT_SECRET` で入れてもよく、そちらが優先される。README の「連携先を設定する」に従う。
+   - OAuth の連携先は、クライアントごとに ID とシークレットが要る: `freee`、`google`(Google の 6 サービスで共通)、`microsoft`(Graph)、`slack`、`atlassian`(Jira・Confluence)、`x`。デプロイのあとに、管理者が Web 画面の「接続先の管理」→「OAuth のクライアント」で入れるのがおすすめ(デプロイし直さずに済む。`ADMINS` に管理者のユーザー ID が要る)。シークレット `OAUTH_<CLIENT>_CLIENT_ID` / `_CLIENT_SECRET` で入れてもよく、そちらが優先される。`docs/deploy.md` の「連携先を設定する」に従う。
 5. デプロイする。
    - 先に `npm ci`、`npm run typecheck`、`npm test` を通す。
    - 設定の共通部分が、ひな形と合っているかを確かめる(下の「新しい版に上げるとき」)。

@@ -49,7 +49,7 @@ OAuth2 の client credentials で上流のトークンを取る認証方式を�
 - 上の例は設定ファイルに書いた場合。管理画面で登録したときは `client` を書かず、登録した client を使う。
 - トークンは寿命(Entra は 1 時間前後)まで Worker のメモリに覚えて使い回し、切れたら取り直す。リフレッシュトークンはない。トークンは保管しない。
 - この接続先は、画面にも `list_credentials` にも出さない。ユーザーが使うものではない。
-- 上流で絞る: テナントの管理者が、Murmur 専用のアプリを Entra に登録する。**Entra では API のアクセス許可を何も付けない**(`Mail.Read` のアプリの権限に同意すると、テナントの全員の箱に届き、Exchange のスコープより優先される)。権限は Exchange の RBAC for Applications で、役割 `Application Mail.Read` を読ませる共有の箱だけの管理スコープに付けて渡す。手順は README の「人がいないときに Worker が使う接続先」に書いた。
+- 上流で絞る: テナントの管理者が、Murmur 専用のアプリを Entra に登録する。**Entra では API のアクセス許可を何も付けない**(`Mail.Read` のアプリの権限に同意すると、テナントの全員の箱に届き、Exchange のスコープより優先される)。権限は Exchange の RBAC for Applications で、役割 `Application Mail.Read` を読ませる共有の箱だけの管理スコープに付けて渡す。手順は [deploy.md](deploy.md) の「人がいないときに Worker が使う接続先」に書いた。
 
 ### 2. Service Binding だけから呼べる入口
 

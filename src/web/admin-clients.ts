@@ -59,7 +59,7 @@ function clientForm(env: Env, user: Session, name: string, directory: Directory,
     state === "secret"
       ? html`<p class="card">デプロイのシークレット <code>${secretName(name)}</code> が使われています。管理画面で設定するには、先にシークレットを削除してください(<code>npm run secret -- &lt;名前&gt; delete …</code>)。${stored && "管理画面にも保存された値がありますが、使われていません。"}</p>`
       : html`<form method="post" action="/admin/clients/${name}" class="card admin-form">
-<p class="hint">連携先にアプリを登録し、リダイレクト URI(コールバック URL)に <code>${publicUrl(env)}${CONNECT_CALLBACK_PATH}</code> を指定してください。手順は README の「連携先を設定する」にあります。</p>
+<p class="hint">連携先にアプリを登録し、リダイレクト URI(コールバック URL)に <code>${publicUrl(env)}${CONNECT_CALLBACK_PATH}</code> を指定してください。手順はリポジトリの docs/deploy.md の「連携先を設定する」にあります。</p>
 <label>クライアント ID<input type="text" name="client_id" value="${stored?.id ?? ""}" required autocomplete="off"></label>
 <label>クライアントシークレット${stored && "(変えないときは空のまま)"}<input type="password" name="client_secret" autocomplete="off"></label>
 ${stored && html`<p class="hint">クライアント ID を変えると、利用者がつないだ接続は使えなくなり、つなぎ直すことになります。</p>`}

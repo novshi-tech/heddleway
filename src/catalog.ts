@@ -2,7 +2,7 @@ import type { OAuth2Auth, ServiceConfig, Services } from "./config";
 
 // Services every deployment can offer. SERVICES adds to these and overrides one by
 // using its name. An OAuth service is offered only once its client's
-// OAUTH_<CLIENT>_CLIENT_ID / _CLIENT_SECRET are set (see README).
+// OAUTH_<CLIENT>_CLIENT_ID / _CLIENT_SECRET are set (see docs/deploy.md).
 
 function google(display_name: string, base_url: string, scope: string): ServiceConfig {
   const auth: OAuth2Auth = {
