@@ -3,6 +3,7 @@ import { GRAPH_SCOPE } from "../murmur/src/connectors/graph/scope";
 import { JIRA_SCOPE } from "../murmur/src/connectors/jira/api";
 import { GMAIL_SCOPE } from "../murmur/src/connectors/gmail/scope";
 import { GTASKS_SCOPE } from "../murmur/src/connectors/gtasks/scope";
+import { GOOGLE_CHAT_DM_SCOPE, GOOGLE_CHAT_SCOPE } from "../murmur/src/connectors/google-chat/scope";
 import { TEAMS_SCOPE } from "../murmur/src/connectors/teams/scope";
 import { TEAMS_CHAT_SCOPE } from "../murmur/src/connectors/teams-chat/scope";
 import type { SyncJob } from "../murmur/src/connectors/graph/jobs";
@@ -34,6 +35,7 @@ interface MurmurEnv {
   MURMUR_JIRA_SERVICE?: string;
   MURMUR_GMAIL_SERVICE?: string;
   MURMUR_TASKS_SERVICE?: string;
+  MURMUR_CHAT_SERVICE?: string;
   // Patrol interval of the Google Tasks connector, in minutes. Unset or invalid: every tick (Murmur's 0041).
   MURMUR_TASKS_POLL_MINUTES?: string;
 }
@@ -63,6 +65,9 @@ export function murmurFeature(env: Env): Feature | null {
       "teams-chat": { service: m.MURMUR_GRAPH_SERVICE || "graph", scope: TEAMS_CHAT_SCOPE },
       gmail: { service: m.MURMUR_GMAIL_SERVICE || "gmail", scope: GMAIL_SCOPE },
       gtasks: { service: m.MURMUR_TASKS_SERVICE || "tasks", scope: GTASKS_SCOPE },
+      // Google Chat (Murmur's 0045): spaces as shared lists and the user's DMs as a personal list, one credential, two scopes.
+      "google-chat": { service: m.MURMUR_CHAT_SERVICE || "chat", scope: GOOGLE_CHAT_SCOPE },
+      "google-chat-dm": { service: m.MURMUR_CHAT_SERVICE || "chat", scope: GOOGLE_CHAT_DM_SCOPE },
     },
   });
   const config: MurmurConfig = {
@@ -84,7 +89,7 @@ export function murmurFeature(env: Env): Feature | null {
     name: NAME,
     displayName: "トピック索引",
     consentText:
-      "トピック索引は、あなたがつないだメール(Outlook・Gmail)・To Do・Google Tasks のタスク・Teams のチャネルとチャット・Jira を読み取り、やりとりをトピックにまとめて、誰が担当か・誰に見てほしいと届いたかを記録します。エージェント(Claude など)が「いまやるべきこと」に答えるときに使います。読むのは、あなたがエージェントに頼んでつないだものだけで、送信や書き込みはしません。",
+      "トピック索引は、あなたがつないだメール(Outlook・Gmail)・To Do・Google Tasks のタスク・Teams のチャネルとチャット・Google Chat のスペースとチャット・Jira を読み取り、やりとりをトピックにまとめて、誰が担当か・誰に見てほしいと届いたかを記録します。エージェント(Claude など)が「いまやるべきこと」に答えるときに使います。読むのは、あなたがエージェントに頼んでつないだものだけで、送信や書き込みはしません。",
     consentCallbackPath: CALLBACK_PATH,
     fetch: (request, ctx) => murmur.fetch(request, ctx),
     scheduled: (_controller, ctx) => murmur.scheduled(ctx),

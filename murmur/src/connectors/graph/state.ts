@@ -118,9 +118,46 @@ export interface GmailRecovery {
   startedAt?: string;
 }
 
+/**
+ * Google Chat のスペースの取り込みの位置（0045 の決定 4）。変更の通知はなく、見回りで createTime の差分を読む。
+ * syncedUntil は取り込んだ最後のメッセージの createTime（一覧は createTime の古い順なので、ページの上限で止めても
+ * ここから続けられる）。次の見回りは重なりを引いた時刻から読み、二重は sourceRef の重複排除で落ちる
+ */
+export interface GoogleChatCursor {
+  syncedUntil: string;
+  /** 共有リストの読者を最後にソースから写した時刻（0037） */
+  readersSyncedAt?: string;
+  /** つないだ（つなぎ直した）直後の取り込みの仕事を積んだ時刻。見回りが同じ取り込みを重ねて始めないために使う */
+  setupAt?: string | null;
+  /** 前の見回りがページの上限で止まった。次は重なりなしで syncedUntil の続きから読む（重なりの読み直しで上限を使い切らない） */
+  pagedOut?: boolean;
+}
+
+/**
+ * Google Chat の DM・グループの 1 つ（0045 の決定 2）。kind: direct（DM）・group（グループのチャット）・skip（取り込まない:
+ * 相手がアプリだけの DM・読めないもの）。members は人のメンバーのアカウントの ID
+ */
+export interface GoogleChatDmRecord {
+  kind: 'direct' | 'group' | 'skip';
+  members: string[];
+  /** 種類とメンバーを最後に読んだ時刻 */
+  checkedAt: string;
+  /** このスペースで取り込んだ最後のメッセージの createTime（なければ、つないだ時刻から） */
+  syncedUntil?: string;
+  /** 前の見回りがページの上限で止まった（GoogleChatCursor.pagedOut と同じ） */
+  pagedOut?: boolean;
+}
+
+/** Google Chat の DM・グループの取り込みの位置。spaces はスペースの名前（spaces/<ID>）ごとの種類と位置 */
+export interface GoogleChatDmCursor {
+  spaces: Record<string, GoogleChatDmRecord>;
+  /** つないだ（つなぎ直した）直後の取り込みの仕事を積んだ時刻 */
+  setupAt?: string | null;
+}
+
 /** 実行時に作ったデータソースの取り込みの状態。kind がなければ Outlook（Jira より前の行） */
 export interface SourceState {
-  kind?: 'outlook' | 'shared-mailbox' | 'jira' | 'teams' | 'teams-chat' | 'todo' | 'gtasks' | 'gmail';
+  kind?: 'outlook' | 'shared-mailbox' | 'jira' | 'teams' | 'teams-chat' | 'todo' | 'gtasks' | 'gmail' | 'google-chat' | 'google-chat-dm';
   dataSourceId: string;
   /** 個人の箱の本人（ゲートウェイの User）。共有リストでは、取り込みに委任を使っている読者 */
   userId: string;
@@ -136,6 +173,10 @@ export interface SourceState {
   teams?: TeamsCursor;
   /** Teams のチャット（0044）: 取り込みの位置とチャットごとの種類 */
   teamsChat?: TeamsChatCursor;
+  /** Google Chat のスペース（0045）: 取り込みの位置と読者の同期 */
+  googleChat?: GoogleChatCursor;
+  /** Google Chat の DM・グループ（0045）: スペースごとの種類と位置 */
+  googleChatDm?: GoogleChatDmCursor;
   /** Google Tasks: 取り込みの位置（見回りの最後の読み切りの時刻は lastSyncAt） */
   gtasks?: GtasksCursor;
   /** Gmail: 取り込みの位置（見回りの最後の読み切りの時刻は lastSyncAt） */

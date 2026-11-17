@@ -1,4 +1,6 @@
-import { addSharedReader, canDisconnect, connectSharedMailbox, connectJiraProject, connectorOwner, connectTaskList, connectTeamsChannel, connectTeamsChats, deriveViewer, DomainError, teamsAddress, connectMailbox, replaceSharedCredential, syncSharedReaders, type ServiceDataSource } from '../domain';
+import { addSharedReader, canDisconnect, connectGoogleChatDms, connectGoogleChatSpace, connectSharedMailbox, connectJiraProject, connectorOwner, connectTaskList, connectTeamsChannel, connectTeamsChats, deriveViewer, DomainError, googleAccountOf, teamsAddress, connectMailbox, replaceSharedCredential, syncSharedReaders, type ServiceDataSource } from '../domain';
+import { GoogleChatError, type GoogleChatApi } from '../connectors/google-chat/api';
+import { chatMembers, isThreaded } from '../connectors/google-chat/plan';
 import { jiraMembers } from '../connectors/jira/readers';
 import type { TeamRef, TeamsApi } from '../connectors/teams/api';
 import type { TeamsChatApi } from '../connectors/teams-chat/api';
@@ -25,6 +27,7 @@ import type { MurmurService } from './service';
 // Gmail（0041）も同じ同意で、ゲートウェイの gmail の接続から本人のメールボックスを個人リストにする（Outlook と同じ流れ）。
 // To Do（0039）も同じ同意で、ゲートウェイの graph の接続からタスクのリストを 1 つ選んで個人リストにする。
 // Teams のチャット（0044）も同じ同意で、ゲートウェイの graph の接続から本人のチャット全体を個人リストにする。
+// Google Chat（0045）も同じ同意で、ゲートウェイの chat の接続からスペースを共有リストに、本人の DM・グループを個人リストにする。
 // 共有メールボックス（0042）も同じ同意で、ゲートウェイの graph の接続（委任の Mail.Read.Shared）で箱を読み、共有リストにする。
 
 /** 認可の途中の state の寿命 */
@@ -42,6 +45,7 @@ export interface ConnectionsDeps {
   todoFor(call: UpstreamCall): TodoApi;
   gtasksFor(call: UpstreamCall): GtasksApi;
   gmailFor(call: UpstreamCall): GmailApi;
+  googleChatFor(call: UpstreamCall): GoogleChatApi;
   state: ConnectorStateStore;
   now: () => string;
   /** 共有リストを許すサービス（0037 の決定 4。管理者がデプロイの設定で決める） */
@@ -62,6 +66,8 @@ export type ConnectResult =
   /** Teams: つなぐチーム・チャネルを選んでもう一度（0036・0037。チャネル単位の共有リスト） */
   | { status: 'choose_team'; teams: TeamRef[] }
   | { status: 'choose_channel'; channels: TeamRef[] }
+  /** Google Chat: つなぐスペースを選んでもう一度（0045。スペース単位の共有リスト） */
+  | { status: 'choose_space'; spaces: { id: string; name: string }[] }
   /** To Do: つなぐタスクのリストを選んでもう一度（0039） */
   | { status: 'choose_list'; lists: { id: string; name: string; wellknown: string | null }[] }
   | { status: 'connected'; data_source: { id: string; name: string }; created: boolean };
@@ -80,6 +86,12 @@ export interface ConnectTeamsInput {
   channelId?: string;
 }
 
+export interface ConnectGoogleChatInput {
+  credentialId?: string;
+  /** スペースの名前（spaces/<ID>。省けば一覧を返す） */
+  space?: string;
+}
+
 export interface ConnectTodoInput {
   credentialId?: string;
   /** タスクのリストの ID（省けば一覧を返す） */
@@ -95,7 +107,7 @@ export interface ConnectGoogleTasksInput {
 export interface ConnectionView {
   data_source: string;
   name: string;
-  kind: 'outlook' | 'shared-mailbox' | 'gmail' | 'jira' | 'teams' | 'teams-chat' | 'todo' | 'google-tasks';
+  kind: 'outlook' | 'shared-mailbox' | 'gmail' | 'jira' | 'teams' | 'teams-chat' | 'google-chat' | 'google-chat-dm' | 'todo' | 'google-tasks';
   /** 共有メールボックス: 箱のアドレス */
   mailbox?: string;
   /** Jira: サイトとプロジェクト */
@@ -104,6 +116,8 @@ export interface ConnectionView {
   /** Teams: チームとチャネルの ID */
   team?: string;
   channel?: string;
+  /** Google Chat: スペースの名前（spaces/<ID>） */
+  space?: string;
   /** To Do・Google Tasks: タスクのリストの名前 */
   list?: string;
   /** 共有リスト（0037）。読者はソースから写す */
@@ -147,6 +161,16 @@ export class Connections {
   /** 本人の Teams のチャット全体を個人リストとしてつなぐ（0044。同意は Outlook と同じもの。ゲートウェイの graph の接続で読む） */
   async connectTeamsChat(userId: string, credentialId?: string): Promise<ConnectResult> {
     return this.connect(userId, credentialId ?? null, { kind: 'teams-chat' });
+  }
+
+  /** Google Chat のスペースを共有リストとしてつなぐ（0045。同意は Outlook と同じもの。ゲートウェイの chat の接続で読む） */
+  async connectGoogleChat(userId: string, input: ConnectGoogleChatInput = {}): Promise<ConnectResult> {
+    return this.connect(userId, input.credentialId ?? null, { kind: 'google-chat', space: input.space });
+  }
+
+  /** 本人の Google Chat の DM・グループ全体を個人リストとしてつなぐ（0045） */
+  async connectGoogleChatDm(userId: string, credentialId?: string): Promise<ConnectResult> {
+    return this.connect(userId, credentialId ?? null, { kind: 'google-chat-dm' });
   }
 
   /** To Do のタスクのリストを個人リストとしてつなぐ（0039。同意は Outlook と同じもの。ゲートウェイの graph の接続で読む） */
@@ -194,7 +218,7 @@ export class Connections {
 
     const request = pending.request ?? { kind: 'outlook' };
     const kind = this.kindOf(request);
-    const label = kind === 'jira' ? 'Jira' : kind === 'gtasks' ? 'Google Tasks' : kind === 'gmail' ? 'Gmail' : 'Microsoft Graph';
+    const label = kind === 'jira' ? 'Jira' : kind === 'gtasks' ? 'Google Tasks' : kind === 'gmail' ? 'Gmail' : kind === 'google-chat' || kind === 'google-chat-dm' ? 'Google Chat' : 'Microsoft Graph';
     const done = await this.deps.gateway.consent.complete({ userId: pending.userId, code: input.code, secret: pending.verifier, kind });
     if (done === 'no_credential') return { ok: false, message: `ゲートウェイに ${label} の接続がありません。ゲートウェイでつないでから、もう一度頼んでください。` };
     if (done === 'wrong_user') {
@@ -210,7 +234,7 @@ export class Connections {
               ? `${result.data_source.name} をつなぎました。これから更新される課題を取り込みます（過去のコメントは取りません）。`
               : request.kind === 'todo' || request.kind === 'google-tasks'
                 ? `${result.data_source.name} をつなぎました。リストの開いているタスクと、これから変わるタスクを取り込みます。`
-                : request.kind === 'teams-chat'
+                : request.kind === 'teams-chat' || request.kind === 'google-chat' || request.kind === 'google-chat-dm'
                   ? `${result.data_source.name} をつなぎました。これから届くチャットのメッセージを取り込みます（過去のメッセージは取りません）。`
                   : `${result.data_source.name} をつなぎました。これから届くメールを取り込みます（過去のメールは取りません）。`,
         };
@@ -218,6 +242,8 @@ export class Connections {
         return { ok: true, message: `ゲートウェイに ${label} の接続が複数あります。エージェント（Claude など）に戻って、どれをつなぐか選んでください。` };
       case 'choose_site':
         return { ok: true, message: 'Jira のサイトが複数あります。エージェント（Claude など）に戻って、どのサイトをつなぐか選んでください。' };
+      case 'choose_space':
+        return { ok: true, message: 'Google Chat のスペースを選んでください。エージェント（Claude など）に戻って、どのスペースをつなぐか選んでください。' };
       case 'choose_list':
         return { ok: true, message: `${label} のタスクのリストを選んでください。エージェント（Claude など）に戻って、どのリストをつなぐか選んでください。` };
       default:
@@ -226,7 +252,19 @@ export class Connections {
   }
 
   private kindOf(request: NonNullable<PendingAuthorization['request']>): UpstreamKind {
-    return request.kind === 'jira' ? 'jira' : request.kind === 'teams' ? 'teams' : request.kind === 'teams-chat' ? 'teams-chat' : request.kind === 'google-tasks' ? 'gtasks' : request.kind === 'gmail' ? 'gmail' : 'graph';
+    switch (request.kind) {
+      case 'jira':
+      case 'teams':
+      case 'teams-chat':
+      case 'gmail':
+      case 'google-chat':
+      case 'google-chat-dm':
+        return request.kind;
+      case 'google-tasks':
+        return 'gtasks';
+      default:
+        return 'graph';
+    }
   }
 
   private async connectWithGrant(
@@ -244,6 +282,8 @@ export class Connections {
     if (request.kind === 'jira') return this.connectJiraWith(userId, chosen.id, request);
     if (request.kind === 'teams') return this.connectTeamsWith(userId, chosen.id, request);
     if (request.kind === 'teams-chat') return this.connectTeamsChatWith(userId, chosen.id);
+    if (request.kind === 'google-chat') return this.connectGoogleChatWith(userId, chosen.id, request);
+    if (request.kind === 'google-chat-dm') return this.connectGoogleChatDmWith(userId, chosen.id);
     if (request.kind === 'todo') return this.connectTodoWith(userId, chosen.id, request);
     if (request.kind === 'google-tasks') return this.connectGoogleTasksWith(userId, chosen.id, request);
     if (request.kind === 'gmail') return this.connectGmailWith(userId, chosen.id);
@@ -520,6 +560,94 @@ export class Connections {
     return { status: 'connected', data_source: { id: ds.id, name: ds.name }, created: plan.kind === 'created' };
   }
 
+  /**
+   * Google Chat のスペースの共有リスト（0045 の決定 1・0037）。Google でサインインするゲートウェイだけ（読者はメンバーの
+   * users/<ID> とゲートウェイの User ID の sub で対応を付ける）。つなぐ人がメンバーのスペースだけを選べる
+   */
+  private async connectGoogleChatWith(userId: string, credentialId: string, request: { kind: 'google-chat'; space?: string }): Promise<ConnectResult> {
+    if (!this.deps.sharedServices.includes('google-chat')) {
+      throw new DomainError('forbidden', 'このデプロイでは Google Chat の共有リストを許していない（管理者がデプロイの設定 MURMUR_SHARED_SERVICES に google-chat を足す）');
+    }
+    const account = googleAccountOf(userId);
+    if (!account) throw new DomainError('forbidden', 'Google Chat は、Google でサインインするゲートウェイだけで使える');
+    const api = this.deps.googleChatFor(await this.deps.gateway.upstream(userId, credentialId, 'google-chat'));
+    const spaces = await api.spaces('spaceType = "SPACE"');
+    if (!request.space) return { status: 'choose_space', spaces: spaces.map((s) => ({ id: s.name, name: s.displayName || s.name })) };
+    const space = spaces.find((s) => s.name === request.space);
+    if (!space) throw new DomainError('not_found', `space ${request.space} にこの人は入っていない`);
+
+    const { result: plan } = await this.deps.service.changeMaster(userId, 'Google Chat のスペースをつなぐ', (d, ctx) =>
+      connectGoogleChatSpace(d, ctx, { userId, gatewayCredentialId: credentialId, space: space.name, spaceName: space.displayName || space.name, threaded: isThreaded(space), account }),
+    );
+    const ds = plan.dataSource;
+    const current = await this.deps.state.source(ds.id);
+    if (plan.kind === 'exists') {
+      let memberships;
+      try {
+        memberships = await api.members(space.name);
+      } catch (err) {
+        if (err instanceof GoogleChatError) throw new DomainError('conflict', `スペースのメンバーを読めない（${err.message}）`);
+        throw err;
+      }
+      await this.deps.service.changeMaster(null, 'Google Chat の読者の同期', (d, ctx) => syncSharedReaders(d, ctx, ds.id, chatMembers(memberships)));
+      if (current && current.status === 'ok') return { status: 'connected', data_source: { id: ds.id, name: ds.name }, created: false };
+      await this.deps.service.changeMaster(userId, 'Google Chat の共有リストをつなぎ直す', (d, ctx) =>
+        replaceSharedCredential(d, ctx, ds.id, { userId, gatewayCredentialId: credentialId, identity: account }),
+      );
+    }
+    const now = this.deps.now();
+    const resume = current?.status === 'broken';
+    await this.deps.state.putSource({
+      kind: 'google-chat',
+      dataSourceId: ds.id,
+      userId,
+      gatewayCredentialId: credentialId,
+      status: 'setup',
+      reason: null,
+      folders: {},
+      // 作った直後はその時点から取る（過去のメッセージは取らない）。止まっていたものは続きから
+      googleChat: resume && current?.googleChat ? { syncedUntil: current.googleChat.syncedUntil, setupAt: now } : { syncedUntil: now, setupAt: now },
+      connectedAt: resume && current ? current.connectedAt : now,
+      lastSyncAt: current?.lastSyncAt ?? null,
+      lastRetryAt: null,
+    });
+    await this.deps.queue.send({ kind: 'setup', dataSourceId: ds.id });
+    return { status: 'connected', data_source: { id: ds.id, name: ds.name }, created: plan.kind === 'created' };
+  }
+
+  /** 本人の Google Chat の DM・グループ全体（0045 の決定 2）。Google でサインインするゲートウェイだけ */
+  private async connectGoogleChatDmWith(userId: string, credentialId: string): Promise<ConnectResult> {
+    const account = googleAccountOf(userId);
+    if (!account) throw new DomainError('forbidden', 'Google Chat は、Google でサインインするゲートウェイだけで使える');
+    // つなぐ前に一覧を読めることを確かめる（読めなければ同意か接続の問題）
+    await this.deps.googleChatFor(await this.deps.gateway.upstream(userId, credentialId, 'google-chat-dm')).spaces('spaceType = "DIRECT_MESSAGE"');
+    const user = (await this.deps.service.directory()).seed.users.find((u) => u.id === userId);
+    const { result: plan } = await this.deps.service.changeMaster(userId, 'Google Chat のチャットをつなぐ', (d, ctx) =>
+      connectGoogleChatDms(d, ctx, { userId, gatewayCredentialId: credentialId, displayName: user?.name ?? '', account }),
+    );
+    const ds = plan.dataSource;
+    const current = await this.deps.state.source(ds.id);
+    if (!current || current.status !== 'ok' || current.gatewayCredentialId !== credentialId) {
+      const now = this.deps.now();
+      const keep = current && current.status !== 'disconnected' && current.googleChatDm ? current : null;
+      await this.deps.state.putSource({
+        kind: 'google-chat-dm',
+        dataSourceId: ds.id,
+        userId,
+        gatewayCredentialId: credentialId,
+        status: 'setup',
+        reason: null,
+        folders: {},
+        googleChatDm: { spaces: keep?.googleChatDm?.spaces ?? {}, setupAt: now },
+        connectedAt: keep?.connectedAt ?? now,
+        lastSyncAt: keep?.lastSyncAt ?? null,
+        lastRetryAt: null,
+      });
+      await this.deps.queue.send({ kind: 'setup', dataSourceId: ds.id });
+    }
+    return { status: 'connected', data_source: { id: ds.id, name: ds.name }, created: plan.kind === 'created' };
+  }
+
   private async connectTodoWith(userId: string, credentialId: string, request: { kind: 'todo'; listId?: string }): Promise<ConnectResult> {
     const api = this.deps.todoFor(await this.deps.gateway.upstream(userId, credentialId, 'graph'));
     const lists = await api.lists();
@@ -615,6 +743,7 @@ export class Connections {
       const ds = dir.dataSource(s.dataSourceId) as ServiceDataSource | undefined;
       const jira = ds?.connector?.kind === 'jira' ? ds.connector : undefined;
       const teams = ds?.connector?.kind === 'teams' ? ds.connector : undefined;
+      const chatSpace = ds?.connector?.kind === 'google-chat' ? ds.connector.space : undefined;
       const todo = ds?.connector?.kind === 'graph-todo' || ds?.connector?.kind === 'google-tasks' ? ds.connector : undefined;
       const box = ds?.connector?.kind === 'graph-mail' && ds.connector.mailbox !== 'me' ? ds.connector.mailbox : undefined;
       return {
@@ -623,6 +752,7 @@ export class Connections {
         kind: s.kind === 'gtasks' ? ('google-tasks' as const) : (s.kind ?? ('outlook' as const)),
         ...(jira ? { site: jira.site, ...(jira.projectKey ? { project: jira.projectKey } : {}) } : {}),
         ...(teams ? { team: teams.teamId, channel: teams.channelId } : {}),
+        ...(chatSpace ? { space: chatSpace } : {}),
         ...(todo ? { list: todo.listName } : {}),
         ...(box ? { mailbox: box } : {}),
         ...(ds?.shared ? { shared: true, created_by: ds.shared.createdBy } : {}),

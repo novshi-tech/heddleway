@@ -176,6 +176,15 @@ export const ConnectTeamsBody = z.object({
   channel: z.string().min(1).optional(),
 });
 
+/** Google Chat のスペースを共有リストとしてつなぐ（0045）。space（spaces/<ID>）を省くと一覧（choose_space）を返す */
+export const ConnectGoogleChatBody = z.object({
+  credential_id: z.string().min(1).optional(),
+  space: z.string().regex(/^spaces\/[A-Za-z0-9_-]+$/).optional(),
+});
+
+/** POST /api/connections/google-chat-dm（0045）。本人の Google Chat の DM・グループ全体。credential_id はゲートウェイの chat の接続 */
+export const ConnectGoogleChatDmBody = z.object({ credential_id: z.string().min(1).optional() });
+
 /** To Do のタスクのリストを個人リストとしてつなぐ（0039）。list を省くと一覧（choose_list）を返す */
 export const ConnectTodoBody = z.object({
   credential_id: z.string().min(1).optional(),

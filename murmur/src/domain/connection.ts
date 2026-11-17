@@ -288,6 +288,101 @@ export function connectTeamsChats(draft: Seed, ctx: CoreContext, input: TeamsCha
   return { kind: 'created', dataSource, identity: created.identity };
 }
 
+// ---- Google Chat（0045）: スペースの共有リストと、本人の DM・グループの個人リスト ----
+
+export function googleChatSpaceKey(space: string): string {
+  return `google-chat:${space}`;
+}
+
+/** Chat の User の名前（users/<ID>）からアドレスの値（<ID>）を取る。users/<ID> の形でなければ null */
+export function googleChatAccount(userName: string | null | undefined): string | null {
+  const m = /^users\/([0-9]+)$/.exec(userName ?? '');
+  return m ? m[1]! : null;
+}
+
+/** ゲートウェイの User ID（Google でサインインしたとき google_<sub>）。Chat の users/<ID> の ID は sub と同じ（0045 の S0） */
+export function googleUserId(account: string): string {
+  return `google_${account}`;
+}
+
+/** ゲートウェイの User ID から Google のアカウントの ID（sub）を取る。Google でサインインしていなければ null */
+export function googleAccountOf(userId: string): string | null {
+  const m = /^google_([0-9]+)$/.exec(userId);
+  return m ? m[1]! : null;
+}
+
+export interface GoogleChatSpaceInput {
+  userId: string;
+  /** つなぐ人のゲートウェイの chat の接続 */
+  gatewayCredentialId: string;
+  /** スペースの名前（spaces/<ID>）と表示名 */
+  space: string;
+  spaceName: string;
+  threaded: boolean;
+  /** つなぐ人の Google のアカウントの ID（名乗り。sub） */
+  account: string;
+}
+
+/** Google Chat のスペースの共有リストを作る（あればそれを返す）。読者は見回りでスペースのメンバーから写す */
+export function connectGoogleChatSpace(draft: Seed, ctx: CoreContext, input: GoogleChatSpaceInput): SharedSpacePlan {
+  return connectSharedSpace(draft, ctx, {
+    userId: input.userId,
+    gatewayCredentialId: input.gatewayCredentialId,
+    channel: 'google-chat',
+    spaceKey: googleChatSpaceKey(input.space),
+    name: `${input.spaceName}（Google Chat）`,
+    description: `Google Chat のスペース ${input.spaceName}。読者はスペースのメンバー（0045・0037）`,
+    identity: input.account,
+    connector: { kind: 'google-chat', space: input.space, threaded: input.threaded },
+    group: true,
+  });
+}
+
+export interface GoogleChatDmInput {
+  userId: string;
+  /** 本人のゲートウェイの chat の接続 */
+  gatewayCredentialId: string;
+  /** 本人の表示名（データソースの名前に使う） */
+  displayName: string;
+  /** 本人の Google のアカウントの ID（sub）。リストでのアイデンティティ（チャネル google-chat）になる */
+  account: string;
+}
+
+/**
+ * 本人の Google Chat の DM・グループのチャット全体を個人リストとして作る（あればそれを返す）。1 人に 1 つ（0045 の決定 2）。
+ * ゲートウェイの接続を消して足し直したら、資格情報を新しい ID に付け替える（つなぎ直し）
+ */
+export function connectGoogleChatDms(draft: Seed, ctx: CoreContext, input: GoogleChatDmInput): MailboxPlan {
+  const user = draft.users.find((u) => u.id === input.userId);
+  if (!user) throw new DomainError('forbidden', `user ${input.userId} はまだサインインしていない`);
+  const found = draft.dataSources.find((ds): ds is ServiceDataSource => {
+    if (ds.kind !== 'service' || ds.connector?.kind !== 'google-chat-dm' || ds.shared) return false;
+    const cred = draft.credentialRefs.find((c) => c.id === ds.credentialRefId);
+    return cred?.principal.kind === 'user' && cred.principal.userId === input.userId;
+  });
+  if (found) {
+    const cred = draft.credentialRefs.find((c) => c.id === found.credentialRefId)!;
+    cred.gatewayCredentialId = input.gatewayCredentialId;
+    return { kind: 'exists', dataSource: found };
+  }
+  const name = input.displayName || user.name || input.account;
+  const created = createPersonalDataSource(
+    draft,
+    input.userId,
+    {
+      channel: 'google-chat',
+      name: `${name} の Google Chat のチャット`,
+      description: `${name} が入っている Google Chat の DM・グループのチャット。本人の同意で取り込む（読者は本人だけ。0045）`,
+      identity: input.account,
+      gatewayCredentialId: input.gatewayCredentialId,
+    },
+    ctx,
+  );
+  const dataSource = draft.dataSources.find((d) => d.id === created.dataSourceId) as ServiceDataSource;
+  dataSource.connector = { kind: 'google-chat-dm', account: input.account };
+  return { kind: 'created', dataSource, identity: created.identity };
+}
+
 // ---- 共有メールボックス（0042）: メンバーの委任で見回りで読む共有リスト ----
 
 export interface SharedMailboxInput {

@@ -46,3 +46,4 @@
 - [0042](0042-shared-mailbox-by-polling.md) 共有メールボックスは、メンバーの委任の権限で、見回りで読む
 - [0043](0043-drop-turn-vocabulary.md) 表の言葉から「番」をなくし、「担当」と「アテンション」で言う。タスクは担当のものと、アテンションのうち読んでタスクと分かったもの
 - [0044](0044-teams-chats-as-personal-list.md) Teams のチャット（1 対 1・グループ）を、本人の個人リストとして取り込む
+- [0045](0045-google-chat-spaces-and-chats.md) Google Chat のスペースを共有リストに、DM とグループのチャットを個人リストにする（スペースのタスクは入れない）

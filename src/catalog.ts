@@ -137,6 +137,13 @@ export function catalog(env: Env): Services {
       "https://www.googleapis.com",
       "https://www.googleapis.com/auth/tasks https://www.googleapis.com/auth/userinfo.email",
     ),
+    // Read spaces, members and messages, and post messages (Murmur's 0045). The Chat API asks for a Chat app
+    // configuration in the Google Cloud project even when it is called with user credentials.
+    chat: google(
+      "Google Chat",
+      "https://chat.googleapis.com",
+      "https://www.googleapis.com/auth/chat.spaces.readonly https://www.googleapis.com/auth/chat.memberships.readonly https://www.googleapis.com/auth/chat.messages.readonly https://www.googleapis.com/auth/chat.messages.create",
+    ),
     // A user token: Slack puts it under `authed_user` and takes its scopes as `user_scope`.
     // It does not expire unless the app turns on token rotation.
     slack: {

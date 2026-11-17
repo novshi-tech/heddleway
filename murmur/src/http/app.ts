@@ -18,7 +18,9 @@ import {
   ConnectGmailBody,
   ConnectSharedMailboxBody,
   ConnectGoogleTasksBody, ConnectJiraBody, ConnectOutlookBody, ConnectTeamsBody,
-  ConnectTeamsChatBody, ConnectTodoBody,
+  ConnectTeamsChatBody,
+  ConnectGoogleChatBody,
+  ConnectGoogleChatDmBody, ConnectTodoBody,
   DismissBody,
   GetThreadQuery,
   InboundItemBody,
@@ -289,6 +291,16 @@ export function createApp(opts: HttpOptions) {
   api.post('/connections/teams-chat', async (c) => {
     const b = ConnectTeamsChatBody.parse(await json(c));
     return c.json(await (await connectors(c)).connections.connectTeamsChat(c.var.userId, b.credential_id));
+  });
+
+  api.post('/connections/google-chat', async (c) => {
+    const b = ConnectGoogleChatBody.parse(await json(c));
+    return c.json(await (await connectors(c)).connections.connectGoogleChat(c.var.userId, { credentialId: b.credential_id, space: b.space }));
+  });
+
+  api.post('/connections/google-chat-dm', async (c) => {
+    const b = ConnectGoogleChatDmBody.parse(await json(c));
+    return c.json(await (await connectors(c)).connections.connectGoogleChatDm(c.var.userId, b.credential_id));
   });
 
   api.post('/connections/todo', async (c) => {

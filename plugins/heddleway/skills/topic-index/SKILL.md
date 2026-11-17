@@ -20,7 +20,7 @@ description: Heddleway のトピック索引(メール(Outlook・Gmail)・Teams�
 | タスク(自分のタスク) | 自分が担当のトピック、自分の To Do / Google Tasks のタスク、アテンションのうち読んでタスクと分かったもの。どれがタスクかはトピック索引では決まらないので、API の値の名前ではない | なし |
 | To Do のタスク / Google Tasks のタスク | ソースが To Do か Google Tasks のトピック(どちらを使うかは組織による)。作る・期限を変える・完了にするのは、そのアプリの側で。以下、2 つをまとめて言うときは「タスクのサービス」と書く | チャネル `todo`・`filter=mine` |
 | メッセージ | トピックに入るメール 1 通・投稿 1 つ・コメント 1 つ | `signal` |
-| リスト | ソースごとに 1 つの、トピックの入れ物。**個人リスト**(メンバーが本人 1 人。本人の Outlook / Gmail・本人の Teams のチャット・本人の To Do / Google Tasks のリスト)と**共有リスト**(Jira のプロジェクト・Teams のチャネル・共有メールボックスなど)の 2 つだけ | `data_source`・`list_id`(どちらも同じリストを指す) |
+| リスト | ソースごとに 1 つの、トピックの入れ物。**個人リスト**(メンバーが本人 1 人。本人の Outlook / Gmail・本人の Teams / Google Chat のチャット・本人の To Do / Google Tasks のリスト)と**共有リスト**(Jira のプロジェクト・Teams のチャネル・Google Chat のスペース・共有メールボックスなど)の 2 つだけ | `data_source`・`list_id`(どちらも同じリストを指す) |
 | メンバー | そのリストのトピックが見える人(トピック索引のユーザー) | `ListMember`・`userId` |
 | 担当 | このトピックを進める人。Jira などはソースの担当者、それ以外の共有リストは担当する操作(`claim`)で決まる。個人リストは全部が本人のものなので、担当とは言わない(残るのはアテンション) | `assignee` |
 | アテンション | 宛先から溜まる「少なくとも見てほしい」の印。宛先に入った人に付き、外すまで残る。同時に何人にも付く。中身はタスクかもしれないし FYI かもしれない(区別しない)。既読・未読とは連動しない | `attention`(`named`・`list`) |
@@ -58,11 +58,11 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/gw_request.py POST murmur /sent --json '{"da
 初めてつないだユーザーは名無しで、自分の連絡先もリストもない(`GET /me` が `contact: null`・`lists: []`)。次の順に案内する。
 
 1. 呼び方を聞いて `PATCH /me` で付ける
-2. 個人リストにするものは、組織のデプロイで決まる。Microsoft 365 の組織は Outlook(`POST /connections/outlook`)・To Do(`POST /connections/todo`)・Teams のチャット(`POST /connections/teams-chat`)、Google Workspace の組織は Gmail(`POST /connections/gmail`)と Google Tasks(`POST /connections/google-tasks`)。コネクタの `list_credentials` を見て、あるサービス(`graph` か `gmail`・`tasks`)のものだけを案内する。共有リストは、Jira のプロジェクトなら `POST /connections/jira`、Teams のチャネルなら `POST /connections/teams`、Microsoft 365 の共有メールボックスなら `POST /connections/shared-mailbox`(下の「Outlook をつなぐ」「Gmail をつなぐ」「To Do をつなぐ」「Google Tasks をつなぐ」「Teams のチャットをつなぐ」「Jira をつなぐ」「Teams をつなぐ」「共有メールボックスをつなぐ」)。トピック索引が取り込み続けるのはこの経路だけ
+2. 個人リストにするものは、組織のデプロイで決まる。Microsoft 365 の組織は Outlook(`POST /connections/outlook`)・To Do(`POST /connections/todo`)・Teams のチャット(`POST /connections/teams-chat`)、Google Workspace の組織は Gmail(`POST /connections/gmail`)・Google Tasks(`POST /connections/google-tasks`)・Google Chat のチャット(`POST /connections/google-chat-dm`)。コネクタの `list_credentials` を見て、あるサービス(`graph` か `gmail`・`tasks`・`chat`)のものだけを案内する。共有リストは、Jira のプロジェクトなら `POST /connections/jira`、Teams のチャネルなら `POST /connections/teams`、Google Chat のスペースなら `POST /connections/google-chat`、Microsoft 365 の共有メールボックスなら `POST /connections/shared-mailbox`(下の「Outlook をつなぐ」「Gmail をつなぐ」「To Do をつなぐ」「Google Tasks をつなぐ」「Teams のチャットをつなぐ」「Google Chat のチャットをつなぐ」「Jira をつなぐ」「Teams をつなぐ」「Google Chat のスペースをつなぐ」「共有メールボックスをつなぐ」)。トピック索引が取り込み続けるのはこの経路だけ
 3. ほかの自分のアカウント(Slack・LINE など)をリストにするなら、ゲートウェイでそのサービスがつながっているか(`list_credentials`)を先に確かめ、つないだアカウントのアドレスを `identity` にして `POST /data-sources` を呼ぶ。結果の `identity.kind`:
    - `created`: 自分の連絡先を新しく作った / `bound`: チームが先に作っていた仮の連絡先(まだ本人が登録していない連絡先)が自分に結ばれた / `attached`・`already`: 自分の連絡先に付いた
    - `merge_candidate`: そのアドレスは別の仮の連絡先(`ghostContactId`)に付いている。同じ人なら、ユーザーに確かめてから `POST /contacts/{自分の contactId}/merge` で `from` に仮の連絡先を渡してまとめる
-4. **共有リスト**(Jira のプロジェクト、Teams のチャネル、これから Slack のチャネル)は、スペースに 1 つ。そのスペースを読める人なら誰でもつなげ、メンバーはソースから自動で写る(Jira はプロジェクトを閲覧できる人のうち、自分の Jira をゲートウェイにつないでトピック索引を有効にした人。Teams はチャネルのメンバーのうち、このゲートウェイにサインインしたことのある人)。共有メールボックス・LINE 公式アカウントのメンバーは管理者が足す。メンバーになったリストで自分のアカウントを登録するなら `POST /lists/{list_id}/identity`
+4. **共有リスト**(Jira のプロジェクト、Teams のチャネル、Google Chat のスペース、これから Slack のチャネル)は、スペースに 1 つ。そのスペースを読める人なら誰でもつなげ、メンバーはソースから自動で写る(Jira はプロジェクトを閲覧できる人のうち、自分の Jira をゲートウェイにつないでトピック索引を有効にした人。Teams はチャネルのメンバーのうち、Google Chat はスペースのメンバーのうち、このゲートウェイにサインインしたことのある人)。共有メールボックス・LINE 公式アカウントのメンバーは管理者が足す。メンバーになったリストで自分のアカウントを登録するなら `POST /lists/{list_id}/identity`
 5. タスクで追うなら、タスクのサービスのリストをつなぐ(下の「To Do をつなぐ」「Google Tasks をつなぐ」)。メモ(`add_note`)は個人リストのトピックに書くので、メール(Outlook・Gmail)かタスクのサービスをつないでから使える
 
 ### Outlook をつなぐ
@@ -137,6 +137,26 @@ Teams はチャネルを 1 つの**共有リスト**にする。メンバーは�
 4. 取り込むのはつないだあとの投稿と返信だけ(過去の投稿は取らない)。チャネルの投稿 1 つ(と返信)が 1 トピック。`created: false`・止めるとき・`broken` は Jira と同じ
 5. チャットのトピックには担当者がないので、メンションされた人にアテンション(`attention.named`)が付き、メンションのない投稿はチャネルのメンバー全員へのリスト宛てのアテンション(`attention.list`)になる。担当は `claim` で決める。「これは私がやる」と言われたら `claim` する。担当がいなければ割当待ち(`triage`)
 
+### Google Chat のチャットをつなぐ(本人の DM・グループの個人リスト)
+
+本人が入っている Google Chat の DM(1 対 1)とグループのチャット全体を、本人だけがメンバーの**個人リスト** 1 つとして取り込む(Google Workspace の組織)。DM を 1 つずつ選ぶことはない(新しくできた DM も入る)。アプリ(ボット)との DM と、スペースは取り込まない(スペースは下の「Google Chat のスペースをつなぐ」)。読むのはゲートウェイの Google Chat の接続(サービス名 `chat`)で、同意は Outlook と同じもの。Google でサインインするゲートウェイだけで使える。変更の通知は使わず、5 分ごとの見回りで動いた DM だけを読む(届いてから最大 5 分ほど遅れる)。
+
+1. ゲートウェイで Google Chat がつながっているか(`list_credentials` にサービス `chat` の接続があるか)を確かめる。なければ先にゲートウェイでつないでもらう
+2. `POST /connections/google-chat-dm`(本文は `{"credential_id"?}`)を呼び、`status` で分ける。`authorize`・`choose`・`no_credential`・`connected` は Outlook と同じ。`forbidden` は Google でサインインしていない。`conflict` は、その接続でチャットを読めない(ゲートウェイで接続をつなぎ直してもらう)
+3. 取り込むのはつないだあとのメッセージだけ(過去のメッセージは取らない)。1 つの DM・グループの中で話題ごとにトピックが分かれる(別の DM のメッセージが同じトピックに入ることはない)
+4. アテンション: DM は相手からのメッセージ全部が本人へのアテンションになる。グループは本人へのメンションだけがアテンションになる
+5. チャットで送ったら `record_sent` で記録する(下の「送信の記録」の「Google Chat で送った」)。止めるとき・`broken` は Outlook と同じ
+
+### Google Chat のスペースをつなぐ(スペースの共有リスト)
+
+Google Chat はスペースを 1 つの**共有リスト**にする(Google Workspace の組織)。メンバーはスペースのメンバーのうち、このゲートウェイにサインインしたことのある人(Google のアカウントの ID で対応が付く。アカウントの登録は要らない)で、トピック索引が 1 時間ごとにソースから写す。同じスペースを誰がつないでも同じリストになる。読むのはゲートウェイの Google Chat の接続(サービス名 `chat`)で、同意は Outlook と同じもの。Google でサインインするゲートウェイだけで使える。変更の通知は使わず、5 分ごとの見回りで読む。
+
+1. ゲートウェイで Google Chat がつながっているか(`list_credentials`)を確かめる。なければ先にゲートウェイでつないでもらう
+2. `POST /connections/google-chat` を呼び、`status` で分ける。`authorize`・`choose`・`no_credential` は Outlook と同じ。`choose_space` なら `spaces`(`[{id, name}]`。`id` は `spaces/...`)からユーザーに選んでもらい、`space`(その `id`)を付けてもう一度呼ぶ。`forbidden` は、このデプロイで Google Chat の共有リストを管理者が許していない(デプロイの設定 `MURMUR_SHARED_SERVICES` に `google-chat`。管理者に伝える)か、Google でサインインしていない
+3. `connected` で `created: true` なら、新しく作った。**スペースに「このスペースをトピック索引で追い始めた」ことを知らせる**(ユーザーに文面を確かめて、google-chat スキルで投稿)。投稿したら `record_sent` で記録する
+4. 取り込むのはつないだあとのメッセージだけ。スレッドを使うスペースでは、スレッド 1 つ(最初のメッセージと返信)が同じトピックに入る。スレッドを使わないスペースでは、メッセージごとに話題で分かれる。アプリ(ボット)の投稿は取り込まない。`created: false`・止めるとき・`broken` は Jira と同じ
+5. アテンションと担当は Teams のチャネルと同じ: メンションされた人にアテンションが付き、メンションのないメッセージはスペースのメンバー全員へのリスト宛てのアテンションになる。担当は `claim` で決める。担当がいなければ割当待ち(`triage`)。スペースの「タスク」タブのタスクは取り込まない(公開の API で読めないため)
+
 ### 共有メールボックスをつなぐ(Microsoft 365 の共有メールボックスの共有リスト)
 
 共有メールボックス(`support@` のようなチームの共有のアドレス)は、箱を 1 つの**共有リスト**にする。読むのはゲートウェイの Microsoft Graph の接続(本人の委任。Exchange で箱のフルアクセスを持っている人なら読める)で、同意は Outlook と同じもの。メンバーは、**自分でこの箱をつないで、自分の接続で箱を読めた人**だけ(Graph からは箱のアクセス権の一覧が読めないため)。トピック索引が 1 時間ごとに、メンバーそれぞれの接続で読めるかを確かめ直し、読めなくなった人はメンバーから外れる。同じ箱を誰がつないでも同じリストになる。変更の通知は使わず、5 分ごとの見回りで取り込む(届いてから最大 5 分ほど遅れる)。
@@ -202,6 +222,8 @@ Teams はチャネルを 1 つの**共有リスト**にする。メンバーは�
   - `jira`: `cloudId`・`site`・`projectKey`。課題は `source.key`(jira スキル)。画面の URL は `{site}/browse/{source.key}`
   - `teams`: `teamId`・`channelId`。投稿はタイムラインのメッセージの `anchors.messageId`、返信の親は `anchors.threadTs`(`/teams/{teamId}/channels/{channelId}/messages/{id}`)
   - `teams-chat`: 本人の Teams のチャット。どのチャットかはタイムラインのメッセージの `anchors.conversationId`(チャットの ID)、メッセージは `anchors.messageId`(`/chats/{conversationId}/messages/{messageId}`。返信も同じチャットに投稿する)
+  - `google-chat`: `space`(`spaces/...`)。メッセージはタイムラインのメッセージの `anchors.messageId`(`spaces/.../messages/...`。google-chat スキルでそのまま `GET /v1/{messageId}`)、スレッドは `anchors.threadTs`(`spaces/.../threads/...`。返信はそのスレッドに投稿する)
+  - `google-chat-dm`: 本人の Google Chat の DM・グループ。どれかはタイムラインのメッセージの `anchors.conversationId`(`spaces/...`)、メッセージは `anchors.messageId`
   - `graph-mail` / `gmail`: `mailbox`(本人の箱)。メールはタイムラインのメッセージの `anchors.messageId`(Message-ID)で探す。Outlook は `$filter=internetMessageId eq '<…>'`、Gmail は `q=rfc822msgid:<…>`
 - 読むときも、そのリストと同じ組織のコネクタを使う
 
@@ -248,9 +270,11 @@ Teams はチャネルを 1 つの**共有リスト**にする。メンバーは�
 | connect_google_tasks | `POST /connections/google-tasks` | `{"credential_id"?, "list"?}`(`list` は `choose_list` の `lists[].id`) | `connect_todo` と同じ(`wellknown` は常に `null`)。リストごとに呼ぶ(いくつでもつなげる)。上の「Google Tasks をつなぐ」 |
 | connect_jira | `POST /connections/jira` | `{"credential_id"?, "site"?, "project"?}`(`site` は `choose_site` の `sites[].id`、`project` は `choose_project` の `projects[].key`) | `connect_outlook` と同じ + `choose_site`(`sites`)・`choose_project`(`projects`)。`forbidden` はデプロイで許していない。上の「Jira をつなぐ」 |
 | connect_teams_chat | `POST /connections/teams-chat` | `{"credential_id"?}`(ゲートウェイの Graph の接続。複数あるときだけ) | `connect_outlook` と同じ。`forbidden` は Entra ID でない。上の「Teams のチャットをつなぐ」 |
+| connect_google_chat_dm | `POST /connections/google-chat-dm` | `{"credential_id"?}`(ゲートウェイの Google Chat の接続。複数あるときだけ) | `connect_outlook` と同じ。`forbidden` は Google でサインインしていない。上の「Google Chat のチャットをつなぐ」 |
+| connect_google_chat | `POST /connections/google-chat` | `{"credential_id"?, "space"?}`(`space` は `choose_space` の `spaces[].id`) | `connect_outlook` と同じ + `choose_space`(`spaces`)。`forbidden` はデプロイで許していないか Google でサインインしていない。上の「Google Chat のスペースをつなぐ」 |
 | connect_teams | `POST /connections/teams` | `{"credential_id"?, "team"?, "channel"?}`(`team` は `choose_team` の `teams[].id`、`channel` は `choose_channel` の `channels[].id`) | `connect_outlook` と同じ + `choose_team`(`teams`)・`choose_channel`(`channels`)。`forbidden` はデプロイで許していないか Entra ID でない。上の「Teams をつなぐ」 |
 | connect_shared_mailbox | `POST /connections/shared-mailbox` | `{"mailbox", "credential_id"?}`(`mailbox` は共有メールボックスのアドレス) | `connect_outlook` と同じ。`forbidden` はデプロイで許していないか、その接続で箱を読めない。上の「共有メールボックスをつなぐ」 |
-| list_connections | `GET /connections` | | 自分がつないだものと、メンバーになっている共有リスト(`kind`: `outlook` / `shared-mailbox` / `gmail` / `todo` / `google-tasks` / `jira` / `teams` / `teams-chat`、共有メールボックスは `mailbox`(箱のアドレス)、To Do と Google Tasks は `list`(リストの名前)、Jira は `site`・`project`、Teams は `team`・`channel`、共有リストは `shared: true`・`created_by`)と取り込みの状態(`status`: `setup` / `ok` / `broken`(`reason`) / `disconnected`)、`last_sync_at` |
+| list_connections | `GET /connections` | | 自分がつないだものと、メンバーになっている共有リスト(`kind`: `outlook` / `shared-mailbox` / `gmail` / `todo` / `google-tasks` / `jira` / `teams` / `teams-chat` / `google-chat` / `google-chat-dm`、共有メールボックスは `mailbox`(箱のアドレス)、To Do と Google Tasks は `list`(リストの名前)、Jira は `site`・`project`、Teams は `team`・`channel`、Google Chat のスペースは `space`、共有リストは `shared: true`・`created_by`)と取り込みの状態(`status`: `setup` / `ok` / `broken`(`reason`) / `disconnected`)、`last_sync_at` |
 | disconnect | `POST /connections/{data_source}/disconnect` | | 取り込みを止める。共有リストは作った人と管理者だけ。トピックとリストは残る |
 | create_data_source | `POST /data-sources` | `{"channel", "name", "identity", "gateway_credential_id", "description"?, "group"?}`。個人リスト(メンバーは自分だけ)を作る | `get_list` と同じ + `identity`(上の「初めてつないだとき」) |
 | set_identity | `POST /lists/{list_id}/identity` | `{"identity"}`(そのリストでの自分のアカウントを登録する) | `identity` の結果(`kind`・`contactId`) |
@@ -298,6 +322,7 @@ Teams はチャネルを 1 つの**共有リスト**にする。メンバーは�
 - **Jira の起票**: `sent_ref` に課題キー、`anchors.thread_key` にも同じ課題キーを入れる。`to_contact_ids` は担当者、`source_thread_id` に起票の元になったトピック(LINE・メール・Slack など)。課題のトピックができて元のトピックと `sent` のきっかけで結ばれ、課題の状態(写し)とコメントはそのトピックに入る
 - **Jira のコメント**: `sent_ref` にコメント ID、`anchors.thread_key` に課題キー、`reply_to_thread_id` に課題のトピック
 - **Teams のチャットで送った**: `data_source` に本人の Teams のチャットのリスト、`sent_ref` に投稿の API が返したメッセージの `id`、`anchors.conversation_id` にチャットの ID、グループのチャットなら `anchors.conversation_group: true`。`to` は 1 対 1 なら相手、グループならメンションした人の Teams のアドレス(`<テナント ID>/<オブジェクト ID>`)。会話を付けないと、相手の返事がそのトピックに入らないことがある
+- **Google Chat で送った**: `data_source` に送ったリスト(スペースの共有リストか、本人の Google Chat のチャットのリスト)、`sent_ref` に投稿の API が返したメッセージの `name`(`spaces/.../messages/...`)。スレッドに返信したら `anchors.thread_ts` にスレッドの `name`(`spaces/.../threads/...`)。DM・グループで送ったら `anchors.conversation_id` にスペースの `name`、グループのチャットなら `anchors.conversation_group: true`。`to` は DM なら相手、スペース・グループならメンションした人の Google のアカウントの ID(`users/<ID>` の `<ID>`)。メンションしていなければ `to_contact_ids` にスペースで返事をもらいたい人の連絡先を入れる
 - **To Do / Google Tasks のタスクを作った**: `data_source` にタスクのリスト、`sent_ref` にタスクの `id`(To Do は「変わらない ID」。microsoft-graph スキルの To Do の手順どおり `Prefer: IdType="ImmutableId"` を付けて作ったときに返る、`AAkALgAAAAAA` で始まる短い ID。`AAMk` で始まる長い ID を渡すと、同じタスクが 2 つのトピックに分かれる)、`subject` にタスクの名前、`source_thread_id` に元のトピック。`to` は要らない。タスクの ID がそのトピックの区切りになり、あとから届く写し(件名・期限・完了)も同じトピックに入る
 
 ## よくある流れ
