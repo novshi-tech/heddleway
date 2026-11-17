@@ -65,6 +65,9 @@ export const RecordSentBody = z
         in_reply_to: z.string().optional(),
         thread_ts: z.string().optional(),
         quoted_message_id: z.string().optional(),
+        /** Teams のチャットの ID と、グループのチャットか（0044。チャットで送ったときに渡す） */
+        conversation_id: z.string().optional(),
+        conversation_group: z.boolean().optional(),
         thread_key: z.string().optional(),
         jira_keys: z.array(z.string()).optional(),
         pr_refs: z.array(z.string()).optional(),
@@ -164,6 +167,9 @@ export const ConnectSharedMailboxBody = z.object({
 
 /** Jira をつなぐ（0034）。site はサイトの cloudId（choose_site で返したもの）、jql は範囲（省けば担当・起票・ウォッチ） */
 /** Teams のチャネルを共有リストとしてつなぐ（0036・0037）。team・channel を省くと一覧（choose_team・choose_channel）を返す */
+/** POST /api/connections/teams-chat（0044）。本人の Teams のチャット全体。credential_id はゲートウェイの Graph の接続 */
+export const ConnectTeamsChatBody = z.object({ credential_id: z.string().min(1).optional() });
+
 export const ConnectTeamsBody = z.object({
   credential_id: z.string().min(1).optional(),
   team: z.string().min(1).optional(),

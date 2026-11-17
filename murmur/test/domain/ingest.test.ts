@@ -193,6 +193,52 @@ describe('区切り（H6）', () => {
     });
   });
 
+  it('H6 会話（Teams のチャット。0044）のあるシグナルは、候補を同じ会話のスレッドに限る', () => {
+    const log = new EventLog();
+    const ctx = makeCtx();
+    const chat = (sourceRef: string, conversationId: string, conversationGroup = false, from = 'carol@example.com') =>
+      email({ dataSourceId: 'ds_alice', from, to: ['alice@ubs.example'], sourceRef, anchors: { conversationId, conversationGroup } });
+    const a = ingestPure(log, ctx, chat('a1', 'chat_A'), () => answer({ title: 'A の件' }));
+    // 同じ相手でも、別の会話のスレッドは候補にならない
+    const b = ingestPure(log, ctx, chat('b1', 'chat_B'), (req) => {
+      expect(req.mode).toBe('new');
+      return answer({ title: 'B の件' });
+    });
+    expect(b.outcome!.threadId).not.toBe(a.outcome!.threadId);
+    ingestPure(log, ctx, chat('a2', 'chat_A'), (req) => {
+      expect(req.candidates.map((c) => c.threadId)).toEqual([a.outcome!.threadId]);
+      return answer({ thread: 'existing', thread_id: a.outcome!.threadId });
+    });
+    // グループの会話は、相手が違っても同じ会話のスレッドが候補になる（グループのチャネルと同じ）
+    const g = ingestPure(log, ctx, chat('g1', 'chat_G', true), () => answer({ title: 'G の件' }));
+    ingestPure(log, ctx, chat('g2', 'chat_G', true, 'dave@example.com'), (req) => {
+      expect(req.dataSource.group).toBe(true);
+      expect(req.candidates.map((c) => c.threadId)).toEqual([g.outcome!.threadId]);
+      return answer({ thread: 'existing', thread_id: g.outcome!.threadId });
+    });
+    // 会話のないシグナル（メール）は今のまま、同じ相手の直近のスレッドが候補になる
+    ingestPure(log, ctx, email({ dataSourceId: 'ds_alice', from: 'carol@example.com', to: ['alice@ubs.example'], sourceRef: 'm1' }), (req) => {
+      expect(req.candidates.length).toBeGreaterThanOrEqual(2);
+      return answer();
+    });
+  });
+
+  it('H8 個人リストのグループの会話（0044）では、宛先のない投稿も本人が宛先にない投稿もリスト宛てにしない。1 対 1 の会話は今のまま', () => {
+    const log = new EventLog();
+    const ctx = makeCtx();
+    const chat = (sourceRef: string, conversationId: string, conversationGroup: boolean, to: string[]) =>
+      email({ dataSourceId: 'ds_alice', from: 'carol@example.com', to, sourceRef, anchors: { conversationId, conversationGroup } });
+    const none = ingestPure(log, ctx, chat('g1', 'chat_G', true, []), () => answer());
+    const other = ingestPure(log, ctx, chat('g2', 'chat_H', true, ['dave@example.com']), () => answer());
+    const direct = ingestPure(log, ctx, chat('d1', 'chat_D', false, []), () => answer());
+    expect(view(log.state(), none.outcome!.threadId).attention.list).toBeNull();
+    expect(view(log.state(), other.outcome!.threadId).attention.list).toBeNull();
+    expect(view(log.state(), direct.outcome!.threadId).attention.list).toMatchObject({ userIds: ['u_alice'] });
+    // グループでも本人へのメンション（宛先）は名指し
+    const mention = ingestPure(log, ctx, chat('g3', 'chat_M', true, ['alice@ubs.example']), () => answer());
+    expect(view(log.state(), mention.outcome!.threadId).attention.named).toMatchObject([{ userId: 'u_alice' }]);
+  });
+
   it('H6 観測された送信は構造で決まれば AI を呼ばない。候補があれば区切りだけ AI に聞く', () => {
     const log = new EventLog();
     const ctx = makeCtx();

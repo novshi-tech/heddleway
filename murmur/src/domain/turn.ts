@@ -105,10 +105,17 @@ export interface Attention {
 }
 
 /** スレッドのシグナルのうち、送り主を除いた宛先と位置（ログの順） */
-function signalsOf(t: Thread): (LogPos & { from: AddressRef; to: AddressRef[] })[] {
+function signalsOf(t: Thread): (LogPos & { from: AddressRef; to: AddressRef[]; conversationGroup?: boolean })[] {
   return t.log
     .filter((e) => e.kind === 'signal' && e.from !== undefined)
-    .map((e) => ({ signalId: e.signalId!, at: e.at, seq: e.seq, from: e.from!, to: (e.to ?? []).filter((r) => !sameAddress(r, e.from!)) }));
+    .map((e) => ({
+      signalId: e.signalId!,
+      at: e.at,
+      seq: e.seq,
+      from: e.from!,
+      to: (e.to ?? []).filter((r) => !sameAddress(r, e.from!)),
+      ...(e.conversationGroup !== undefined ? { conversationGroup: e.conversationGroup } : {}),
+    }));
 }
 
 /**
@@ -116,6 +123,8 @@ function signalsOf(t: Thread): (LogPos & { from: AddressRef; to: AddressRef[] })
  * - 窓口のアドレス（データソースの selfAddresses）が宛先にある
  * - グループのチャネル（Teams・Slack）で宛先がない。状態を持つソース（Jira など）は共有リストでも含めない
  * - 個人リストで、こちらでない送り主から、本人のアドレスが宛先にない受信（エイリアス・BCC・配布リスト宛て）
+ * - 会話のあるシグナル（Teams のチャット。0044）は、会話の種類で決める。グループの会話は窓口のアドレス宛てのものだけ
+ *   （メンションのない投稿・ほかの人へのメンションは本人へのアテンションにしない）。1 対 1 の会話は上の個人リストの規則のまま
  */
 export function listSignalsOf(dir: Directory, t: Thread): (LogPos & { from: AddressRef })[] {
   const ds = dir.dataSource(t.dataSourceId);
@@ -124,6 +133,7 @@ export function listSignalsOf(dir: Directory, t: Thread): (LogPos & { from: Addr
   return signalsOf(t)
     .filter((x) => {
       if (x.to.some((r) => isListAddress(ds, r))) return true;
+      if (x.conversationGroup === true) return false;
       // 宛先のない投稿をリスト宛てにするのは、チャットのチャネルと、個人の箱に届いた受信（BCC だけで届く通知など。届いた以上は本人宛て）。
       // 状態を持つソース（Jira のメンションのないコメント・担当者のいない起票）は名指しなし（0038 の未決 3）
       if (x.to.length === 0) return !isStatefulSource(ds) && (ds.group || (personal && !isOurs(dir, ds, x.from, x.at)));

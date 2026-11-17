@@ -8,6 +8,7 @@ import { counterIds, makeService } from '../helpers/service';
 import { FakeGraph } from '../helpers/fake-graph';
 import { FakeJira } from '../helpers/fake-jira';
 import { FakeTeams } from '../helpers/fake-teams';
+import { FakeTeamsChat } from '../helpers/fake-teams-chat';
 import { FakeTodo } from '../helpers/fake-todo';
 import { FakeGtasks } from '../helpers/fake-gtasks';
 import { FakeGmail } from '../helpers/fake-gmail';
@@ -19,7 +20,7 @@ import { seed } from '../helpers/world';
 const GATEWAY = 'https://gateway.test';
 
 /** 種類ごとのゲートウェイの接続先（本物は組み立て時に決まる。Teams は Graph の接続で読む） */
-const serviceOf = (kind: UpstreamKind) => (kind === 'teams' ? 'graph' : kind === 'gtasks' ? 'tasks' : kind);
+const serviceOf = (kind: UpstreamKind) => (kind === 'teams' || kind === 'teams-chat' ? 'graph' : kind === 'gtasks' ? 'tasks' : kind);
 
 /** ゲートウェイの口の偽物。本人が「有効にする」を押すと同意が残り、コールバックに本人のコードで戻ってくる */
 class FakeGatewayPort implements GatewayPort {
@@ -79,6 +80,7 @@ describe('H3 個人の箱をつなぐ', () => {
   let jira: FakeJira;
   let sharedServices: string[];
   let teams: FakeTeams;
+  let teamsChat: FakeTeamsChat;
   let todo: FakeTodo;
   let gtasks: FakeGtasks;
   let gmail: FakeGmail;
@@ -97,6 +99,7 @@ describe('H3 個人の箱をつなぐ', () => {
       graphFor: (call) => graphsOf.get((call as { userId?: string }).userId ?? '') ?? new FakeGraph({ id: 'oid', displayName: 'Bob', addresses: ['bob@ubs.example', 'bob.alias@ubs.example'] }),
       jiraFor: () => jira,
       teamsFor: () => teams,
+      teamsChatFor: () => teamsChat,
       todoFor: () => todo,
       gtasksFor: () => gtasks,
       gmailFor: () => gmail,
@@ -123,6 +126,7 @@ describe('H3 個人の箱をつなぐ', () => {
     now = '2026-10-30T00:00:00.000Z';
     jira = new FakeJira(() => now);
     teams = new FakeTeams(() => now);
+    teamsChat = new FakeTeamsChat();
     todo = new FakeTodo(undefined, { id: 'oid_bob', displayName: 'Bob', addresses: ['bob.todo@ubs.example'] });
     gtasks = new FakeGtasks(undefined, 'bob@gws.example');
     gmail = new FakeGmail('bob@gws.example', [
@@ -685,6 +689,46 @@ describe('H3 個人の箱をつなぐ', () => {
       expect(await ctx.connections.connectGmail('u_bob')).toMatchObject({ status: 'connected', created: false });
       expect(await state.source(id)).toMatchObject({ status: 'setup', gatewayCredentialId: 'gw_gmail', connectedAt: first!.connectedAt, gmail: { historyId: '4242' } });
       expect(queued).toEqual([{ kind: 'setup', dataSourceId: id }]);
+    });
+  });
+
+  describe('H3 Teams のチャット（0044）', () => {
+    const TID = '11111111-1111-1111-1111-111111111111';
+    const BOB = '22222222-2222-2222-2222-222222222222';
+    const U_BOB = `entra_${TID}_${BOB}`;
+
+    beforeEach(async () => {
+      ctx = await setup({ ...seed, users: [...seed.users, { id: U_BOB, name: 'Bob' }] });
+      gw.credentialsOf.set(U_BOB, [{ id: 'gw_bob_graph', service: 'graph', label: 'ubs' }]);
+      teamsChat.displayName = 'Bob Tanaka';
+    });
+
+    it('同意 → 本人のチャット全体を個人リストにし、setup を積む。何度つないでも 1 つ。共有リストの許可は要らない', async () => {
+      const first = await ctx.connections.connectTeamsChat(U_BOB);
+      expect(first.status).toBe('authorize');
+      gw.approve(U_BOB);
+      const r = await ctx.connections.connectTeamsChat(U_BOB);
+      expect(r).toMatchObject({ status: 'connected', created: true, data_source: { name: 'Bob Tanaka の Teams のチャット' } });
+      const dir = await ctx.service.directory();
+      const ds = dir.seed.dataSources.find((d) => d.kind === 'service' && d.connector?.kind === 'teams-chat')!;
+      expect(ds).toMatchObject({ channel: 'teams', group: false, connector: { kind: 'teams-chat', tenantId: TID, objectId: BOB } });
+      expect(ds.kind === 'service' && ds.shared).toBeFalsy();
+      expect(dir.readersOfList(dir.seed.lists.find((l) => l.dataSourceId === ds.id)!.id)).toEqual([U_BOB]);
+      expect(await state.source(ds.id)).toMatchObject({ kind: 'teams-chat', userId: U_BOB, gatewayCredentialId: 'gw_bob_graph', status: 'setup', teamsChat: { syncedUntil: now, chats: {} } });
+      expect(queued).toEqual([{ kind: 'setup', dataSourceId: ds.id }]);
+      expect(await ctx.connections.list(U_BOB)).toEqual([expect.objectContaining({ kind: 'teams-chat', status: 'setup' })]);
+      // 動いていれば、もう一度つないでも作り直さず、積み直さない
+      await state.putSource({ ...(await state.source(ds.id))!, status: 'ok' });
+      expect(await ctx.connections.connectTeamsChat(U_BOB)).toMatchObject({ status: 'connected', created: false, data_source: { id: ds.id } });
+      expect(queued).toHaveLength(1);
+    });
+
+    it('Entra でサインインしていなければ断る。チャットを読めない接続は、ゲートウェイでつなぎ直すよう伝える', async () => {
+      gw.approve('u_bob');
+      await expect(ctx.connections.connectTeamsChat('u_bob')).rejects.toMatchObject({ code: 'forbidden' });
+      gw.approve(U_BOB);
+      teamsChat.authBroken = true;
+      await expect(ctx.connections.connectTeamsChat(U_BOB)).rejects.toMatchObject({ code: 'conflict' });
     });
   });
 

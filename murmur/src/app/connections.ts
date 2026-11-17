@@ -1,6 +1,7 @@
-import { addSharedReader, canDisconnect, connectSharedMailbox, connectJiraProject, connectorOwner, connectTaskList, connectTeamsChannel, deriveViewer, DomainError, teamsAddress, connectMailbox, replaceSharedCredential, syncSharedReaders, type ServiceDataSource } from '../domain';
+import { addSharedReader, canDisconnect, connectSharedMailbox, connectJiraProject, connectorOwner, connectTaskList, connectTeamsChannel, connectTeamsChats, deriveViewer, DomainError, teamsAddress, connectMailbox, replaceSharedCredential, syncSharedReaders, type ServiceDataSource } from '../domain';
 import { jiraMembers } from '../connectors/jira/readers';
 import type { TeamRef, TeamsApi } from '../connectors/teams/api';
+import type { TeamsChatApi } from '../connectors/teams-chat/api';
 import type { TodoApi } from '../connectors/todo/api';
 import type { GtasksApi } from '../connectors/gtasks/api';
 import { listDisplayName } from '../connectors/gtasks/task';
@@ -23,6 +24,7 @@ import type { MurmurService } from './service';
 // Jira（0034）も同じ同意で、ゲートウェイの jira の接続からサイトを選び、本人の JQL の範囲を個人リストにする。
 // Gmail（0041）も同じ同意で、ゲートウェイの gmail の接続から本人のメールボックスを個人リストにする（Outlook と同じ流れ）。
 // To Do（0039）も同じ同意で、ゲートウェイの graph の接続からタスクのリストを 1 つ選んで個人リストにする。
+// Teams のチャット（0044）も同じ同意で、ゲートウェイの graph の接続から本人のチャット全体を個人リストにする。
 // 共有メールボックス（0042）も同じ同意で、ゲートウェイの graph の接続（委任の Mail.Read.Shared）で箱を読み、共有リストにする。
 
 /** 認可の途中の state の寿命 */
@@ -36,6 +38,7 @@ export interface ConnectionsDeps {
   graphFor(call: UpstreamCall): GraphApi;
   jiraFor(call: UpstreamCall): JiraApi;
   teamsFor(call: UpstreamCall): TeamsApi;
+  teamsChatFor(call: UpstreamCall): TeamsChatApi;
   todoFor(call: UpstreamCall): TodoApi;
   gtasksFor(call: UpstreamCall): GtasksApi;
   gmailFor(call: UpstreamCall): GmailApi;
@@ -92,7 +95,7 @@ export interface ConnectGoogleTasksInput {
 export interface ConnectionView {
   data_source: string;
   name: string;
-  kind: 'outlook' | 'shared-mailbox' | 'gmail' | 'jira' | 'teams' | 'todo' | 'google-tasks';
+  kind: 'outlook' | 'shared-mailbox' | 'gmail' | 'jira' | 'teams' | 'teams-chat' | 'todo' | 'google-tasks';
   /** 共有メールボックス: 箱のアドレス */
   mailbox?: string;
   /** Jira: サイトとプロジェクト */
@@ -139,6 +142,11 @@ export class Connections {
   /** Teams のチャネルを共有リストとしてつなぐ（0036・0037。同意は Outlook と同じもの。ゲートウェイの graph の接続で読む） */
   async connectTeams(userId: string, input: ConnectTeamsInput = {}): Promise<ConnectResult> {
     return this.connect(userId, input.credentialId ?? null, { kind: 'teams', teamId: input.teamId, channelId: input.channelId });
+  }
+
+  /** 本人の Teams のチャット全体を個人リストとしてつなぐ（0044。同意は Outlook と同じもの。ゲートウェイの graph の接続で読む） */
+  async connectTeamsChat(userId: string, credentialId?: string): Promise<ConnectResult> {
+    return this.connect(userId, credentialId ?? null, { kind: 'teams-chat' });
   }
 
   /** To Do のタスクのリストを個人リストとしてつなぐ（0039。同意は Outlook と同じもの。ゲートウェイの graph の接続で読む） */
@@ -202,7 +210,9 @@ export class Connections {
               ? `${result.data_source.name} をつなぎました。これから更新される課題を取り込みます（過去のコメントは取りません）。`
               : request.kind === 'todo' || request.kind === 'google-tasks'
                 ? `${result.data_source.name} をつなぎました。リストの開いているタスクと、これから変わるタスクを取り込みます。`
-                : `${result.data_source.name} をつなぎました。これから届くメールを取り込みます（過去のメールは取りません）。`,
+                : request.kind === 'teams-chat'
+                  ? `${result.data_source.name} をつなぎました。これから届くチャットのメッセージを取り込みます（過去のメッセージは取りません）。`
+                  : `${result.data_source.name} をつなぎました。これから届くメールを取り込みます（過去のメールは取りません）。`,
         };
       case 'choose':
         return { ok: true, message: `ゲートウェイに ${label} の接続が複数あります。エージェント（Claude など）に戻って、どれをつなぐか選んでください。` };
@@ -216,7 +226,7 @@ export class Connections {
   }
 
   private kindOf(request: NonNullable<PendingAuthorization['request']>): UpstreamKind {
-    return request.kind === 'jira' ? 'jira' : request.kind === 'teams' ? 'teams' : request.kind === 'google-tasks' ? 'gtasks' : request.kind === 'gmail' ? 'gmail' : 'graph';
+    return request.kind === 'jira' ? 'jira' : request.kind === 'teams' ? 'teams' : request.kind === 'teams-chat' ? 'teams-chat' : request.kind === 'google-tasks' ? 'gtasks' : request.kind === 'gmail' ? 'gmail' : 'graph';
   }
 
   private async connectWithGrant(
@@ -233,6 +243,7 @@ export class Connections {
     if (!chosen) return { status: 'choose', credentials: creds };
     if (request.kind === 'jira') return this.connectJiraWith(userId, chosen.id, request);
     if (request.kind === 'teams') return this.connectTeamsWith(userId, chosen.id, request);
+    if (request.kind === 'teams-chat') return this.connectTeamsChatWith(userId, chosen.id);
     if (request.kind === 'todo') return this.connectTodoWith(userId, chosen.id, request);
     if (request.kind === 'google-tasks') return this.connectGoogleTasksWith(userId, chosen.id, request);
     if (request.kind === 'gmail') return this.connectGmailWith(userId, chosen.id);
@@ -258,6 +269,45 @@ export class Connections {
         reason: null,
         folders: keep ? keep.folders : {},
         connectedAt: keep ? keep.connectedAt : this.deps.now(),
+        lastSyncAt: current?.lastSyncAt ?? null,
+        lastRetryAt: null,
+      });
+      await this.deps.queue.send({ kind: 'setup', dataSourceId: ds.id });
+    }
+    return { status: 'connected', data_source: { id: ds.id, name: ds.name }, created: plan.kind === 'created' };
+  }
+
+  /**
+   * 本人の Teams のチャット全体（0044）。Entra でサインインするゲートウェイだけ（購読の /users/{oid} とアドレスに本人の oid を使う）。
+   * チャットの一覧を 1 ページ読んで、この接続でチャットが読めることを確かめてからつなぐ
+   */
+  private async connectTeamsChatWith(userId: string, credentialId: string): Promise<ConnectResult> {
+    const me = /^entra_([0-9a-f-]+)_([0-9a-f-]+)$/i.exec(userId);
+    if (!me) throw new DomainError('forbidden', 'Teams のチャットは、Microsoft Entra ID でサインインするゲートウェイだけで使える');
+    const [, tenantId, objectId] = me as unknown as [string, string, string];
+    const api = this.deps.teamsChatFor(await this.deps.gateway.upstream(userId, credentialId, 'teams-chat'));
+    const { displayName } = await api.me();
+    await api.chats();
+    const { result: plan } = await this.deps.service.changeMaster(userId, 'Teams のチャットをつなぐ', (d, ctx) =>
+      connectTeamsChats(d, ctx, { userId, gatewayCredentialId: credentialId, displayName, tenantId, objectId }),
+    );
+    const ds = plan.dataSource;
+    const current = await this.deps.state.source(ds.id);
+    // 動いていても、ゲートウェイの接続が付け替わった（消して足し直した）なら、新しい接続でつなぎ直す
+    if (!current || current.status !== 'ok' || current.gatewayCredentialId !== credentialId) {
+      // 外していないものは、位置とつないだ時刻を残す（止まっていた間のメッセージも取る）。外したあとは、その時点から取る
+      const keep = current && current.status !== 'disconnected' && current.teamsChat ? current : null;
+      const now = this.deps.now();
+      await this.deps.state.putSource({
+        kind: 'teams-chat',
+        dataSourceId: ds.id,
+        userId,
+        gatewayCredentialId: credentialId,
+        status: 'setup',
+        reason: null,
+        folders: {},
+        teamsChat: keep?.teamsChat ?? { syncedUntil: now, chats: {} },
+        connectedAt: keep ? keep.connectedAt : now,
         lastSyncAt: current?.lastSyncAt ?? null,
         lastRetryAt: null,
       });

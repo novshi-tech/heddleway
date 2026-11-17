@@ -37,6 +37,31 @@ export interface TeamsCursor {
 }
 
 /**
+ * Teams のチャットの 1 つ（0044）。種類とメンバーを覚えておき、通知のたびに読み直さない。
+ * kind: direct（1 対 1）・group（グループ）・skip（取り込まない: 会議のチャット・委任で読めない種類・相手がアプリだけの 1 対 1）
+ */
+export interface TeamsChatRecord {
+  kind: 'direct' | 'group' | 'skip';
+  /** チャットのテナント（メンションの tenantId がないときの補い） */
+  tenantId: string | null;
+  /** 人のメンバー（Entra のオブジェクト ID とテナント） */
+  members: { objectId: string; tenantId: string | null }[];
+  /** 種類とメンバーを最後に読んだ時刻 */
+  checkedAt: string;
+  /** このチャットで syncedUntil までに動いたメッセージは取り込んだ（なければ、つないだ時刻から） */
+  syncedUntil?: string;
+}
+
+/**
+ * Teams のチャットの取り込みの位置（0044）。syncedUntil は保険の見回りでチャットの一覧を最後まで読んだ時刻、
+ * chats はチャットごとの種類と位置
+ */
+export interface TeamsChatCursor {
+  syncedUntil: string;
+  chats: Record<string, TeamsChatRecord>;
+}
+
+/**
  * Google Tasks の取り込みの位置（0041）。変更の通知がなく、見回りで updatedMin の差分を読む。
  * updatedMin は読み切った最後の見回りで見えた一番新しい updated を、読み始めた時刻（から余裕を引いた時刻）で頭打ちにしたもの
  * （RFC 3339。なければ最初から読む）
@@ -95,7 +120,7 @@ export interface GmailRecovery {
 
 /** 実行時に作ったデータソースの取り込みの状態。kind がなければ Outlook（Jira より前の行） */
 export interface SourceState {
-  kind?: 'outlook' | 'shared-mailbox' | 'jira' | 'teams' | 'todo' | 'gtasks' | 'gmail';
+  kind?: 'outlook' | 'shared-mailbox' | 'jira' | 'teams' | 'teams-chat' | 'todo' | 'gtasks' | 'gmail';
   dataSourceId: string;
   /** 個人の箱の本人（ゲートウェイの User）。共有リストでは、取り込みに委任を使っている読者 */
   userId: string;
@@ -109,6 +134,8 @@ export interface SourceState {
   jira?: JiraCursor;
   /** Teams: 取り込みの位置 */
   teams?: TeamsCursor;
+  /** Teams のチャット（0044）: 取り込みの位置とチャットごとの種類 */
+  teamsChat?: TeamsChatCursor;
   /** Google Tasks: 取り込みの位置（見回りの最後の読み切りの時刻は lastSyncAt） */
   gtasks?: GtasksCursor;
   /** Gmail: 取り込みの位置（見回りの最後の読み切りの時刻は lastSyncAt） */

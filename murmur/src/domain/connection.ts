@@ -240,6 +240,54 @@ export function connectTeamsChannel(draft: Seed, ctx: CoreContext, input: TeamsC
   });
 }
 
+// ---- Teams のチャット（0044）: 本人のチャット全体の個人リスト ----
+
+export interface TeamsChatsInput {
+  userId: string;
+  /** 本人のゲートウェイの graph の接続 */
+  gatewayCredentialId: string;
+  /** 本人の表示名（データソースの名前に使う） */
+  displayName: string;
+  /** 本人の Entra のテナントとオブジェクト ID。リストでのアイデンティティ（チャネル teams）になる */
+  tenantId: string;
+  objectId: string;
+}
+
+/**
+ * 本人の Teams のチャット全体を個人リストとして作る（あればそれを返す）。1 人に 1 つ（0044 の決定 1）。
+ * ゲートウェイの接続を消して足し直したら、資格情報を新しい ID に付け替える（つなぎ直し）
+ */
+export function connectTeamsChats(draft: Seed, ctx: CoreContext, input: TeamsChatsInput): MailboxPlan {
+  const user = draft.users.find((u) => u.id === input.userId);
+  if (!user) throw new DomainError('forbidden', `user ${input.userId} はまだサインインしていない`);
+  const found = draft.dataSources.find((ds): ds is ServiceDataSource => {
+    if (ds.kind !== 'service' || ds.connector?.kind !== 'teams-chat' || ds.shared) return false;
+    const cred = draft.credentialRefs.find((c) => c.id === ds.credentialRefId);
+    return cred?.principal.kind === 'user' && cred.principal.userId === input.userId;
+  });
+  if (found) {
+    const cred = draft.credentialRefs.find((c) => c.id === found.credentialRefId)!;
+    cred.gatewayCredentialId = input.gatewayCredentialId;
+    return { kind: 'exists', dataSource: found };
+  }
+  const name = input.displayName || user.name || input.objectId;
+  const created = createPersonalDataSource(
+    draft,
+    input.userId,
+    {
+      channel: 'teams',
+      name: `${name} の Teams のチャット`,
+      description: `${name} が参加している Teams の 1 対 1・グループのチャット。本人の同意で取り込む（読者は本人だけ。0044）`,
+      identity: teamsAddress(input.tenantId, input.objectId),
+      gatewayCredentialId: input.gatewayCredentialId,
+    },
+    ctx,
+  );
+  const dataSource = draft.dataSources.find((d) => d.id === created.dataSourceId) as ServiceDataSource;
+  dataSource.connector = { kind: 'teams-chat', tenantId: input.tenantId, objectId: input.objectId };
+  return { kind: 'created', dataSource, identity: created.identity };
+}
+
 // ---- 共有メールボックス（0042）: メンバーの委任で見回りで読む共有リスト ----
 
 export interface SharedMailboxInput {

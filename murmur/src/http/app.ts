@@ -17,7 +17,8 @@ import {
   ClaimBody,
   ConnectGmailBody,
   ConnectSharedMailboxBody,
-  ConnectGoogleTasksBody, ConnectJiraBody, ConnectOutlookBody, ConnectTeamsBody, ConnectTodoBody,
+  ConnectGoogleTasksBody, ConnectJiraBody, ConnectOutlookBody, ConnectTeamsBody,
+  ConnectTeamsChatBody, ConnectTodoBody,
   DismissBody,
   GetThreadQuery,
   InboundItemBody,
@@ -225,6 +226,8 @@ export function createApp(opts: HttpOptions) {
           inReplyTo: a.in_reply_to,
           threadTs: a.thread_ts,
           quotedMessageId: a.quoted_message_id,
+          conversationId: a.conversation_id,
+          conversationGroup: a.conversation_group,
           threadKey: a.thread_key,
           jiraKeys: a.jira_keys,
           prRefs: a.pr_refs,
@@ -281,6 +284,11 @@ export function createApp(opts: HttpOptions) {
   api.post('/connections/teams', async (c) => {
     const b = ConnectTeamsBody.parse(await json(c));
     return c.json(await (await connectors(c)).connections.connectTeams(c.var.userId, { credentialId: b.credential_id, teamId: b.team, channelId: b.channel }));
+  });
+
+  api.post('/connections/teams-chat', async (c) => {
+    const b = ConnectTeamsChatBody.parse(await json(c));
+    return c.json(await (await connectors(c)).connections.connectTeamsChat(c.var.userId, b.credential_id));
   });
 
   api.post('/connections/todo', async (c) => {
