@@ -7,8 +7,9 @@ import { z } from 'zod';
  * 外のサービスのチャネル。個人のメモ（note）は 0039 でなくした。
  * - teams: Microsoft Teams のチャネル（0036）。アドレスの値は <tenantId>/<Entra のオブジェクト ID>
  * - todo: タスクのサービス（To Do・Google Tasks。0039）。アドレスの値は本人のアカウント
+ * - google-chat: Google Chat のスペースと DM（0045）。アドレスの値は Google のアカウントの ID（Chat の users/<ID> の <ID>。サインインの sub と同じ）
  */
-export const Channel = z.enum(['email', 'slack', 'line', 'jira', 'bitbucket', 'teams', 'todo']);
+export const Channel = z.enum(['email', 'slack', 'line', 'jira', 'bitbucket', 'teams', 'todo', 'google-chat']);
 export type Channel = z.infer<typeof Channel>;
 
 /** チャネルと値だけのアドレス（Contact に属さない。イベント・データソースの窓口・資格情報が持つ） */
@@ -110,6 +111,23 @@ export const SourceConnector = z.discriminatedUnion('kind', [
     kind: z.literal('teams-chat'),
     tenantId: z.string().min(1),
     objectId: z.string().min(1),
+  }),
+  /**
+   * Google Chat のスペース（0045）。共有リスト。読者はスペースのメンバーから写す。space はスペースの名前（spaces/<ID>）、
+   * threaded はスレッドを使うスペースか（spaceThreadingState が THREADED_MESSAGES。違えばメッセージごとに区切る）
+   */
+  z.object({
+    kind: z.literal('google-chat'),
+    space: z.string().regex(/^spaces\/[A-Za-z0-9_-]+$/),
+    threaded: z.boolean(),
+  }),
+  /**
+   * Google Chat の DM とグループのチャット（0045 の決定 2）。本人が入っている DM・グループのチャット全体を 1 つの個人リストにする。
+   * account は本人の Google のアカウントの ID（サインインの sub）
+   */
+  z.object({
+    kind: z.literal('google-chat-dm'),
+    account: z.string().min(1),
   }),
   /** Microsoft To Do のタスクのリスト（0039）。本人の委任で読む個人リスト。listName は写しの statusLabel に使う */
   z.object({

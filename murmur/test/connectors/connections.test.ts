@@ -12,6 +12,7 @@ import { FakeTeamsChat } from '../helpers/fake-teams-chat';
 import { FakeTodo } from '../helpers/fake-todo';
 import { FakeGtasks } from '../helpers/fake-gtasks';
 import { FakeGmail } from '../helpers/fake-gmail';
+import { FakeGoogleChat, human } from '../helpers/fake-google-chat';
 import { seed } from '../helpers/world';
 
 // 個人の箱をつなぐ（0024 の決定 3）。ゲートウェイは口（ports/gateway.ts）の偽物。
@@ -20,7 +21,7 @@ import { seed } from '../helpers/world';
 const GATEWAY = 'https://gateway.test';
 
 /** 種類ごとのゲートウェイの接続先（本物は組み立て時に決まる。Teams は Graph の接続で読む） */
-const serviceOf = (kind: UpstreamKind) => (kind === 'teams' || kind === 'teams-chat' ? 'graph' : kind === 'gtasks' ? 'tasks' : kind);
+const serviceOf = (kind: UpstreamKind) => (kind === 'teams' || kind === 'teams-chat' ? 'graph' : kind === 'gtasks' ? 'tasks' : kind === 'google-chat' || kind === 'google-chat-dm' ? 'chat' : kind);
 
 /** ゲートウェイの口の偽物。本人が「有効にする」を押すと同意が残り、コールバックに本人のコードで戻ってくる */
 class FakeGatewayPort implements GatewayPort {
@@ -84,6 +85,7 @@ describe('H3 個人の箱をつなぐ', () => {
   let todo: FakeTodo;
   let gtasks: FakeGtasks;
   let gmail: FakeGmail;
+  let googleChat: FakeGoogleChat;
   /** 共有メールボックス（0042）: 人ごとの偽の Graph（なければ Bob の箱の偽物） */
   let graphsOf: Map<string, FakeGraph>;
 
@@ -103,6 +105,7 @@ describe('H3 個人の箱をつなぐ', () => {
       todoFor: () => todo,
       gtasksFor: () => gtasks,
       gmailFor: () => gmail,
+      googleChatFor: () => googleChat,
       sharedServices,
     });
     return { ...made, connections };
@@ -127,6 +130,7 @@ describe('H3 個人の箱をつなぐ', () => {
     jira = new FakeJira(() => now);
     teams = new FakeTeams(() => now);
     teamsChat = new FakeTeamsChat();
+    googleChat = new FakeGoogleChat();
     todo = new FakeTodo(undefined, { id: 'oid_bob', displayName: 'Bob', addresses: ['bob.todo@ubs.example'] });
     gtasks = new FakeGtasks(undefined, 'bob@gws.example');
     gmail = new FakeGmail('bob@gws.example', [
@@ -795,6 +799,93 @@ describe('H3 個人の箱をつなぐ', () => {
       await expect(ctx.connections.connectTeams('u_bob', { teamId: 'team-1', channelId: '19:ch@thread.skype' })).rejects.toMatchObject({ code: 'forbidden' });
     });
   });
+  describe('H3 Google Chat（0045）', () => {
+    const ALICE = '100';
+    const BOB = '200';
+    const U_ALICE = `google_${ALICE}`;
+    const U_BOB = `google_${BOB}`;
+    const SPACE = 'spaces/AAA111';
+
+    beforeEach(async () => {
+      sharedServices = ['google-chat'];
+      ctx = await setup({ ...seed, users: [...seed.users, { id: U_ALICE, name: 'Alice' }, { id: U_BOB, name: 'Bob' }] });
+      gw.credentialsOf.set(U_ALICE, [{ id: 'gw_alice_chat', service: 'chat', label: 'nvt' }]);
+      gw.credentialsOf.set(U_BOB, [{ id: 'gw_bob_chat', service: 'chat', label: 'nvt' }]);
+      googleChat.addSpace({ name: SPACE, displayName: '開発', spaceType: 'SPACE', spaceThreadingState: 'UNTHREADED_MESSAGES' }, [human(ALICE), human(BOB)]);
+      googleChat.addSpace({ name: 'spaces/DM1', spaceType: 'DIRECT_MESSAGE' }, [human(ALICE), human(BOB)]);
+    });
+
+    const sharedDs = async () => (await ctx.service.directory()).seed.dataSources.find((d) => d.kind === 'service' && d.shared)!;
+    const readers = async (dsId: string) => {
+      const dir = await ctx.service.directory();
+      return dir.readersOfList(dir.seed.lists.find((l) => l.dataSourceId === dsId)!.id).sort();
+    };
+
+    it('同意 → スペースを選んでもらい（DM は出さない）、スペースの共有リストを作る。作った人が読者、sub が名乗り', async () => {
+      expect((await ctx.connections.connectGoogleChat(U_ALICE)).status).toBe('authorize');
+      gw.approve(U_ALICE);
+      expect(await ctx.connections.connectGoogleChat(U_ALICE)).toEqual({ status: 'choose_space', spaces: [{ id: SPACE, name: '開発' }] });
+      await expect(ctx.connections.connectGoogleChat(U_ALICE, { space: 'spaces/DM1' })).rejects.toMatchObject({ code: 'not_found' });
+      const r = await ctx.connections.connectGoogleChat(U_ALICE, { space: SPACE });
+      expect(r).toMatchObject({ status: 'connected', created: true, data_source: { name: '開発（Google Chat）' } });
+      const ds = await sharedDs();
+      expect(ds).toMatchObject({ channel: 'google-chat', group: true, shared: { spaceKey: `google-chat:${SPACE}`, createdBy: U_ALICE }, connector: { kind: 'google-chat', space: SPACE, threaded: false } });
+      expect(await readers(ds.id)).toEqual([U_ALICE]);
+      expect(await state.source(ds.id)).toMatchObject({ kind: 'google-chat', userId: U_ALICE, gatewayCredentialId: 'gw_alice_chat', status: 'setup', googleChat: { syncedUntil: now, setupAt: now } });
+      expect(queued).toEqual([{ kind: 'setup', dataSourceId: ds.id }]);
+      expect(await ctx.connections.list(U_ALICE)).toEqual([expect.objectContaining({ kind: 'google-chat', space: SPACE, shared: true, created_by: U_ALICE, status: 'setup' })]);
+      expect(seedProblems((await ctx.service.directory()).seed)).toEqual([]);
+    });
+
+    it('2 人目がつなぐと同じ共有リストで、その場でメンバーが読者に写る。止まっていれば 2 人目の委任でつなぎ直す', async () => {
+      gw.approve(U_ALICE);
+      gw.approve(U_BOB);
+      await ctx.connections.connectGoogleChat(U_ALICE, { space: SPACE });
+      const ds = await sharedDs();
+      await state.putSource({ ...(await state.source(ds.id))!, status: 'ok' });
+      expect(await ctx.connections.connectGoogleChat(U_BOB, { space: SPACE })).toMatchObject({ status: 'connected', created: false, data_source: { id: ds.id } });
+      expect(await readers(ds.id)).toEqual([U_ALICE, U_BOB].sort());
+      expect(await state.source(ds.id)).toMatchObject({ userId: U_ALICE, status: 'ok' });
+      await state.putSource({ ...(await state.source(ds.id))!, status: 'broken', googleChat: { syncedUntil: '2026-10-29T00:00:00.000Z' } });
+      await ctx.connections.connectGoogleChat(U_BOB, { space: SPACE });
+      expect(await state.source(ds.id)).toMatchObject({ userId: U_BOB, gatewayCredentialId: 'gw_bob_chat', status: 'setup', googleChat: { syncedUntil: '2026-10-29T00:00:00.000Z' } });
+    });
+
+    it('デプロイの設定で許していない・Google でサインインしていない人は、スペースをつなげない', async () => {
+      sharedServices = [];
+      ctx = await setup({ ...seed, users: [...seed.users, { id: U_ALICE, name: 'Alice' }] });
+      gw.approve(U_ALICE);
+      await expect(ctx.connections.connectGoogleChat(U_ALICE, { space: SPACE })).rejects.toMatchObject({ code: 'forbidden' });
+      sharedServices = ['google-chat'];
+      ctx = await setup();
+      gw.credentialsOf.set('u_bob', [{ id: 'gw_bob_chat2', service: 'chat', label: 'nvt' }]);
+      gw.approve('u_bob');
+      await expect(ctx.connections.connectGoogleChat('u_bob', { space: SPACE })).rejects.toMatchObject({ code: 'forbidden' });
+    });
+
+    it('DM・グループ: 本人の個人リストを 1 つ作る（共有リストの許可は要らない）。何度つないでも 1 つ。読めない接続は断る', async () => {
+      sharedServices = [];
+      ctx = await setup({ ...seed, users: [...seed.users, { id: U_ALICE, name: 'Alice' }] });
+      gw.approve(U_ALICE);
+      const r = await ctx.connections.connectGoogleChatDm(U_ALICE);
+      expect(r).toMatchObject({ status: 'connected', created: true, data_source: { name: 'Alice の Google Chat のチャット' } });
+      const dir = await ctx.service.directory();
+      const ds = dir.seed.dataSources.find((d) => d.kind === 'service' && d.connector?.kind === 'google-chat-dm')!;
+      expect(ds).toMatchObject({ channel: 'google-chat', group: false, connector: { kind: 'google-chat-dm', account: ALICE } });
+      expect(ds.kind === 'service' && ds.shared).toBeFalsy();
+      expect(await readers(ds.id)).toEqual([U_ALICE]);
+      expect(await state.source(ds.id)).toMatchObject({ kind: 'google-chat-dm', status: 'setup', googleChatDm: { spaces: {}, setupAt: now } });
+      expect(queued).toEqual([{ kind: 'setup', dataSourceId: ds.id }]);
+      await state.putSource({ ...(await state.source(ds.id))!, status: 'ok' });
+      expect(await ctx.connections.connectGoogleChatDm(U_ALICE)).toMatchObject({ status: 'connected', created: false, data_source: { id: ds.id } });
+      expect(queued).toHaveLength(1);
+      expect(await ctx.connections.list(U_ALICE)).toEqual([expect.objectContaining({ kind: 'google-chat-dm', status: 'ok' })]);
+      googleChat.authBroken = true;
+      gw.credentialsOf.set(U_ALICE, [{ id: 'gw_alice_chat2', service: 'chat', label: 'nvt' }]);
+      await expect(ctx.connections.connectGoogleChatDm(U_ALICE)).rejects.toMatchObject({ code: 'conflict' });
+    });
+  });
+
   describe('H3 共有メールボックスの共有リスト（0042）', () => {
     const BOX = 'external@ubs.example';
 

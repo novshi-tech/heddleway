@@ -21,6 +21,8 @@ export interface PendingAuthorization {
     | { kind: 'jira'; cloudId?: string; projectKey?: string }
     | { kind: 'teams'; teamId?: string; channelId?: string }
     | { kind: 'teams-chat' }
+    | { kind: 'google-chat'; space?: string }
+    | { kind: 'google-chat-dm' }
     | { kind: 'todo'; listId?: string }
     | { kind: 'google-tasks'; listId?: string };
 }

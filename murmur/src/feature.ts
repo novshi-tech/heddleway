@@ -27,6 +27,8 @@ import { GatewayGtasksApi } from './connectors/gtasks/api';
 import { GtasksSync } from './connectors/gtasks/sync';
 import { GatewayGmailApi } from './connectors/gmail/api';
 import { GmailSync } from './connectors/gmail/sync';
+import { GatewayGoogleChatApi } from './connectors/google-chat/api';
+import { GoogleChatSync } from './connectors/google-chat/sync';
 import { randomHex, sha256Hex } from './connectors/secrets';
 import { onceDirectory } from './connectors/directory-once';
 import { D1ConnectorState } from './store/connector-state';
@@ -95,7 +97,7 @@ function build(config: MurmurConfig): MurmurService {
 }
 
 interface ConnectorShell extends ConnectorHttp {
-  /** キューの仕事を Outlook・Gmail・Jira・Teams（チャネルとチャット）・To Do・Google Tasks に渡す（それぞれ自分の経路のデータソースだけ扱う） */
+  /** キューの仕事を Outlook・Gmail・Jira・Teams（チャネルとチャット）・Google Chat・To Do・Google Tasks に渡す（それぞれ自分の経路のデータソースだけ扱う） */
   sync: { handle(job: SyncJob): Promise<void> };
 }
 
@@ -114,6 +116,7 @@ function buildConnectors(config: MurmurConfig, service: MurmurService, waitUntil
   const todoFor = (call: UpstreamCall) => new GatewayTodoApi(call);
   const gtasksFor = (call: UpstreamCall) => new GatewayGtasksApi(call);
   const gmailFor = (call: UpstreamCall) => new GatewayGmailApi(call);
+  const googleChatFor = (call: UpstreamCall) => new GatewayGoogleChatApi(call);
   // Jira の Webhook の受け口の秘密（本人ごと。S0: REST の Webhook の URL は本人ごとに 1 つ）。鍵から導くので保管しない
   const jiraSecret = (userId: string) => sha256Hex(`${c.webhookKey}:jira-webhook:${userId}`);
 
@@ -212,6 +215,14 @@ function buildConnectors(config: MurmurConfig, service: MurmurService, waitUntil
     now,
     log,
   });
+  // Google Chat（0045）も変更の通知を使わず、見回りで読む。スペースと DM で読める口（種類）が違う
+  const googleChat = new GoogleChatSync({
+    service,
+    state,
+    chatFor: async (source) => googleChatFor(await gateway.upstream(source.userId, source.gatewayCredentialId, source.kind === 'google-chat-dm' ? 'google-chat-dm' : 'google-chat')),
+    now,
+    log,
+  });
   sync = {
     async handle(job) {
       // 見回りは、マスタを 1 回だけ読んで全コネクタの全データソースで使い回す
@@ -223,9 +234,10 @@ function buildConnectors(config: MurmurConfig, service: MurmurService, waitUntil
       await todo.handle(job, directory);
       await gtasks.handle(job, directory);
       await gmail.handle(job, directory);
+      await googleChat.handle(job, directory);
     },
   };
-  const connections = new Connections({ gateway, service, queue, newId: randomIds, graphFor, jiraFor, teamsFor, teamsChatFor, todoFor, gtasksFor, gmailFor, state, now, sharedServices: config.sharedServices ?? [] });
+  const connections = new Connections({ gateway, service, queue, newId: randomIds, graphFor, jiraFor, teamsFor, teamsChatFor, todoFor, gtasksFor, gmailFor, googleChatFor, state, now, sharedServices: config.sharedServices ?? [] });
   return {
     sync,
     connections,
