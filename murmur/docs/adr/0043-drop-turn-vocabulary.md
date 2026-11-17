@@ -60,7 +60,7 @@
 ### 5. 直す範囲
 
 - 直す: スキル（`plugins/heddleway/skills/topic-index/SKILL.md`。冒頭の説明、「言葉」の表、「番」の出てくる文、「よくある流れ」の 1 と 6）、プラグインの説明（`plugin.json`・`marketplace.json`）、`README.md`、`murmur/README.md`、同意の文面（`src/murmur-feature.ts`）、管理画面の列見出し（`murmur/src/http/admin.ts` の「誰の番」）、`murmur/CLAUDE.md`（0040 の行を改め、この ADR を足す）
-- 直さない: 過去の ADR、コードの識別子と API（`my_turn`・`myTurn`・`derivedBall`・`Turn`）、イベントの名前。コードのコメントとテスト名の「誰の番」は内側の言葉として残してよい（0038 のモデルを指す言葉として通じる。直すなら別の PR）
+- 直さない: 過去の ADR、コードの識別子と API（`my_turn`・`myTurn`・`derivedBall`・`Turn`）、イベントの名前。コードのコメントとテスト名の「誰の番」「ボール」は、担当と名指しの言葉に直す（内側でも交互に移るものではないので）。PLAN・試行の記録・fixtures のメモなど、過去の記録は直さない
 - スキルの本文が変わるので、`heddleway` プラグインの版を上げる（パッチ。スキルの名前と API は変わらない）
 
 ## 代案
@@ -74,3 +74,4 @@
 ## 実装の記録（2026-11-17）
 
 - 決定 5 の「直す」のとおりに直した（heddleway 0.27.2）
+- コードのコメントとテスト名の「誰の番」「ボール」を、担当と名指しの言葉に直した（識別子と API はそのまま）
