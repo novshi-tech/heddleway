@@ -4,6 +4,7 @@ import { JIRA_SCOPE } from "../murmur/src/connectors/jira/api";
 import { GMAIL_SCOPE } from "../murmur/src/connectors/gmail/scope";
 import { GTASKS_SCOPE } from "../murmur/src/connectors/gtasks/scope";
 import { TEAMS_SCOPE } from "../murmur/src/connectors/teams/scope";
+import { TEAMS_CHAT_SCOPE } from "../murmur/src/connectors/teams-chat/scope";
 import type { SyncJob } from "../murmur/src/connectors/graph/jobs";
 import { CALLBACK_PATH } from "../murmur/src/ports/gateway";
 import { publicUrl, splitList } from "./config";
@@ -58,6 +59,8 @@ export function murmurFeature(env: Env): Feature | null {
       jira: { service: m.MURMUR_JIRA_SERVICE || "jira", scope: JIRA_SCOPE },
       // Teams channels are read with the same Microsoft Graph credential, through a narrower scope.
       teams: { service: m.MURMUR_GRAPH_SERVICE || "graph", scope: TEAMS_SCOPE },
+      // The user's own Teams chats (Murmur's 0044): the same credential, through its own narrow scope.
+      "teams-chat": { service: m.MURMUR_GRAPH_SERVICE || "graph", scope: TEAMS_CHAT_SCOPE },
       gmail: { service: m.MURMUR_GMAIL_SERVICE || "gmail", scope: GMAIL_SCOPE },
       gtasks: { service: m.MURMUR_TASKS_SERVICE || "tasks", scope: GTASKS_SCOPE },
     },
@@ -81,7 +84,7 @@ export function murmurFeature(env: Env): Feature | null {
     name: NAME,
     displayName: "トピック索引",
     consentText:
-      "トピック索引は、あなたがつないだメール(Outlook・Gmail)・To Do・Google Tasks のタスク・Teams のチャネル・Jira を読み取り、やりとりをトピックにまとめて、誰が担当か・誰に見てほしいと届いたかを記録します。エージェント(Claude など)が「いまやるべきこと」に答えるときに使います。読むのは、あなたがエージェントに頼んでつないだものだけで、送信や書き込みはしません。",
+      "トピック索引は、あなたがつないだメール(Outlook・Gmail)・To Do・Google Tasks のタスク・Teams のチャネルとチャット・Jira を読み取り、やりとりをトピックにまとめて、誰が担当か・誰に見てほしいと届いたかを記録します。エージェント(Claude など)が「いまやるべきこと」に答えるときに使います。読むのは、あなたがエージェントに頼んでつないだものだけで、送信や書き込みはしません。",
     consentCallbackPath: CALLBACK_PATH,
     fetch: (request, ctx) => murmur.fetch(request, ctx),
     scheduled: (_controller, ctx) => murmur.scheduled(ctx),

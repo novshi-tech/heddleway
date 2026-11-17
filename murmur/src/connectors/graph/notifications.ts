@@ -3,12 +3,26 @@ import type { SyncJob } from './jobs';
 import type { SubscriptionRecord } from './state';
 
 // Graph の通知とライフサイクルの通知の照合。通知の中身（メールの id）は使わず、どのフォルダに変化があったかだけを取る（正は delta）。
+// Teams のチャット（0044）は、本人の全チャットの購読 1 つに通知が集まるので、resource からどのチャットかだけを取る（読むのはチャットの一覧）。
 
 const Notification = z.object({
   subscriptionId: z.string(),
   clientState: z.string().nullable().optional(),
   lifecycleEvent: z.string().optional(),
+  resource: z.string().optional(),
 });
+
+/** 通知の resource（`chats('<チャットの ID>')/messages('<メッセージの ID>')`。S0）からチャットの ID を取る。チャットでなければ null */
+export function chatIdOfResource(resource: string | undefined): string | null {
+  const m = /^\/?chats\('([^']+)'\)/.exec(resource ?? '');
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]!);
+  } catch {
+    return m[1]!;
+  }
+}
+
 export const NotificationBody = z.object({ value: z.array(z.record(z.string(), z.unknown())) });
 
 export interface NotificationDeps {
@@ -38,7 +52,10 @@ export async function jobsFromNotifications(body: unknown, deps: NotificationDep
     }
     const job: SyncJob = n.data.lifecycleEvent
       ? { kind: 'lifecycle', subscriptionId: sub.id, event: n.data.lifecycleEvent }
-      : { kind: 'sync', dataSourceId: sub.dataSourceId, folder: sub.folder };
+      : (() => {
+          const chatId = chatIdOfResource(n.data.resource);
+          return chatId ? { kind: 'sync' as const, dataSourceId: sub.dataSourceId, folder: sub.folder, chatId } : { kind: 'sync' as const, dataSourceId: sub.dataSourceId, folder: sub.folder };
+        })();
     if (!jobs.some((j) => JSON.stringify(j) === JSON.stringify(job))) jobs.push(job);
   }
   return { jobs, rejected };

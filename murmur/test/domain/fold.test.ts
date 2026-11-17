@@ -49,6 +49,17 @@ describe('fold', () => {
   const listOf = (p: Projections, id: string) => view(p, id).attention.list?.userIds ?? [];
   const namedOf = (p: Projections, id: string) => view(p, id).attention.named.map((n) => n.address.value);
 
+  it('H1 会話のアンカー（0044）はシグナルの記録に残り、グループの会話かはスレッドのログに写る（ほかのシグナルには付かない）', () => {
+    const log = new EventLog();
+    log.push([observed('s1', { anchors: { messageId: 'm1', conversationId: 'chat_A', conversationGroup: true } }), intoNew('s1', 't1')], T0);
+    log.push([observed('s2'), into('s2', 't1')], T1);
+    const p = log.state();
+    expect(p.signals['s1']!.anchors).toMatchObject({ conversationId: 'chat_A', conversationGroup: true });
+    expect(p.threads['t1']!.log.filter((l) => l.kind === 'signal').map((l) => l.conversationGroup)).toEqual([true, undefined]);
+    // 保存した形から読み直しても、会話のアンカーは落ちない（zod が知らない項目として捨てない）
+    expect((parseEvent(JSON.parse(JSON.stringify(log.events[0]))).payload as { anchors: object }).anchors).toMatchObject({ conversationId: 'chat_A', conversationGroup: true });
+  });
+
   it('H1 SignalObserved + SignalThreaded(new) でスレッドができ、窓口宛て（リスト宛て）の名指しが読者に残る。担当はいないので仕分け待ち', () => {
     const log = new EventLog();
     log.push([observed('s1'), intoNew('s1', 't1')], T0);

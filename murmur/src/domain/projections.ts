@@ -75,6 +75,8 @@ export interface ThreadLogEntry {
   /** signal: 送り主と宛先 */
   from?: AddressRef;
   to?: AddressRef[];
+  /** signal: グループの会話のシグナル（Anchors.conversationGroup。0044）。リスト宛ての判定に使う */
+  conversationGroup?: boolean;
   /** signal（送信の記録）: 返事期待の期限 */
   replyExpectedBy?: string | null;
   reason?: string;

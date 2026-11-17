@@ -60,6 +60,8 @@ export type SourceOrigin =
   | { kind: 'gmail'; mailbox: string }
   | { kind: 'jira'; cloudId: string; site: string; projectKey: string | null }
   | { kind: 'teams'; teamId: string; channelId: string }
+  /** 本人の Teams のチャット（0044）。どのチャットかはメッセージの anchors.conversationId（チャットの ID） */
+  | { kind: 'teams-chat' }
   | { kind: 'graph-todo'; listId: string }
   | { kind: 'google-tasks'; listId: string };
 
@@ -73,6 +75,8 @@ export function originOf(connector: SourceConnector | undefined): SourceOrigin |
       return { kind: 'jira', cloudId: connector.cloudId, site: connector.site, projectKey: connector.projectKey ?? null };
     case 'teams':
       return { kind: 'teams', teamId: connector.teamId, channelId: connector.channelId };
+    case 'teams-chat':
+      return { kind: 'teams-chat' };
     case 'graph-todo':
     case 'google-tasks':
       return { kind: connector.kind, listId: connector.listId };

@@ -8,8 +8,11 @@ export const SyncJob = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('maintain') }),
   /** つないだ直後・broken からの戻り: サブスクリプションを作り、delta の初回を読み流す */
   z.object({ kind: z.literal('setup'), dataSourceId: z.string() }),
-  /** 変更の通知: そのフォルダの delta */
-  z.object({ kind: z.literal('sync'), dataSourceId: z.string(), folder: z.string() }),
+  /**
+   * 変更の通知: そのフォルダの delta。Teams のチャット（0044）は、通知の resource から取ったチャットの ID を chatId に持ち、
+   * そのチャットだけを読む（なければチャットの一覧を見回る）
+   */
+  z.object({ kind: z.literal('sync'), dataSourceId: z.string(), folder: z.string(), chatId: z.string().optional() }),
   z.object({ kind: z.literal('lifecycle'), subscriptionId: z.string(), event: z.string() }),
   /** 本人が外した: サブスクリプション（Jira は Webhook）を消す */
   z.object({ kind: z.literal('disconnect'), dataSourceId: z.string() }),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { connectMailbox, deriveViewer, Directory, isOurs, planMasterEdit, seedProblems, type MailboxInput, type MailboxPlan, type Seed } from '../../src/domain';
+import { connectMailbox, connectTeamsChats, deriveViewer, Directory, isOurs, listKindOf, planMasterEdit, seedProblems, type MailboxInput, type MailboxPlan, type Seed } from '../../src/domain';
 import { counterIds } from '../helpers/service';
 import { seed } from '../helpers/world';
 
@@ -98,5 +98,32 @@ describe('H3 connectMailbox', () => {
   it('サインインしていない User・アドレスのわからない箱はつなげない', () => {
     expect(() => connect(seed, { ...input, userId: 'u_nobody' })).toThrow(/サインイン/);
     expect(() => connect(seed, { ...input, addresses: [] })).toThrow(/アドレス/);
+  });
+});
+
+describe('H3 connectTeamsChats（0044）', () => {
+  const chats = (before: Seed, gatewayCredentialId = 'gw_bob') => {
+    let plan!: MailboxPlan;
+    const { after } = planMasterEdit(before, (d) => {
+      plan = connectTeamsChats(d, { dir: new Directory(d), now: NOW, newId: counterIds() }, { userId: 'u_bob', gatewayCredentialId, displayName: 'Bob', tenantId: 'tn', objectId: 'oid-bob' });
+    });
+    return { after, plan };
+  };
+
+  it('本人のチャット全体を 1 つの個人リストにし、Teams のアドレスを本人の Contact に付ける。何度つないでも 1 つで、接続を足し直せば付け替える', () => {
+    const first = chats(seed);
+    expect(first.plan.kind).toBe('created');
+    expect(seedProblems(first.after)).toEqual([]);
+    expect(first.plan.dataSource).toMatchObject({ channel: 'teams', group: false, connector: { kind: 'teams-chat', tenantId: 'tn', objectId: 'oid-bob' } });
+    const dir = new Directory(first.after);
+    expect(dir.addressesOfContact('p_bob', 'teams').map((a) => a.value)).toEqual(['tn/oid-bob']);
+    expect(listKindOf(dir, first.plan.dataSource.id)).toBe('personal');
+    expect(deriveViewer(dir, 'u_alice').dataSourceIds).not.toContain(first.plan.dataSource.id);
+
+    const again = chats(first.after);
+    expect(again.plan).toMatchObject({ kind: 'exists', dataSource: { id: first.plan.dataSource.id } });
+    const moved = chats(first.after, 'gw_bob2');
+    expect(moved.plan.kind).toBe('exists');
+    expect(moved.after.credentialRefs.find((c) => c.id === first.plan.dataSource.credentialRefId)?.gatewayCredentialId).toBe('gw_bob2');
   });
 });

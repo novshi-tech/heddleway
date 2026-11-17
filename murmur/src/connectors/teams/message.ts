@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-// Teams のチャネルのメッセージ（chatMessage）の部分スキーマ。取り込みに使う項目だけを読み、ほかは捨てる（0036）。
+// Teams のチャネルとチャットのメッセージ（chatMessage）の部分スキーマ。取り込みに使う項目だけを読み、ほかは捨てる（0036・0044）。
 
 const Identity = z.object({ id: z.string(), displayName: z.string().nullable().optional(), tenantId: z.string().nullable().optional() });
 
@@ -16,7 +16,10 @@ const Mention = z.object({
     .optional(),
 });
 
-const Base = z.object({
+/** 添付。チャットの引用の返信は contentType が messageReference で、id が引用元のメッセージの ID（0044 の S0） */
+const Attachment = z.object({ id: z.string().nullable().optional(), contentType: z.string().nullable().optional() });
+
+export const MessageBase = z.object({
   id: z.string(),
   replyToId: z.string().nullable().optional(),
   /** message のほかに、メンバーの出入りなどのシステムのメッセージがある */
@@ -29,11 +32,13 @@ const Base = z.object({
   /** user がなければアプリ（ボット・コネクタ）の投稿 */
   from: z.object({ user: Identity.nullable().optional() }).nullable().optional(),
   mentions: z.array(Mention).optional(),
+  attachments: z.array(Attachment).nullable().optional(),
 });
 
-export const ChannelMessage = Base.extend({ replies: z.array(Base).optional() });
+export const ChannelMessage = MessageBase.extend({ replies: z.array(MessageBase).optional() });
 export type ChannelMessage = z.infer<typeof ChannelMessage>;
-export type ChannelReply = z.infer<typeof Base>;
+export type ChannelReply = z.infer<typeof MessageBase>;
+export type TeamsMessage = z.infer<typeof MessageBase>;
 
 export const MessagesPage = z.object({
   value: z.array(z.record(z.string(), z.unknown())),

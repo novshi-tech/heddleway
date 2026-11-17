@@ -13,8 +13,18 @@ export const Anchors = z.object({
   inReplyTo: z.string().optional(),
   /** Slack のスレッド親 ts */
   threadTs: z.string().optional(),
-  /** LINE の引用返信の元 */
+  /** LINE の引用返信の元（Teams のチャットの引用の返信も。0044） */
   quotedMessageId: z.string().optional(),
+  /**
+   * データソースの中の会話（Teams のチャットの ID。0044）。あれば、区切りの 2 段め・3 段めの候補を同じ会話のスレッドに限る。
+   * 1 つのデータソースに会話が混ざるリスト（本人のチャット全体）のため
+   */
+  conversationId: z.string().optional(),
+  /**
+   * 会話がグループか（0044）。あれば、区切りの「同じ相手」とリスト宛ての扱いを、データソースの group の代わりにこれで決める。
+   * グループの会話では、宛先のない投稿も、本人が宛先にない投稿もリスト宛てにしない（個人リストで全部が本人へのアテンションにならないように）
+   */
+  conversationGroup: z.boolean().optional(),
   /**
    * ソースが元から持つ区切りの識別子（Jira の課題キー、PR）。
    * 同じデータソースで一致すればそのスレッド、一致しなければ新しいスレッドに決まる

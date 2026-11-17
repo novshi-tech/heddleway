@@ -241,6 +241,7 @@ function onThreaded(s: Projections, e: DomainEvent, p: PayloadOf<'SignalThreaded
     from: sig.from,
     to: sig.to,
     replyExpectedBy: sig.recorded?.replyExpectedBy ?? undefined,
+    ...(sig.anchors.conversationGroup !== undefined ? { conversationGroup: sig.anchors.conversationGroup } : {}),
   });
   recompute(s, t, e.at, c);
 }

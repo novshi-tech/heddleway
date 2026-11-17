@@ -19,6 +19,8 @@ import { GatewayJiraApi } from './connectors/jira/api';
 import { JiraSync } from './connectors/jira/sync';
 import { GatewayTeamsApi } from './connectors/teams/api';
 import { TeamsSync } from './connectors/teams/sync';
+import { GatewayTeamsChatApi } from './connectors/teams-chat/api';
+import { TeamsChatSync } from './connectors/teams-chat/sync';
 import { GatewayTodoApi } from './connectors/todo/api';
 import { TodoSync } from './connectors/todo/sync';
 import { GatewayGtasksApi } from './connectors/gtasks/api';
@@ -93,7 +95,7 @@ function build(config: MurmurConfig): MurmurService {
 }
 
 interface ConnectorShell extends ConnectorHttp {
-  /** キューの仕事を Outlook・Gmail・Jira・Teams・To Do・Google Tasks に渡す（それぞれ自分の経路のデータソースだけ扱う） */
+  /** キューの仕事を Outlook・Gmail・Jira・Teams（チャネルとチャット）・To Do・Google Tasks に渡す（それぞれ自分の経路のデータソースだけ扱う） */
   sync: { handle(job: SyncJob): Promise<void> };
 }
 
@@ -108,6 +110,7 @@ function buildConnectors(config: MurmurConfig, service: MurmurService, waitUntil
   const graphFor = (call: UpstreamCall) => new GatewayGraphApi(call);
   const jiraFor = (call: UpstreamCall) => new GatewayJiraApi(call);
   const teamsFor = (call: UpstreamCall) => new GatewayTeamsApi(call);
+  const teamsChatFor = (call: UpstreamCall) => new GatewayTeamsChatApi(call);
   const todoFor = (call: UpstreamCall) => new GatewayTodoApi(call);
   const gtasksFor = (call: UpstreamCall) => new GatewayGtasksApi(call);
   const gmailFor = (call: UpstreamCall) => new GatewayGmailApi(call);
@@ -169,6 +172,18 @@ function buildConnectors(config: MurmurConfig, service: MurmurService, waitUntil
     hash: sha256Hex,
     log,
   });
+  // Teams のチャット（0044）: 本人の全チャットの購読の通知と、保険の見回り。受け口と台帳は Outlook・Teams のチャネルと同じ
+  const teamsChat = new TeamsChatSync({
+    service,
+    state,
+    queue,
+    chatsFor: async (source) => teamsChatFor(await gateway.upstream(source.userId, source.gatewayCredentialId, 'teams-chat')),
+    now,
+    notificationUrl: `${publicUrl}/webhooks/graph`,
+    newClientState: () => randomHex(32),
+    hash: sha256Hex,
+    log,
+  });
   const todo = new TodoSync({
     service,
     state,
@@ -204,12 +219,13 @@ function buildConnectors(config: MurmurConfig, service: MurmurService, waitUntil
       await graph.handle(job, directory);
       await jira.handle(job, directory);
       await teams.handle(job, directory);
+      await teamsChat.handle(job, directory);
       await todo.handle(job, directory);
       await gtasks.handle(job, directory);
       await gmail.handle(job, directory);
     },
   };
-  const connections = new Connections({ gateway, service, queue, newId: randomIds, graphFor, jiraFor, teamsFor, todoFor, gtasksFor, gmailFor, state, now, sharedServices: config.sharedServices ?? [] });
+  const connections = new Connections({ gateway, service, queue, newId: randomIds, graphFor, jiraFor, teamsFor, teamsChatFor, todoFor, gtasksFor, gmailFor, state, now, sharedServices: config.sharedServices ?? [] });
   return {
     sync,
     connections,

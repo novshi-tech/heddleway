@@ -147,9 +147,17 @@ export function resolveAnchors(p: Projections, sig: SignalPayload): Threading | 
   return null;
 }
 
+/**
+ * シグナルの会話がグループか。会話の種類を持つシグナル（Teams のチャット。0044）はそれで、ほかはデータソースの group で決める
+ * （1 つのデータソースに 1 対 1 とグループの会話が混ざるリストがあるため）
+ */
+function isGroup(ds: ServiceDataSource, sig: SignalPayload): boolean {
+  return sig.anchors.conversationGroup ?? ds.group;
+}
+
 /** スレッドのシグナルのうち、相手として sig と同じ人とやりとりしたものがあるか（グループのチャネルはチャネル全体） */
 function withSameCounterpart(dir: Directory, p: Projections, ds: ServiceDataSource, t: Thread, sig: SignalPayload, ours: boolean): boolean {
-  if (ds.group) return true;
+  if (isGroup(ds, sig)) return true;
   const theirs = ours ? sig.to : [sig.from];
   const has = (refs: AddressRef[], r: AddressRef) => refs.some((x) => x.channel === r.channel && sameValue(x.value, r.value));
   return t.signalIds.some((id) => {
@@ -165,13 +173,13 @@ function withSameCounterpart(dir: Directory, p: Projections, ds: ServiceDataSour
  */
 export function awaitingThread(dir: Directory, p: Projections, ds: ServiceDataSource, sig: SignalPayload, ours: boolean): Thread | null {
   if (ours) return null;
-  const waiting = threadsOf(p, ds.id).filter((t) => {
+  const waiting = threadsOf(p, ds.id, sig).filter((t) => {
     if (t.closedAtSource) return false;
     // こちらから送ったシグナルで待っている相手のうち、名指しのあとにまだ発言していない人
     const unanswered = awaitingNamesOf(dir, t).filter(
       (n) => !t.log.some((e) => e.kind === 'signal' && e.from !== undefined && sameAddress(e.from, n.address) && comparePos(e, n.last) > 0),
     );
-    if (ds.group) return unanswered.length > 0;
+    if (isGroup(ds, sig)) return unanswered.length > 0;
     return unanswered.some((n) => addressKey(n.address) === addressKey(sig.from));
   });
   return waiting.length === 1 ? waiting[0]! : null;
@@ -179,7 +187,7 @@ export function awaitingThread(dir: Directory, p: Projections, ds: ServiceDataSo
 
 /** 3. の候補: 相手（グループならチャネル）の直近のスレッド。片付けたものは入れない */
 export function recentThreads(dir: Directory, p: Projections, ds: ServiceDataSource, sig: SignalPayload, ours: boolean, limit: number): Thread[] {
-  return threadsOf(p, ds.id)
+  return threadsOf(p, ds.id, sig)
     .filter((t) => withSameCounterpart(dir, p, ds, t, sig, ours))
     .sort((a, b) => {
       const x = lastActivity(dir, p, a);
@@ -189,8 +197,19 @@ export function recentThreads(dir: Directory, p: Projections, ds: ServiceDataSou
     .slice(0, limit);
 }
 
-function threadsOf(p: Projections, dataSourceId: string): Thread[] {
-  return Object.values(p.threads).filter((t) => t.dataSourceId === dataSourceId && !t.dismissed && t.signalIds.length > 0);
+/**
+ * 区切りの 2 段め・3 段めの候補になるスレッド。片付けたもの・シグナルのないものは入れない。
+ * シグナルに会話（Anchors.conversationId。0044）があれば、同じ会話のシグナルを持つスレッドだけ
+ */
+function threadsOf(p: Projections, dataSourceId: string, sig: SignalPayload): Thread[] {
+  const conversation = sig.anchors.conversationId;
+  return Object.values(p.threads).filter(
+    (t) =>
+      t.dataSourceId === dataSourceId &&
+      !t.dismissed &&
+      t.signalIds.length > 0 &&
+      (conversation === undefined || t.signalIds.some((id) => p.signals[id]?.anchors.conversationId === conversation)),
+  );
 }
 
 function lastActivity(dir: Directory, p: Projections, t: Thread): string {
@@ -305,7 +324,7 @@ export function planIngest(
       mode,
       signal: sig,
       ours,
-      dataSource: { id: ds.id, name: ds.name, description: ds.description, channel: ds.channel, group: ds.group },
+      dataSource: { id: ds.id, name: ds.name, description: ds.description, channel: ds.channel, group: isGroup(ds, sig) },
       threading,
       candidates: threading.kind === 'choose' ? threading.candidates : [],
     },

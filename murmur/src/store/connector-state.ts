@@ -20,6 +20,7 @@ export interface PendingAuthorization {
     | { kind: 'shared-mailbox'; mailbox: string }
     | { kind: 'jira'; cloudId?: string; projectKey?: string }
     | { kind: 'teams'; teamId?: string; channelId?: string }
+    | { kind: 'teams-chat' }
     | { kind: 'todo'; listId?: string }
     | { kind: 'google-tasks'; listId?: string };
 }

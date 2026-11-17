@@ -102,6 +102,15 @@ export const SourceConnector = z.discriminatedUnion('kind', [
     teamId: z.string().min(1),
     channelId: z.string().min(1),
   }),
+  /**
+   * Teams のチャット（0044）。本人が参加している 1 対 1・グループのチャット全体を 1 つの個人リストにする。
+   * tenantId と objectId は本人の Entra のテナントとオブジェクト ID（購読の /users/{oid}/chats/getAllMessages と、アドレスの補いに使う）
+   */
+  z.object({
+    kind: z.literal('teams-chat'),
+    tenantId: z.string().min(1),
+    objectId: z.string().min(1),
+  }),
   /** Microsoft To Do のタスクのリスト（0039）。本人の委任で読む個人リスト。listName は写しの statusLabel に使う */
   z.object({
     kind: z.literal('graph-todo'),

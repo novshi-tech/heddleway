@@ -3,7 +3,8 @@
 // 実装はゲートウェイの中核（heddleway の src/feature-port.ts）。Murmur はゲートウェイの Worker の機能として動く。
 
 /** 取り込みに使うサービスの種類。種類ごとに、ゲートウェイの接続先の名前と読める口が組み立て時に決まる */
-export type UpstreamKind = 'graph' | 'jira' | 'teams' | 'gmail' | 'gtasks';
+/** teams-chat は本人の Teams のチャット（0044）。接続は graph と同じで、読める口だけが違う */
+export type UpstreamKind = 'graph' | 'jira' | 'teams' | 'teams-chat' | 'gmail' | 'gtasks';
 
 export interface GatewayCredential {
   id: string;
