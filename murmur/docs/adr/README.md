@@ -45,4 +45,4 @@
 - [0041](0041-gmail-and-google-tasks.md) Gmail と Google Tasks のコネクタ。Google の取り込みは見回りから始める
 - [0042](0042-shared-mailbox-by-polling.md) 共有メールボックスは、メンバーの委任の権限で、見回りで読む
 - [0043](0043-drop-turn-vocabulary.md) 表の言葉から「番」をなくし、「担当」と「アテンション」で言う。タスクは担当のものと、アテンションのうち読んでタスクと分かったもの
-- [0044](0044-teams-chats-as-personal-list.md) Teams のチャット（1 対 1・グループ）を、本人の個人リストとして見回りで取り込む（提案）
+- [0044](0044-teams-chats-as-personal-list.md) Teams のチャット（1 対 1・グループ）を、本人の個人リストとして取り込む（提案）
