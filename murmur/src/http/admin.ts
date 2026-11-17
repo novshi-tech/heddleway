@@ -199,7 +199,7 @@ export function renderAdminList(dir: Directory, p: Projections, listId: string, 
     `<nav><a href="${esc(href('/admin'))}">リスト一覧</a></nav>
 <h1>${esc(ds?.name ?? list.dataSourceId)} <small>${esc(list.id)} · ${esc(ds?.channel ?? '')}</small></h1>
 <p class="muted">${esc(ds?.description ?? '')} 読者: ${dir.readersOfList(list.id).map((u) => esc(n.user(u))).join(', ')}</p>
-<div class="scroll"><table><thead><tr><th>スレッド</th><th>誰の番</th><th>結び</th><th>属性</th><th>状態</th><th>更新</th></tr></thead>
+<div class="scroll"><table><thead><tr><th>スレッド</th><th>担当・アテンション</th><th>結び</th><th>属性</th><th>状態</th><th>更新</th></tr></thead>
 <tbody>${rows || '<tr><td colspan="6">スレッドはまだない</td></tr>'}</tbody></table></div>`,
   );
 }

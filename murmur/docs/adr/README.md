@@ -1,0 +1,47 @@
+# Murmur の ADR
+
+決定の記録（`0011`）。後の ADR で改められた決定もそのまま残している。今のルールの要点は `../../CLAUDE.md`、改めた関係は各 ADR の「状態」と「関連」にある。
+
+- [0001](0001-functional-core-imperative-shell.md) 関数型コアと命令型シェルに分ける
+- [0002](0002-test-runner.md) テストは Node の vitest と pglite で回す（vitest-pool-workers は保留）
+- [0003](0003-identity-propagation.md) ゲートウェイから伝搬されるユーザー識別の形式
+- [0004](0004-projection-storage.md) 投影の保存の仕方
+- [0005](0005-derivation-and-ingest-details.md) 実装で決めた派生と Ingest の細部
+- [0006](0006-gateway-extensions.md) ゲートウェイ側の拡張（設計のみ）
+- [0007](0007-read-only-trial-with-real-data.md) 実データでの試用は読み取り専用のコネクタで、Ingest から始める
+- [0008](0008-no-business-knowledge-in-murmur.md) Murmur は業務の知識を持たない（派生と要約はスタンド。新規シグナルの置き先は未決）
+- [0009](0009-two-layer-lists.md) リストを 2 層に分ける（会話の層 = データソース、用件の層 = 人とチーム）
+- [0010](0010-murmur-as-kuroko.md) Murmur は黒子になる（用件ごとに正を 1 つ。受け皿のない用件だけ Murmur が正）
+- [0011](0011-repo-as-source-of-truth.md) 設計の正本をこのリポジトリに移す
+- [0012](0012-shared-ledger-of-judgments.md) Murmur は「人とエージェントが共有する判断の台帳」。外には何も書かない
+- [0013](0013-shared-index-and-personal-lists.md) チームの共有は既存のツールに任せる。Murmur は、テナントで共有する外部リストと、各自のマイリストになる
+- [0014](0014-single-thread-entity.md) エンティティはスレッドの 1 種類。用件とマイリストは「個人のメモ」というデータソースのスレッドになる。結ぶのは人とスタンド
+- [0015](0015-real-data-pull-runner.md) 実データの試用は、手元の pull スクリプトがゲートウェイ経由で Gmail を読み、本体の Webhook に流す
+- [0016](0016-next-stage-real-connectors.md) 次の段階: 実際のチームの実データで Ingest が使えるかを確かめる
+- [0017](0017-multi-organization-identity.md) 複数の組織にまたがる認証と接続（論点のメモ）
+- [0018](0018-no-multi-tenant-per-user.md) 1 人のユーザが複数の組織（テナント）にまたがる対応はしない。組織の切り替えはスタンドで行う
+- [0019](0019-line-front-system.md) LINE 公式アカウントのチャネルは Murmur の手前の別システムが持つ
+- [0020](0020-team-unit-self-hosted.md) Murmur はチーム単位でセルフホストする。チームの境界を越えることを最初から想定する
+- [0021](0021-single-team-storage-in-cloudflare.md) マルチテナントの概念を本体から外し、ストレージを Cloudflare の中（D1 か Durable Object の SQLite）に移す
+- [0022](0022-murmur-federation.md) Murmur 間連携: チームごとの Murmur が、要約したスレッドを送り合う（構想）
+- [0023](0023-murmur-as-gateway-feature.md) Murmur をゲートウェイの機能にする（1 つのデプロイ）
+- [0024](0024-connectors-own-webhooks.md) 外部コネクタ: Webhook は本体が持ち、個人の箱は本人の OAuth、共有の箱はアプリの権限で読む
+- [0025](0025-group-mailbox-via-shared-mailbox.md) Microsoft 365 グループのメールボックスは、購読者にした共有メールボックスで読む
+- [0026](0026-no-personal-murmur-deployment.md) 自分専用の Murmur は作らない。横断は巡回で、個人のメモは各 Murmur の中に持つ
+- [0027](0027-orchestrator-stand.md) オーケストレータのスタンドが実行のスタンドを束ねる。ボールは本人のまま
+- [0028](0028-development-signals.md) 開発のシグナル（PR・CI・レビューの依頼）を取り込むなら Murmur で（構想）
+- [0029](0029-deployment-configs-outside-the-repo.md) デプロイの設定はリポジトリの外に置き、デプロイは CI でしない
+- [0030](0030-contacts-and-query-time-resolution.md) Party を Contact に改める: 組織の概念を外し、読者は User で持ち、名寄せはクエリ層で後から人が付ける
+- [0031](0031-task-notes-and-fixed-mirror.md) タスクは個人のメモのスレッドで追う。写しは Murmur が決めた小さな形にし、属性はメモだけのものにする
+- [0032](0032-choreography-participants.md) エージェントの参加の仕方は 2 つ: オーケストレータの下で動くか、メモスレッドに直接参加するか（0027 を改める）
+- [0033](0033-list-character-and-link-visibility.md) 共有リストは共有の状態を持たないデータソースのためにある。リンクは両端を読める人にだけ見せる
+- [0034](0034-jira-connector.md) Jira のコネクタ: 個人リストとして、本人の権限と本人の JQL で取り込む
+- [0035](0035-action-scope-of-stateful-sources.md) 状態を持つデータソースで「アクションが要る」のは、ソースでボールを持つ人に自分がいるものだけ。ほかは文脈として取り込み、範囲の外は取り込まない
+- [0036](0036-teams-channel-as-shared-list.md) Teams のチャネルを共有リストとして取り込む
+- [0037](0037-shared-lists-per-space.md) 共有リストはスペース単位で作り、読者はソースから写す
+- [0038](0038-assignee-and-attention.md) 誰の番は「担当」と「名指し」の 2 つの軸で決める。ボール・どちら側か・読者が 1 人をやめる
+- [0039](0039-personal-and-shared-lists-only.md) 個人のメモをやめ、リストは個人リストと共有リストの 2 つにする。タスクは外のタスクのサービスから写し、メモは個人リストのスレッドに書く
+- [0040](0040-surface-vocabulary.md) ユーザーに見せる言葉を整理する。表では「トピック索引」と呼び、索引の 1 項目を「トピック」と呼ぶ
+- [0041](0041-gmail-and-google-tasks.md) Gmail と Google Tasks のコネクタ。Google の取り込みは見回りから始める
+- [0042](0042-shared-mailbox-by-polling.md) 共有メールボックスは、メンバーの委任の権限で、見回りで読む
+- [0043](0043-drop-turn-vocabulary.md) 表の言葉から「番」をなくし、「担当」と「アテンション」で言う。タスクは担当のものと、アテンションのうち読んでタスクと分かったもの

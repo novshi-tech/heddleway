@@ -19,23 +19,23 @@ import {
 } from '../../src/domain';
 import { alice, answer, bob, dir, email, EventLog, ingestPure, line, makeCtx, task, updateTask, view } from '../helpers/world';
 
-// クエリ層の「誰の番か」・リンク先から導出したボール・結び候補・タイムライン（H2・H8）
+// クエリ層の担当と名指し・リンク先から導出した様子・結び候補・タイムライン（H2・H8）
 
 function world() {
   const log = new EventLog();
   const ctx = makeCtx();
   // support@（読者 2 人、宛先は組織）→ 仕分け待ち
   const shared = ingestPure(log, ctx, email({ from: 'carol@example.com', sourceRef: 'r1', anchors: { messageId: '<m1>', jiraKeys: ['UBS-7'] } }), () => answer({ title: '雨漏り' }));
-  // support@ だが Alice 宛て（CC など）→ Alice の番
+  // support@ だが Alice 宛て（CC など）→ Alice に名指し
   const addressed = ingestPure(log, ctx, email({ from: 'info@dave.example', to: ['support@ubs.example', 'alice@ubs.example'], sourceRef: 'r2', anchors: { threadKey: 'UBS-7' } }), () =>
     answer({ title: '見積' }),
   );
-  // LINE 公式アカウント（読者は Bob だけ）→ Bob の番
+  // LINE 公式アカウント（読者は Bob だけ）→ Bob にリスト宛ての名指し
   const lineThread = ingestPure(log, ctx, line({ from: 'U_carol', sourceRef: 'l1' }), () => answer({ title: 'LINE' }));
   return { log, ctx, shared: shared.outcome!.threadId, addressed: addressed.outcome!.threadId, line: lineThread.outcome!.threadId };
 }
 
-describe('誰の番か（担当と名指し。0038）', () => {
+describe('担当と名指し（0038）', () => {
   it('H8 構造で決まる: 窓口宛ては読者全員へのリスト宛て、CC に読者がいればその人への名指し。共有リストで担当がいなければ仕分け待ち', () => {
     const { log, shared, addressed, line: l } = world();
     const p = log.state();
@@ -43,14 +43,14 @@ describe('誰の番か（担当と名指し。0038）', () => {
     expect(myTurnOf(dir, bob, p.threads[shared]!)).toEqual(['list']);
     expect(myTurnOf(dir, alice, p.threads[addressed]!)).toEqual(['named', 'list']);
     expect(myTurnOf(dir, bob, p.threads[addressed]!)).toEqual(['list']);
-    // LINE 公式アカウントは読者が 1 人でも共有リスト（組織の資格情報）。「読者が 1 人」で番を決めない
+    // LINE 公式アカウントは読者が 1 人でも共有リスト（組織の資格情報）。「読者が 1 人」で担当を決めない
     expect(myTurnOf(dir, bob, p.threads[l]!)).toEqual(['list']);
     expect([shared, addressed, l].map((id) => isTriage(dir, p.threads[id]!))).toEqual([true, true, true]);
     expect(listThreads(dir, alice, p, { filter: 'my_turn' }).map((t) => t.id).sort()).toEqual([addressed, shared].sort());
     expect(listThreads(dir, bob, p, { filter: 'triage' }).map((t) => t.id).sort()).toEqual([addressed, l, shared].sort());
   });
 
-  it('H8 名指しは本人が外すまで残る。外せばその人の番から外れ、ほかの読者には残る', () => {
+  it('H8 名指しは本人が外すまで残る。外せばその人の my_turn から外れ、ほかの読者には残る', () => {
     const { log, shared } = world();
     log.push(acknowledgeAttention(log.state(), alice, dir, { threadId: shared }), '2026-10-16T10:00:00.000Z');
     const p = log.state();
@@ -118,8 +118,8 @@ describe('一覧の並び（lastActivityAt）', () => {
   });
 });
 
-describe('リンク先から導出したボール（derivedBall）', () => {
-  it('H2 タスクのボールは、見えるリンク先から決まる（どれかが自分の番 → my_turn、全部相手待ち → waiting）', () => {
+describe('リンク先から導出した様子（derivedBall）', () => {
+  it('H2 タスクの結んだ先の様子は、見えるリンク先から決まる（どれかに自分の担当か名指し → my_turn、全部相手待ち → waiting）', () => {
     const { log, ctx, shared, addressed } = world();
     const n = { threadId: task(log, ctx, '雨漏りの件') };
     expect(derivedBall(dir, alice, log.state(), log.state().threads[n.threadId]!)).toBeNull();

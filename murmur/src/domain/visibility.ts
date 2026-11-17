@@ -31,7 +31,7 @@ import { canReadDataSource, type Viewer } from './viewer';
 // - Contact のない User は 0 件、ゴースト Contact は Viewer になれない
 
 /**
- * - my_turn: Viewer の番（自分が担当・自分への名指し・リスト宛ての名指しが残っている。0038）で、開いているもの
+ * - my_turn: Viewer の担当か名指しが残っている（自分が担当・自分への名指し・リスト宛ての名指し。0038）、開いているもの
  * - mine: Viewer のタスク（個人リストのタスクのサービスのスレッド。閉じたものも。0039）
  * - open: 開いているもの（片付けていない・ソースで完了していない）
  * - awaiting: 相手待ち（読者でないアドレスへの名指しが残っている）で、開いているもの
@@ -39,7 +39,7 @@ import { canReadDataSource, type Viewer } from './viewer';
  * - triage: 仕分け待ち（共有リストで、開いていて、担当がいない）
  * - all: 全部
  *
- * since を渡せば、それより後に動いたものだけ（スレッド自身か、見えるリンク先の updatedAt。タスクの導出したボールはリンク先で変わるため）
+ * since を渡せば、それより後に動いたものだけ（スレッド自身か、見えるリンク先の updatedAt。タスクの結んだ先の様子はリンク先で変わるため）
  */
 export type ThreadFilter = 'my_turn' | 'mine' | 'open' | 'awaiting' | 'overdue' | 'triage' | 'all';
 
@@ -108,11 +108,11 @@ export interface ThreadSummary {
   updatedAt: string;
 }
 
-/** 一覧と詳細で返すスレッド。投影の要約に、Viewer から見たもの（自分の番か・リンク先から導出したボール・結び候補）を足す */
+/** 一覧と詳細で返すスレッド。投影の要約に、Viewer から見たもの（担当か名指しが残っているか・リンク先から導出した様子・結び候補）を足す */
 export interface ThreadItem extends ThreadSummary {
   /** 自分か、見える結んだ先のうち一番新しい更新（一覧の並び。0031 の 5） */
   lastActivityAt: string;
-  /** Viewer の番の理由（担当・名指し・リスト宛て）。空なら Viewer の番ではない */
+  /** Viewer に残っている理由（担当・名指し・リスト宛て）。空なら何も残っていない */
   myTurn: MyTurnReason[];
   derivedBall: DerivedBall | null;
   /** 閉じたスレッドに結ばれた先で、閉じたあとにシグナルが来た */
@@ -258,7 +258,7 @@ export interface LinkView extends ThreadLink {
   visible: true;
   title: string;
   dataSourceId: string;
-  /** Viewer の番の理由（空なら Viewer の番ではない） */
+  /** Viewer に残っている理由（空なら何も残っていない） */
   myTurn: MyTurnReason[];
   awaiting: boolean;
   dismissed: boolean;

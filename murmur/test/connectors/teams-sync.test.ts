@@ -126,7 +126,7 @@ describe('H3 H8 Teams の同期（偽の Teams）', () => {
       });
     });
 
-    it('setup → 走査: つないだあとの投稿と返信を取り込み、返信は投稿のスレッドに入る。メンションで番が付く', async () => {
+    it('setup → 走査: つないだあとの投稿と返信を取り込み、返信は投稿のスレッドに入る。メンションで名指しが付く', async () => {
       teams.post(post('1', -120, [['1r', 5, 'oid-bob']]));
       teams.post(post('2', 3, [], { mentions: [{ id: 0, mentioned: user('oid-bob') }], body: { contentType: 'html', content: '<p><at id="0">Bob</at> 折り返しお願いします</p>' } }));
       now = at(10);

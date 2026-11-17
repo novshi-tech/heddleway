@@ -134,7 +134,7 @@ describe('HTTP API', () => {
     expect((await call('GET', '/api/lists/l_alice', 'u_bob')).status).toBe(404);
   });
 
-  it('H8 タスク・メモ・担当・名指し・リンク・自分の番・タイムラインの since の一通り', async () => {
+  it('H8 タスク・メモ・担当・名指し・リンク・自分に残っているもの（my_turn）・タイムラインの since の一通り', async () => {
     const { call, service, clock } = await app();
     const r1 = await service.ingest(email({ from: 'carol@example.com', sourceRef: 'r1', anchors: { messageId: '<m1>' } }));
     const threadId = r1.status === 'threaded' ? r1.threadId : '';
@@ -144,7 +144,7 @@ describe('HTTP API', () => {
     expect(claimed.body.thread).toMatchObject({ assignee: { by: 'claim', userIds: ['u_alice'] }, triage: false, myTurn: ['assignee', 'list'] });
     expect((await call('GET', '/api/threads?filter=triage', 'u_bob')).body).toEqual([]);
     expect((await call('GET', '/api/threads?filter=my_turn', 'u_alice')).body.map((t: { id: string }) => t.id)).toEqual([threadId]);
-    // Bob はリスト宛ての名指しを外すと自分の番から外れる
+    // Bob はリスト宛ての名指しを外すと my_turn から外れる
     expect((await call('GET', '/api/threads?filter=my_turn', 'u_bob')).body.map((t: { id: string }) => t.id)).toEqual([threadId]);
     const acked = await call('POST', `/api/threads/${threadId}/acknowledge`, 'u_bob', { reason: '目を通した' });
     expect(acked.body.thread.myTurn).toEqual([]);

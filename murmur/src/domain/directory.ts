@@ -48,7 +48,7 @@ export class Directory {
     return this.seed.listMembers.filter((m) => m.listId === listId).map((m) => m.userId);
   }
 
-  /** 読者の Contact（ボールの判定に使う。Contact のない読者は出てこない） */
+  /** 読者の Contact（担当と名指しが読者のものかの判定に使う。Contact のない読者は出てこない） */
   readerContactsOfList(listId: string): Contact[] {
     return this.readersOfList(listId)
       .map((u) => this.contactOfUser(u))

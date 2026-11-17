@@ -16,11 +16,11 @@ import {
 } from '../../src/domain';
 import { EventLog, ingestPure } from '../helpers/world';
 
-// 再現: Jira の共有リスト（読者は直樹だけ）で、担当者でも起票者でもない読者の「自分の番」に回った件（2026-11-06 の実測。SPW-2475）。
+// 再現: Jira の共有リスト（読者は直樹だけ）で、担当者でも起票者でもない読者の my_turn に出た件（2026-11-06 の実測。SPW-2475）。
 // - 担当者（会田さん）と起票者（山本さん）の accountId は Contact に結ばれていない
 // - 0038 の前は、起票のシグナルを AI が needs_response=true と判定するとボールが「こちら」になり、holders が解決できないので
-//   担当者の写しが効かず、「読者が 1 人」で直樹の番（by: reader）になっていた
-// 0038 から: 自分の番になるのは、自分が担当・自分への名指し・リスト宛ての名指しが残っているもの（H8・H9）
+//   担当者の写しが効かず、「読者が 1 人」で直樹に割り振られていた（by: reader）になっていた
+// 0038 から: my_turn に出るのは、自分が担当・自分への名指し・リスト宛ての名指しが残っているもの（H8・H9）
 
 const NAOKI = '5b44424e141cd45ff0698a68';
 const AIDA = '712020:a9769c40-7345-4c70-8abe-7b57675aac93';
@@ -91,8 +91,8 @@ function issue(key: string, holders: string[], from: string, needsResponse: bool
   return { p, t: p.threads[plan.threadId]! };
 }
 
-describe('Jira の共有リストで、読者でない担当者の課題が読者の番に回らない（SPW-2475 の再現。0038）', () => {
-  it('H8 H9 担当者が読者でない（Contact もない）課題は、その人が担当で名指しもその人。読者の番にはならず、こちらが送っていないので相手待ちにもならない', () => {
+describe('Jira の共有リストで、読者でない担当者の課題が読者の my_turn に出ない（SPW-2475 の再現。0038）', () => {
+  it('H8 H9 担当者が読者でない（Contact もない）課題は、その人が担当で名指しもその人。読者の my_turn には出ず、こちらが送っていないので相手待ちにもならない', () => {
     const { p, t } = issue('SPW-2475', [AIDA], YAMAMOTO, true);
     expect(t.source?.holders).toEqual([AIDA]);
     expect(assigneeOf(dir, t)).toEqual({ by: 'source', userIds: [], contactIds: [], addresses: [jira(AIDA)] });
@@ -103,7 +103,7 @@ describe('Jira の共有リストで、読者でない担当者の課題が読�
     expect(listThreads(dir, naoki, p, { filter: 'my_turn' })).toEqual([]);
   });
 
-  it('H8 H9 同じ形で AI が needs_response=false と判定した課題（SPW-2470 相当）と、誰の番が同じになる（AI の判定に依らない）', () => {
+  it('H8 H9 同じ形で AI が needs_response=false と判定した課題（SPW-2470 相当）と、担当と名指しが同じになる（AI の判定に依らない）', () => {
     const a = issue('SPW-2475', [AIDA], YAMAMOTO, true);
     const b = issue('SPW-2470', [AIDA], YAMAMOTO, false);
     const shape = (x: typeof a) => [assigneeOf(dir, x.t), attentionOf(dir, x.t).named.map((n) => n.address), myTurnOf(dir, naoki, x.t)];
@@ -117,7 +117,7 @@ describe('Jira の共有リストで、読者でない担当者の課題が読�
     expect(listThreads(dir, naoki, p, { filter: 'my_turn' }).map((x) => x.id)).toEqual([t.id]);
   });
 
-  it('H8 共有リストでは「読者が 1 人」を理由に番を決めない。担当者のいない課題は仕分け待ち', () => {
+  it('H8 共有リストでは「読者が 1 人」を理由に担当を決めない。担当者のいない課題は仕分け待ち', () => {
     const { t } = issue('SPW-2483', [], YAMAMOTO, true);
     expect(isTriage(dir, t)).toBe(true);
     expect(myTurnOf(dir, naoki, t)).toEqual([]);
@@ -125,7 +125,7 @@ describe('Jira の共有リストで、読者でない担当者の課題が読�
 });
 
 describe('Jira の共有リストの宛先のない連絡（0038 の未決 3）', () => {
-  it('H8 メンションのないコメントは、共有リスト（group）でもリスト宛てにならない。読者の番に出ない', () => {
+  it('H8 メンションのないコメントは、共有リスト（group）でもリスト宛てにならない。読者の my_turn に出ない', () => {
     const groupSeed = Seed.parse({ ...seed, dataSources: seed.dataSources.map((d) => (d.kind === 'service' ? { ...d, group: true } : d)) });
     const gdir = new Directory(groupSeed);
     const viewer = deriveViewer(gdir, 'u_naoki');

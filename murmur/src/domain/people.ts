@@ -264,7 +264,7 @@ export function mergeContacts(draft: Seed, intoId: string, fromId: string): void
   draft.contactAliases = [...draft.contactAliases.map((x) => (x.contactId === fromId ? { ...x, contactId: intoId } : x)), { id: fromId, contactId: intoId }];
 }
 
-/** User との結びを外す（本人だけ。見えるものは変わらず、ボールの判定だけが変わる） */
+/** User との結びを外す（本人だけ。見えるものは変わらず、担当と名指しが誰のものかだけが変わる） */
 export function unbindContact(draft: Seed, contactId: string, userId: string): void {
   const c = draftContact(draft, contactId);
   if (c.userId !== userId) throw new DomainError('forbidden', 'only the bound user can unbind the contact');
