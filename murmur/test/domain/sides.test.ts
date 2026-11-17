@@ -24,7 +24,7 @@ describe('どちら側か（sides）', () => {
     expect(commView(dir, t)).toMatchObject({ lastOutboundAt: T(10) });
   });
 
-  it('H8 Contact に解決できない相手はアドレスのまま載る。名寄せすると Contact の名前が付くが、番の種類は変わらない（0030・0038）', () => {
+  it('H8 Contact に解決できない相手はアドレスのまま載る。名寄せすると Contact の名前が付くが、担当と名指しの付き方は変わらない（0030・0038）', () => {
     const log = new EventLog();
     const ctx = makeCtx(T(9));
     // 知らない相手から受信 → 返信（CC に窓口と、知らない人を大文字で 2 回）

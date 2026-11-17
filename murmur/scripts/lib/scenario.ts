@@ -608,7 +608,7 @@ export async function verifyScenario(run: Run): Promise<Verification> {
   // どのシグナルもどこかのスレッドに入っている（取りこぼしがない）
   for (const s of Object.values(p.signals)) if (!s.threadId) errors.push(`signal ${s.signalId} がどのスレッドにもない`);
 
-  // H3・H8 可視性と「自分の番」・結び候補
+  // H3・H8 可視性と my_turn・結び候補
   errors.push(...checkViews(new Directory(scenario.seed), p, scenario.expected.visibility, resolve, 'visibility'));
 
   const metrics = ingestMetrics(run);

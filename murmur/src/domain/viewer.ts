@@ -3,7 +3,7 @@ import type { Directory } from './directory';
 /**
  * Viewer = User → 読者になっているリスト（0030。Contact を通らない）。
  * スタンドはユーザーと同一権限で働くので、ゲートウェイから伝搬された User からそのまま導出する。
- * contactId は本人の Contact（ボールの判定と送り主に使う。なければ null）。
+ * contactId は本人の Contact（担当と名指しの判定と送り主に使う。なければ null）。
  */
 export interface Viewer {
   userId: string;

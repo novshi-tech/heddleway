@@ -41,7 +41,7 @@ describe('H9 Jira の写像（純関数）', () => {
     expect(toUtc('2026-11-04T04:37:57.144Z')).toBe('2026-11-04T04:37:57.144Z');
   });
 
-  it('写しは 0031 の決まった形: 完了はステータスカテゴリ done、ボールを持つのは担当者', () => {
+  it('写しは 0031 の決まった形: 完了はステータスカテゴリ done、holders は担当者', () => {
     expect(mirrorOf('ds_j', issue())).toEqual({
       kind: 'mirror',
       dataSourceId: 'ds_j',
@@ -124,7 +124,7 @@ function jiraSeed(): { seed: Seed; dataSourceId: string } {
 }
 
 describe('H9 H5 H8 Jira の写像を取り込む（個人リスト）', () => {
-  it('写しでスレッドができ、担当者が本人なら本人の番。コメントのメンションも名指しとして残る。完了で誰の番でもない', async () => {
+  it('写しでスレッドができ、担当者が本人なら本人が担当。コメントのメンションも名指しとして残る。完了で誰にもない', async () => {
     const { seed: s, dataSourceId: ds } = jiraSeed();
     const { service, clock } = await makeService(s, { decide: () => answer({ needs_response: true }) });
     clock.set('2026-11-04T05:00:00.000Z');
@@ -137,7 +137,7 @@ describe('H9 H5 H8 Jira の写像を取り込む（個人リスト）', () => {
     const [t] = Object.values(p.threads).filter((x) => x.dataSourceId === ds);
     expect(t).toMatchObject({ title: '物件の立ち上げ', sourceKey: 'SPW-2040', closedAtSource: false });
     expect(t!.signalIds).toHaveLength(2);
-    // 個人リストは本人が暗黙の担当（担当は出さない）。番は名指しで決まる
+    // 個人リストは本人が暗黙の担当（担当は出さない）。残っているかは名指しで決まる
     expect(assigneeOf(dir, t!)).toBeNull();
     expect(myTurnOf(dir, deriveViewer(dir, 'u_bob'), t!)).toEqual(['named']);
 

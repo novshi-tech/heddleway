@@ -109,7 +109,7 @@ describe('メモ（add_note。0039 の決定 2）', () => {
     expect(() => addNote(log.state(), alice, ctx, { threadId: t, body: ' ' })).toThrow(/body/);
   });
 
-  it('H3 メモに書き手の印を付けられる。省略は本人。タイムラインに出るが、誰の番は変えない（0031 の 3・0032）', () => {
+  it('H3 メモに書き手の印を付けられる。省略は本人。タイムラインに出るが、担当と名指しは変えない（0031 の 3・0032）', () => {
     const { log, ctx } = world();
     const t = task(log, ctx, 'PR のレビュー対応');
     const a = addNote(log.state(), alice, ctx, { threadId: t, body: '着手する' });

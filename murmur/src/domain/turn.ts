@@ -6,13 +6,13 @@ import type { LogPos, Naming, Projections, Thread } from './projections';
 import { isOurs } from './sides';
 import { canReadDataSource, type Viewer } from './viewer';
 
-// クエリ層の「誰の番か」（0038）と結び（0014 の 3）。投影のスナップショットとマスタから計算する純関数で、
+// クエリ層の担当と名指し（0038）と結び（0014 の 3）。投影のスナップショットとマスタから計算する純関数で、
 // fold には持ち込まない（fold は 1 段）。Murmur は候補を出すだけで、自分ではリンクを張らない。
 //
-// 誰の番は 2 つの軸で決まる（0038）:
+// 担当と名指しは独立した 2 つの軸（0038）:
 // - 担当: 誰がタスクを進めるか。出所はデータソースの種類で 1 つ（状態を持つソースは写しの holders、それ以外の共有リストは担当する操作）
 // - 名指し: 誰に読んでほしいか。シグナルの宛先から溜まり、明示的な操作（acknowledge）だけで外れる
-// マスタで決めるのは「このリストの読者のアドレスか」「リスト宛てか」だけ。相手の Contact は名前を出すためだけに使い、番の種類は変えない
+// マスタで決めるのは「このリストの読者のアドレスか」「リスト宛てか」だけ。相手の Contact は名前を出すためだけに使い、担当と名指しの付き方は変えない
 
 /** リストの種類。個人リストは読者が本人 1 人（個人の資格情報の箱・タスクのリスト）。ほかは共有リスト（0037・0039） */
 export type ListKind = 'personal' | 'shared';
@@ -48,13 +48,13 @@ export function isListAddress(ds: DataSource | undefined, ref: AddressRef): bool
   return ds?.kind === 'service' && ds.selfAddresses.some((a) => sameAddress(a, ref));
 }
 
-/** 担当（0038 の決定 1）。個人リストは本人が暗黙の担当なので出さない（自分の番は名指しで決まる） */
+/** 担当（0038 の決定 1）。個人リストは本人が暗黙の担当なので出さない（自分に残っているかは名指しで決まる） */
 export interface Assignee {
   /** source = ソースの担当者（写しの holders）、claim = 担当する操作 */
   by: 'source' | 'claim';
   /** 読者の担当 */
   userIds: string[];
-  /** 読者でない担当のうち Contact のあるもの（名前を出すため。番の種類は変えない） */
+  /** 読者でない担当のうち Contact のあるもの（名前を出すため。担当と名指しの付き方は変えない） */
   contactIds: string[];
   /** 読者でない担当のうち Contact のないもの */
   addresses: AddressRef[];
@@ -205,7 +205,7 @@ export function isOpen(t: Thread): boolean {
   return !t.dismissed && !t.closedAtSource;
 }
 
-/** 自分の番の理由（0038 の決定 6）。空なら自分の番ではない */
+/** 自分に残っている理由（担当・名指し・リスト宛て。0038 の決定 6）。空なら何も残っていない */
 export type MyTurnReason = 'assignee' | 'named' | 'list';
 
 export function myTurnOf(dir: Directory, viewer: Viewer, t: Thread): MyTurnReason[] {
@@ -233,9 +233,9 @@ export function isAwaiting(dir: Directory, t: Thread): boolean {
 }
 
 /**
- * リンク先のスレッドから導出したボール（主にタスクのスレッドから見る。どのスレッドからでも同じ計算）。
+ * リンク先のスレッドから導出した様子（名前の derivedBall は 0038 より前の名残。主にタスクのスレッドから見る。どのスレッドからでも同じ計算）。
  * 見えるリンク先だけを見る。片付けたリンク先は数えない
- * - my_turn: どれかが Viewer の番
+ * - my_turn: どれかに Viewer の担当か名指しが残っている
  * - waiting: 全部が相手待ち
  * - none: それ以外
  * 見えるリンクがなければ null（見えないリンクは、あることも出さない。0033 の 3）

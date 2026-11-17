@@ -84,7 +84,7 @@ describe('H3 H8 Teams のチャネルの共有リスト', () => {
     expect(seedProblems(after)).toEqual([]);
   });
 
-  it('投稿のメンションでその人の番になり、返信は構造（threadTs）で投稿のスレッドに入る', async () => {
+  it('投稿のメンションでその人に名指しが付き、返信は構造（threadTs）で投稿のスレッドに入る', async () => {
     const { after, ds } = connect();
     // Bob も読者で、Teams のアドレスを名乗っている
     const { after: withBob } = planMasterEdit(after, (d) => {

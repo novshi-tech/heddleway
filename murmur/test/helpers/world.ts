@@ -117,7 +117,7 @@ export const seed = Seed.parse({
 
 export const dir = new Directory(seed);
 
-/** 投影のスレッドに、クエリ層で解決した通信状態（ボール・相手・未応答。0030）を重ねたもの */
+/** 投影のスレッドに、クエリ層で解決した通信状態（担当・名指し・相手・未応答。0030・0038）を重ねたもの */
 export const view = (p: Projections, id: string, d: Directory = dir) => ({ ...p.threads[id]!, ...summarizeThread(d, p, p.threads[id]!) });
 export const alice = deriveViewer(dir, 'u_alice');
 export const bob = deriveViewer(dir, 'u_bob');

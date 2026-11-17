@@ -36,7 +36,7 @@ export type Direction = z.infer<typeof Direction>;
 
 /**
  * メモの書き手（0031 の 3・0032）。user は人の言葉（スタンドが中継したものを含む）、agent はエージェント自身が書いたもの。
- * スタンドの自己申告で、誰の番・名指し・担当・可視性には使わない
+ * スタンドの自己申告で、名指し・担当・可視性には使わない
  */
 export const Author = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('user') }),
@@ -89,7 +89,7 @@ export const SignalThreaded = z.object({
   confidence: z.number().min(0).max(1),
   reason: z.string().min(1),
   /**
-   * 返事や対応を求めているか。0038 でやめた（誰の番は宛先と明示的な操作で決まる）。新しいイベントは null を書き、fold は読まない。
+   * 返事や対応を求めているか。0038 でやめた（担当と名指しは宛先と明示的な操作で決まる）。新しいイベントは null を書き、fold は読まない。
    * 古いイベントに残る値も読まない
    */
   needsResponse: z.boolean().nullable().default(null),
@@ -97,7 +97,7 @@ export const SignalThreaded = z.object({
   actorUserId: z.string().optional(),
 });
 
-/** 片付け（v1 の ignore の後継）。「このスレッドにこれ以上ボールは動かない」の宣言 */
+/** 片付け（v1 の ignore の後継）。「このスレッドはもう追わない」の宣言 */
 export const ThreadDismissed = z.object({ threadId: z.string(), actorUserId: z.string(), reason: z.string().min(1) });
 export const ThreadReopened = z.object({ threadId: z.string(), actorUserId: z.string(), reason: z.string().optional() });
 
@@ -150,8 +150,8 @@ export const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}(T[\d:.]+(Z|[+-]\d{2}
 
 /**
  * 写しの項目（0031 の 6）。Murmur が決めた形で、コネクタはサービスの標準の意味で写す。省略は「変わっていない」
- * - closed: ソースで完了しているか（ボールは「なし」）
- * - holders: ソースの上でボールを持っているアカウント（アドレスの値。Contact への解決はクエリ層）。空はだれも持っていない
+ * - closed: ソースで完了しているか（担当も名指しも数えない）
+ * - holders: ソースの上で担当しているアカウント（アドレスの値。Contact への解決はクエリ層）。空はだれも持っていない
  * - title: 件名（スレッドの件名になる）
  * - statusLabel / due: 見せるだけ（null は空）
  */

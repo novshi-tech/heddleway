@@ -90,7 +90,7 @@ describe('状態の写し（planMirror）', () => {
     expect(log.state().threads[id]!.source).toEqual({ holders: ['jira:alice'], statusLabel: '未着手', due: '2026-10-20' });
     expect(planMirror(log.state(), ctx, mirror('UBS-1', { statusLabel: '未着手', holders: ['jira:alice', 'jira:alice'] }, 'u2'))).toEqual({ kind: 'unchanged', threadId: id });
     expect(planMirror(log.state(), ctx, mirror('UBS-1', { statusLabel: '進行中', holders: ['jira:alice'] }, 'u3'))).toEqual(expect.objectContaining({ fields: { statusLabel: '進行中' } }));
-    // 知らないアカウントもそのまま写す（名寄せされるまで誰の番にもならない）。holders は重複を除いて並べる
+    // 知らないアカウントもそのまま写す（名寄せされるまで読者の担当にはならない）。holders は重複を除いて並べる
     expect(planMirror(log.state(), ctx, mirror('UBS-1', { holders: ['jira:unknown', 'jira:alice'] }, 'u4'))).toMatchObject({ fields: { holders: ['jira:alice', 'jira:unknown'] } });
     // 件名も写す
     expect(planMirror(log.state(), ctx, mirror('UBS-1', { title: '雨漏りの修繕（2F）' }, 'u5'))).toMatchObject({ fields: { title: '雨漏りの修繕（2F）' } });
@@ -137,7 +137,7 @@ describe('状態の写し（planMirror）', () => {
 });
 
 describe('ソースの担当者で決まる担当（0038 の決定 1）', () => {
-  it('H9 H8 状態を持つソースの担当は写しの holders。読者なら担当として自分の番、読者でない相手もそのまま担当（Contact は名前だけ）。担当がいなければ仕分け待ち。完了なら数えない', () => {
+  it('H9 H8 状態を持つソースの担当は写しの holders。読者なら自分の担当、読者でない相手もそのまま担当（Contact は名前だけ）。担当がいなければ仕分け待ち。完了なら数えない', () => {
     const log = new EventLog();
     const ctx = ctxAt();
     const { outcome } = ingestPure(log, ctx, issueEvent('UBS-1'), answer(false));
@@ -166,7 +166,7 @@ describe('ソースの担当者で決まる担当（0038 の決定 1）', () => 
     expect([myTurnOf(dir, alice, t()), isTriage(dir, t())]).toEqual([[], false]);
   });
 
-  it('H9 holders が複数（PR のレビュアーなど）なら全員が担当。解決できないアカウントもアドレスのまま担当で、読者の番にはならない（0038）', () => {
+  it('H9 holders が複数（PR のレビュアーなど）なら全員が担当。解決できないアカウントもアドレスのまま担当で、読者の担当にはならない（0038）', () => {
     const log = new EventLog();
     const ctx = ctxAt();
     const { outcome } = ingestPure(log, ctx, issueEvent('UBS-2'), answer(false));
