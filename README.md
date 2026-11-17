@@ -23,11 +23,11 @@ Claude の Cowork で動作を確認しています。MCP の OAuth に従って
 
 ## トピック索引(Murmur)
 
-[`murmur/`](murmur/) は、ゲートウェイの機能の 1 つ「トピック索引」です(内部の名前は Murmur)。メール(Outlook・Gmail)・Teams(チャネルとチャット)・Jira・To Do・Google Tasks などのやりとりをトピック(アクションアイテムの候補になる会話)にまとめ、担当とアテンションを追います。アテンションにはタスクと FYI が区別されずに入っていて、どちらかはエージェントが読んで決めます。利用者は意識せず、エージェント(Claude など)が裏で読んで「いまやるべきこと」に答えるための索引です([docs/adr/0005](docs/adr/0005-murmur-as-a-feature.md))。
+[`murmur/`](murmur/) は、ゲートウェイの機能の 1 つ「トピック索引」です(内部の名前は Murmur)。メール(Outlook・Gmail)・Teams(チャネルとチャット)・Google Chat(スペースとチャット)・Jira・To Do・Google Tasks などのやりとりをトピック(アクションアイテムの候補になる会話)にまとめ、担当とアテンションを追います。アテンションにはタスクと FYI が区別されずに入っていて、どちらかはエージェントが読んで決めます。利用者は意識せず、エージェント(Claude など)が裏で読んで「いまやるべきこと」に答えるための索引です([docs/adr/0005](docs/adr/0005-murmur-as-a-feature.md))。
 
 - ゲートウェイの Worker に入っていて、デプロイの設定に Murmur の D1 を足すと有効になります(`wrangler.example.jsonc` の末尾)。足さなければ、ゲートウェイはトピック索引なしで今までどおり動きます
 - 利用者ごとに、ゲートウェイの画面で有効にします(エージェントにトピック索引への接続を頼むと、有効にする画面に案内されます)。有効にした人の接続だけを、読み取りだけで使います。「つないだサービス」の画面でいつでも無効にできます
-- 個人のメールとタスクは、組織のデプロイにあるサービスで決まります。Microsoft 365 の組織は Outlook と To Do(`graph`)、Google Workspace の組織は Gmail と Google Tasks(`gmail`・`tasks`)です。Google の準備と設定は [docs/deploy.md](docs/deploy.md) の「Google」にあります
+- 個人のメールとタスクは、組織のデプロイにあるサービスで決まります。Microsoft 365 の組織は Outlook と To Do(`graph`)、Google Workspace の組織は Gmail と Google Tasks(`gmail`・`tasks`)と Google Chat のチャット(`chat`)です。Google の準備と設定は [docs/deploy.md](docs/deploy.md) の「Google」にあります
 - エージェントからは、ほかのサービスと同じく `issue_token`(`identity:murmur`)と REST(`/api/murmur/...`)で使います。使い方はプラグイン `heddleway` の `topic-index` スキルです
 
 ## 前提
@@ -113,6 +113,7 @@ Claude のようなエージェント(スタンド)のほかに、決まった�
 | | `google-drive` | `drive` | ファイルの検索・ダウンロード・エクスポート・アップロード、共有ドライブ |
 | | `google-calendar` | `calendar` | 予定の検索・作成・更新、空き時間の確認 |
 | | `google-tasks` | `tasks` | タスクのリストとタスクの一覧・作成・更新・完了・削除・移動 |
+| | `google-chat` | `chat` | スペース・DM の一覧、メンバー、メッセージの検索・取得、スペースやスレッドへの投稿・返信 |
 | | `google-docs` | `docs` | ドキュメントの本文の読み取り、作成、追記・置換・書式の編集 |
 | | `google-analytics` | `analytics`・`analytics-admin` | GA4 のレポート取得、アカウントとプロパティの参照(読み取り専用) |
 | `heddleway-freee` | `freee` | `freee` | 会計・人事労務・請求書・販売の API |

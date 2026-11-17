@@ -112,3 +112,14 @@ Microsoft 365 の組織では、Teams のチャネル（0036）とチャット�
 5. 一覧は既定で `createTime` の古い順、`createTime > "…"`・`thread.name = …`・`orderBy=createTime desc` が通る。`lastActiveTime` は最後のメッセージの `createTime` と一致（決定 4）
 
 まだ見ていないこと: Workspace Events API の購読（未決 2。Pub/Sub のトピックが要る）、グループのチャット（試した組織に 0）、外部のユーザー、`@all`、返信で `lastActiveTime` が動くか。
+
+## 実装の記録（2026-11-17）
+
+- ドメイン: チャネル `google-chat`（値は Google のアカウントの ID）。接続先 `google-chat`（`space`・`threaded`。共有リスト、spaceKey は `google-chat:<space>`）と `google-chat-dm`（`account`。1 人に 1 つの個人リスト）。`connectGoogleChatSpace`・`connectGoogleChatDms`、`googleChatAccount`（`users/<ID>` → `<ID>`）・`googleUserId`・`googleAccountOf`（`google_<sub>` ↔ `<sub>`）。`dataSource.origin` に `{ kind: 'google-chat', space }`・`{ kind: 'google-chat-dm' }`
+- コネクタ（`src/connectors/google-chat/`）: 正規化は決定 1〜3 のとおり。スレッドを使うスペースは `thread.name` を `threadTs`、使わないスペース（`UNTHREADED_MESSAGES`）は `threadTs` なし。宛先は `USER_MENTION` の `MENTION` で相手が `HUMAN` のものだけ（`@all`・アプリ・追加は落とす）。引用は `quotedMessageId`。`sourceRef` は `google-chat:<message の name>`、`messageId` はメッセージの `name`（`record_sent` の `sent_ref` と同じ）。アプリ（`BOT`）と削除は取らない。名前は使わない（S0 で入ると分かったが、Contact はエージェントが作る）
+- 取り込み: 5 分ごとの見回り。スペースは `createTime > 位置 − 10 分` を古い順に読み、位置は読んだ中で一番新しい `createTime`。1 回にスペース 1 つで 5 ページ（200 件）まで。上限で止めたら `pagedOut` を残し、次は重なりなしで続きから（重なりの読み直しで上限を使い切らない）。読者は 60 分ごと（と setup で）メンバーの `HUMAN`・`JOINED` から `google_<ID>` で写す。つないだ人が外れる・スペースが 403/404 なら broken。DM・グループは `spaces.list`（`DIRECT_MESSAGE OR GROUP_CHAT`）の `lastActiveTime` が位置より新しいものだけを、新しい順に 1 回 50 まで読む。種類とメンバーは運用の状態に覚えて 1 日ごとに読み直す（アプリとの DM・メンバーが読めないものは `skip`）。DM 1 つの 403/404 は接続を止めずにその DM を `skip` にする
+- 書き込みは、そのつど今の状態を読み直して見回りの項目だけを重ねる（外された・つなぎ直されたら止める。0041 の Google Tasks と同じ）
+- 口: `UpstreamKind` に `google-chat`・`google-chat-dm`。どちらもゲートウェイの `chat` の接続（`MURMUR_CHAT_SERVICE` で変えられる）。読める口は GET だけで、スペースの口は一覧・1 つ・メンバー・メッセージ、DM の口は一覧・メンバー・メッセージ。スペースと DM はパスでは区別できない（決定 5 の割り切り）
+- API: `POST /connections/google-chat`（`{credential_id?, space?}`。`choose_space` は `SPACE` だけ。デプロイの設定 `MURMUR_SHARED_SERVICES` に `google-chat` が要る）、`POST /connections/google-chat-dm`。どちらも Google でサインインするゲートウェイだけ（`forbidden`）。`GET /connections` に `kind: google-chat`（`space`）・`google-chat-dm`
+- スキル: topic-index に「Google Chat のチャットをつなぐ」「Google Chat のスペースをつなぐ」と、`record_sent` の「Google Chat で送った」（heddleway 0.29.0）。heddleway-google に `google-chat` スキル（一覧・読み取り・投稿・スレッドへの返信・メンションの書き方、heddleway-google 0.16.0）。同意の文面に Google Chat
+- 試用で見ること: 返信で `lastActiveTime` が動くか（DM の見回りが頼っている）、`@all` の形、外部のユーザー、グループのチャット、人数の多いデプロイでの Chat API のクォータ
