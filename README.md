@@ -16,7 +16,7 @@ Claude ──MCP(OAuth でサインイン)──▶ ゲートウェイ ─┐
 小さい呼び出しは、MCP のツール `api_get`(読み取り。確認なしで呼べる)と `api_request`(POST・PUT・PATCH・DELETE。呼ぶたびに確認が出る)で、ゲートウェイが同じ中継を通して呼びます。返すのはテキストだけで、長いボディは切り詰め、ファイル(バイナリ)はスクリプトに任せます。
 
 - **Claude は認証情報を見ません。** API キーや OAuth のトークンは、ユーザーがゲートウェイの Web 画面で登録し、暗号化して保存されます。Claude が受け取るのは、寿命 15 分のゲートウェイのトークンだけです。
-- **よく使うサービスは組み込みです。** freee、Microsoft Graph、Google(Gmail・Drive・Calendar・Docs・Tasks・Analytics)、Slack、Jira、Confluence、board、gBizINFO、Serper、X は `src/catalog.ts` にあり、OAuth のクライアントを登録すれば使えます。ほかのサービスは、デプロイの設定の `SERVICES` に書くか、管理画面から、ベース URL と認証方式(ヘッダーか OAuth 2.0)を書いて足します。OAuth のトークンの更新もゲートウェイが受け持ちます。
+- **よく使うサービスは組み込みです。** freee、Microsoft Graph、Google(Gmail・Drive・Calendar・Docs・Tasks・Chat・Analytics)、Slack、Jira、Confluence、board、gBizINFO、Serper、X は `src/catalog.ts` にあり、OAuth のクライアントを登録すれば使えます。ほかのサービスは、デプロイの設定の `SERVICES` に書くか、管理画面から、ベース URL と認証方式(ヘッダーか OAuth 2.0)を書いて足します。OAuth のトークンの更新もゲートウェイが受け持ちます。
 - **使い方はスキルで配ります。** API の呼び方は、Claude のスキル(プラグイン)にまとめて配布します。コネクタの URL を含めていないので、どのデプロイでも同じプラグインを使えます。
 
 Claude の Cowork で動作を確認しています。MCP の OAuth に従っているので、ほかの Claude のクライアントや ChatGPT のコネクタにも対応する設計ですが、まだ確認していません。設計の詳細は [docs/concept.md](docs/concept.md) と [docs/auth-design.md](docs/auth-design.md) にあります。
