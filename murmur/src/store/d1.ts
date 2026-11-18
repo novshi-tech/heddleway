@@ -3,7 +3,10 @@ import type { BatchItem } from 'drizzle-orm/batch';
 import type { DrizzleD1Database } from 'drizzle-orm/d1';
 import {
   emptyProjections,
+  indexOfSignals,
   parseEvent,
+  signalKeysOf,
+  threadColumns,
   rowKey,
   Seed,
   SEED_KINDS,
@@ -88,6 +91,9 @@ export class D1EventStore implements EventStore {
 
 const META_ID = 1;
 
+/** projection_meta.idx に書く空の索引（列は 0046 より前のコードのために残す。schema.ts） */
+const EMPTY_INDEX: Projections['index'] = { sourceRefs: {}, messageIds: {} };
+
 /**
  * isolate の中の写し（投影とマスタ）。D1 のバインディングごとに 1 つ。
  * 投影は全件を読むと行数ぶん rows_read を食う（取り込みの 1 件ごと・API の 1 回ごとに読むので、見回りだけで 1 日数百万行になる）。
@@ -143,9 +149,10 @@ export class D1ProjectionStore implements ProjectionStore {
     if (!meta) return null;
     const p = emptyProjections();
     p.lastSeq = meta.lastSeq;
-    p.index = meta.idx as Projections['index'];
     for (const r of threads) p.threads[r.id] = r.data as Thread;
     for (const r of signals) p.signals[r.id] = r.data as SignalRecord;
+    // 索引はシグナルから作り直す（fold が積むのと同じ。meta.idx は読まない。0046 の決定 2）
+    p.index = indexOfSignals(Object.values(p.signals));
     return p;
   }
 
@@ -160,9 +167,10 @@ export class D1ProjectionStore implements ProjectionStore {
   private async saveAll(p: Projections): Promise<void> {
     await batch(this.db, [
       ...this.deleteAll(),
-      this.db.insert(schema.projectionMeta).values({ id: META_ID, lastSeq: p.lastSeq, idx: p.index }),
+      this.db.insert(schema.projectionMeta).values({ id: META_ID, lastSeq: p.lastSeq, idx: EMPTY_INDEX }),
       ...this.threadRows(p, Object.keys(p.threads)).map((rows) => this.db.insert(schema.threads).values(rows)),
       ...this.signalRows(p, Object.keys(p.signals)).map((rows) => this.db.insert(schema.signals).values(rows)),
+      ...this.keyRows(p, Object.keys(p.signals)).map((rows) => this.db.insert(schema.signalKeys).values(rows)),
     ]);
   }
 
@@ -190,9 +198,9 @@ export class D1ProjectionStore implements ProjectionStore {
       ...this.threadRows(p, changes.threadIds).map((rows) =>
         d1
           .prepare(
-            `INSERT INTO threads (id, data_source_id, data) SELECT column1, column2, column3 FROM (VALUES ${rows.map(() => '(?, ?, ?)').join(', ')}) WHERE ${cond} ON CONFLICT (id) DO UPDATE SET data_source_id = excluded.data_source_id, data = excluded.data`,
+            `INSERT INTO threads (id, data_source_id, data, source_key, last_signal_at, named_pending) SELECT column1, column2, column3, column4, column5, column6 FROM (VALUES ${rows.map(() => '(?, ?, ?, ?, ?, ?)').join(', ')}) WHERE ${cond} ON CONFLICT (id) DO UPDATE SET data_source_id = excluded.data_source_id, data = excluded.data, source_key = excluded.source_key, last_signal_at = excluded.last_signal_at, named_pending = excluded.named_pending`,
           )
-          .bind(...rows.flatMap((r) => [r.id, r.dataSourceId, JSON.stringify(r.data)])),
+          .bind(...rows.flatMap((r) => [r.id, r.dataSourceId, JSON.stringify(r.data), r.sourceKey, r.lastSignalAt, r.namedPending ? 1 : 0])),
       ),
       ...this.signalRows(p, changes.signalIds).map((rows) =>
         d1
@@ -201,11 +209,17 @@ export class D1ProjectionStore implements ProjectionStore {
           )
           .bind(...rows.flatMap((r) => [r.id, r.dataSourceId, r.threadId, JSON.stringify(r.data)])),
       ),
+      // 索引の行（0046 の決定 2）。同じ値は seq の大きいシグナルを指す（fold の上書きと同じ）
+      ...this.keyRows(p, changes.signalIds).map((rows) =>
+        d1
+          .prepare(
+            `INSERT INTO signal_keys (data_source_id, kind, value, signal_id, seq) SELECT column1, column2, column3, column4, column5 FROM (VALUES ${rows.map(() => '(?, ?, ?, ?, ?)').join(', ')}) WHERE ${cond} ON CONFLICT (data_source_id, kind, value) DO UPDATE SET signal_id = excluded.signal_id, seq = excluded.seq WHERE excluded.seq >= signal_keys.seq`,
+          )
+          .bind(...rows.flatMap((r) => [r.dataSourceId, r.kind, r.value, r.signalId, r.seq])),
+      ),
       d1
-        .prepare(
-          `INSERT INTO projection_meta (id, last_seq, idx) SELECT ${META_ID}, ${next}, ? WHERE ${cond} ON CONFLICT (id) DO UPDATE SET last_seq = excluded.last_seq${changes.index ? ', idx = excluded.idx' : ''}`,
-        )
-        .bind(JSON.stringify(p.index)),
+        .prepare(`INSERT INTO projection_meta (id, last_seq, idx) SELECT ${META_ID}, ${next}, ? WHERE ${cond} ON CONFLICT (id) DO UPDATE SET last_seq = excluded.last_seq`)
+        .bind(JSON.stringify(EMPTY_INDEX)),
     ];
     await d1.batch(statements);
   }
@@ -216,14 +230,31 @@ export class D1ProjectionStore implements ProjectionStore {
   }
 
   private deleteAll() {
-    return [this.db.delete(schema.projectionMeta), this.db.delete(schema.threads), this.db.delete(schema.signals)];
+    return [this.db.delete(schema.projectionMeta), this.db.delete(schema.threads), this.db.delete(schema.signals), this.db.delete(schema.signalKeys)];
   }
 
   private threadRows(p: Projections, ids: readonly string[]) {
     return chunks(
-      ids.map((id) => ({ id, dataSourceId: p.threads[id]!.dataSourceId, data: p.threads[id]! })),
-      3,
+      ids.map((id) => {
+        const t = p.threads[id]!;
+        return { id, dataSourceId: t.dataSourceId, data: t, ...threadColumns(t) };
+      }),
+      6,
     );
+  }
+
+  private keyRows(p: Projections, signalIds: readonly string[]) {
+    // 同じ値は seq の大きいシグナルだけ残す（1 つの文に同じ主キーを 2 度入れない）
+    const latest = new Map<string, { dataSourceId: string; kind: string; value: string; signalId: string; seq: number }>();
+    for (const id of signalIds) {
+      const s = p.signals[id]!;
+      for (const k of signalKeysOf(s)) {
+        const key = `${s.dataSourceId}\n${k.kind}\n${k.value}`;
+        const prev = latest.get(key);
+        if (!prev || s.seq > prev.seq) latest.set(key, { dataSourceId: s.dataSourceId, kind: k.kind, value: k.value, signalId: s.signalId, seq: s.seq });
+      }
+    }
+    return chunks([...latest.values()], 5);
   }
 
   private signalRows(p: Projections, ids: readonly string[]) {

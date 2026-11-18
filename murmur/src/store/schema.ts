@@ -22,7 +22,10 @@ export const events = sqliteTable(
 export const projectionMeta = sqliteTable('projection_meta', {
   id: integer('id').primaryKey(),
   lastSeq: integer('last_seq').notNull(),
-  /** 重複排除とアンカー解決の索引 */
+  /**
+   * 使っていない（0046 の決定 2。索引は signal_keys の行にし、読み込みではシグナルから作り直す）。
+   * 0046 より前のコードが読むので、列は残し、新しく作る行には空の索引を書く。消すときはマイグレーションを作る
+   */
   idx: text('idx', { mode: 'json' }).notNull(),
 });
 
@@ -33,16 +36,48 @@ export const threads = sqliteTable(
     id: text('id').primaryKey(),
     dataSourceId: text('data_source_id').notNull(),
     data: text('data', { mode: 'json' }).notNull(),
+    /** 写しのソースの区切り（`Thread.sourceKey`）。写しの置き先を課題キーで引く（0046 の決定 1 の段 2） */
+    sourceKey: text('source_key'),
+    /** 最後のシグナルの時刻（向きは問わない）。AI に渡す候補を窓で絞る（0046 の決定 4） */
+    lastSignalAt: text('last_signal_at'),
+    /** 外していない名指しが残っている（`attention.named` が空でない）。返事待ちの上位集合（0046 の決定 3） */
+    namedPending: integer('named_pending', { mode: 'boolean' }).notNull().default(false),
   },
-  (t) => [index('threads_data_source_idx').on(t.dataSourceId)],
+  (t) => [
+    index('threads_data_source_idx').on(t.dataSourceId),
+    index('threads_source_key_idx').on(t.dataSourceId, t.sourceKey),
+    index('threads_last_signal_idx').on(t.dataSourceId, t.lastSignalAt),
+    index('threads_named_pending_idx').on(t.dataSourceId, t.namedPending),
+  ],
 );
 
-export const signals = sqliteTable('signals', {
-  id: text('id').primaryKey(),
-  dataSourceId: text('data_source_id').notNull(),
-  threadId: text('thread_id'),
-  data: text('data', { mode: 'json' }).notNull(),
-});
+export const signals = sqliteTable(
+  'signals',
+  {
+    id: text('id').primaryKey(),
+    dataSourceId: text('data_source_id').notNull(),
+    threadId: text('thread_id'),
+    data: text('data', { mode: 'json' }).notNull(),
+  },
+  (t) => [index('signals_thread_idx').on(t.threadId)],
+);
+
+/**
+ * シグナルの索引（0046 の決定 2）。データソースの中の値 → その値を持つ最新のシグナル（seq の大きいもの）。
+ * kind: sourceRef（重複排除）・messageId（記録との統合・In-Reply-To・引用）・threadKey（ソースの区切り）・threadTs（同じスレッド）。
+ * シグナルの記録から決まる投影なので、いつでも作り直せる。行は消えない（シグナルが消えないので）
+ */
+export const signalKeys = sqliteTable(
+  'signal_keys',
+  {
+    dataSourceId: text('data_source_id').notNull(),
+    kind: text('kind').notNull(),
+    value: text('value').notNull(),
+    signalId: text('signal_id').notNull(),
+    seq: integer('seq').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.dataSourceId, t.kind, t.value] })],
+);
 
 // ---- マスタ ----
 
