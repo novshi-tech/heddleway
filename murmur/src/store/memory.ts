@@ -1,4 +1,4 @@
-import { applyMasterChanges, emptyProjections, parseEvent, selectWorkingSet, Seed, type WorkingSetRequest, type DomainEvent, type DraftEvent, type MasterChange, type ProjectionChanges, type Projections } from '../domain';
+import { applyMasterChanges, emptyProjections, indexKey, parseEvent, selectWorkingSet, Seed, type WorkingSetRequest, type DomainEvent, type DraftEvent, type MasterChange, type ProjectionChanges, type Projections } from '../domain';
 import { deepFreeze } from './freeze';
 import { ConcurrencyError, type EventStore, type MasterChangeRecord, type MasterStore, type ProjectionStore, type Repo } from './types';
 
@@ -51,6 +51,10 @@ export class MemoryProjectionStore implements ProjectionStore {
   }
   async clear() {
     this.saved = null;
+  }
+  async knownSourceRefs(dataSourceId: string, refs: readonly string[]) {
+    const index = this.saved?.index.sourceRefs ?? {};
+    return new Set(refs.filter((r) => index[indexKey(dataSourceId, r)] !== undefined));
   }
   /** 作業範囲の意味（selectWorkingSet）そのもの。D1 の実装と同じものを返す（0046） */
   async workingSet(req: WorkingSetRequest) {

@@ -196,7 +196,8 @@ export class JiraSync {
 
   private async ingestIssue(ctx: Ctx, issue: JiraIssue, since: string): Promise<void> {
     const comments = await this.commentsSince(ctx, issue.key, since);
-    for (const item of itemsOfIssue(ctx.ds.id, issue, comments, since)) await this.deps.service.ingestItem(item);
+    // 重なりの分の起票・コメントは取り込み済み。まとめて重複を落としてから取り込む（0046）
+    await this.deps.service.ingestItems(itemsOfIssue(ctx.ds.id, issue, comments, since));
   }
 
   /** 新しい順に読み、since より前に来たら止める */

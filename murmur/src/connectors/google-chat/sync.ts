@@ -236,11 +236,13 @@ export class GoogleChatSync {
     let pageToken: string | null = null;
     for (let page = 0; page < MAX_PAGES_PER_SPACE; page++) {
       const r = await api.messages(chat.space, { after, pageToken });
+      const signals = [];
       for (const msg of planMessages(r.messages, ctx.source.connectedAt)) {
         const n = normalizeChatMessage(chat, msg);
         if (n.kind === 'skip') continue;
-        await this.deps.service.ingestItem(n.signal);
+        signals.push(n.signal);
       }
+      await this.deps.service.ingestItems(signals);
       syncedUntil = advance(syncedUntil, r.messages);
       if (!r.next) return { syncedUntil, pagedOut: false };
       pageToken = r.next;

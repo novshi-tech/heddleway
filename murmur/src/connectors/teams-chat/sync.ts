@@ -215,11 +215,13 @@ export class TeamsChatSync {
         await this.putChat(ctx, chatId, { ...record!, kind: 'skip', checkedAt: startedAt });
         return;
       }
+      const signals = [];
       for (const msg of planMessages(r.messages, ctx.source.connectedAt)) {
         const n = normalizeChatMessage({ dataSourceId: ctx.ds.id, chatId, record: record!, self: ctx.ds.connector }, msg);
         if (n.kind === 'skip') continue;
-        await this.deps.service.ingestItem(n.signal);
+        signals.push(n.signal);
       }
+      await this.deps.service.ingestItems(signals);
       if (!r.next) {
         await this.putChat(ctx, chatId, { ...record!, syncedUntil: startedAt });
         return;

@@ -172,11 +172,13 @@ export class TeamsSync {
     for (let page = 0; page < MAX_PAGES_PER_JOB; page++) {
       const r = await api.messages(teamId, channelId, next);
       const plan = planPage(r.messages, cursor.syncedUntil, ctx.source.connectedAt);
+      // 重なり（24 時間）の分はほとんど取り込み済み。まとめて重複を落としてから取り込む（0046）
+      const signals = [];
       for (const { msg, root } of plan.items) {
         const n = normalizeChannelMessage(ctx.ds.id, channelId, msg, root);
-        if (n.kind === 'skip') continue;
-        await this.deps.service.ingestItem(n.signal);
+        if (n.kind !== 'skip') signals.push(n.signal);
       }
+      await this.deps.service.ingestItems(signals);
       if (plan.done || !r.next) {
         await this.put(ctx, { teams: { ...this.cursor(ctx), syncedUntil: startedAt }, lastSyncAt: startedAt });
         return;
