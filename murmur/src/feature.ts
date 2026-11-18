@@ -92,6 +92,8 @@ function build(config: MurmurConfig): MurmurService {
     connectors,
     policy: {
       recentThreadLimit: config.recentThreadLimit ?? DEFAULT_POLICY.recentThreadLimit,
+      candidateWindowDays: DEFAULT_POLICY.candidateWindowDays,
+      candidateWindowLimit: DEFAULT_POLICY.candidateWindowLimit,
     },
   });
 }

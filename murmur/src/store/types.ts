@@ -1,4 +1,4 @@
-import type { DomainEvent, DraftEvent, MasterChange, ProjectionChanges, Projections, Seed } from '../domain';
+import type { DomainEvent, DraftEvent, MasterChange, ProjectionChanges, Projections, Seed, WorkingSetRequest } from '../domain';
 
 export class ConcurrencyError extends Error {
   constructor(expected: number) {
@@ -25,8 +25,14 @@ export interface ProjectionStore {
    * changes を渡せば、保存済みの投影に変わったスレッド・シグナル（と索引）だけを書く（0021）。
    * 渡さなければ丸ごと入れ替える（作り直しのとき）。保存したあと、p は書き換えない（保存先がそのまま写しとして凍らせて持つことがある）
    */
-  save(p: Projections, changes?: ProjectionChanges): Promise<void>;
+  save(p: Projections, changes?: ProjectionChanges, opts?: { partial?: boolean }): Promise<void>;
   clear(): Promise<void>;
+  /**
+   * 取り込みの作業範囲（0046）。保存済みの投影から、依頼の範囲だけを返す（意味は `selectWorkingSet`）。保存済みの投影がなければ null。
+   * 返す投影は読むだけ。作業範囲の上で畳んだものを保存するときは `{ partial: true }` を渡す（全件の写しとして持たない）。
+   * 持たない保存先は、呼び手が全件（load）を使う
+   */
+  workingSet?(req: WorkingSetRequest): Promise<Projections | null>;
 }
 
 /** 変更の記録の 1 行（0030 の 5。マスタはその場で書き換えるので、誰がいつ何を変えたかはここに残す） */

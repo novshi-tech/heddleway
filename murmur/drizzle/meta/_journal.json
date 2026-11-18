@@ -29,6 +29,13 @@
       "when": 1794280000000,
       "tag": "0003_drop_personal_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1794977644294,
+      "tag": "0004_ingest_working_set",
+      "breakpoints": true
     }
   ]
 }

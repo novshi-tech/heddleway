@@ -86,9 +86,13 @@ export function signalEvent(payload: SignalPayload): DraftEvent {
 export interface IngestPolicy {
   /** 区切りの AI 判断に渡す「直近のスレッド」の本数 */
   recentThreadLimit: number;
+  /** AI に渡す候補を探す窓（日）。最後のシグナルがこれより古いスレッドは候補に出ない（0046 の決定 4） */
+  candidateWindowDays: number;
+  /** 窓の中でも、新しい順にこの本数までしか読まない（0046 の決定 4） */
+  candidateWindowLimit: number;
 }
 
-export const DEFAULT_POLICY: IngestPolicy = { recentThreadLimit: 5 };
+export const DEFAULT_POLICY: IngestPolicy = { recentThreadLimit: 5, candidateWindowDays: 30, candidateWindowLimit: 200 };
 
 // ---- 区切り（上から順に） ----
 
@@ -151,7 +155,7 @@ export function resolveAnchors(p: Projections, sig: SignalPayload): Threading | 
  * シグナルの会話がグループか。会話の種類を持つシグナル（Teams のチャット。0044）はそれで、ほかはデータソースの group で決める
  * （1 つのデータソースに 1 対 1 とグループの会話が混ざるリストがあるため）
  */
-function isGroup(ds: ServiceDataSource, sig: SignalPayload): boolean {
+export function isGroup(ds: ServiceDataSource, sig: Pick<SignalPayload, 'anchors'>): boolean {
   return sig.anchors.conversationGroup ?? ds.group;
 }
 
