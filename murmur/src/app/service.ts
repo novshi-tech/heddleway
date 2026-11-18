@@ -299,10 +299,19 @@ export class MurmurService {
 
   /** 期限の見回り。返事期待の期限を過ぎたスレッドに ReplyOverdue を出す（冪等） */
   async checkOverdue(): Promise<number> {
-    return this.run((p, ctx) => {
-      const events = planOverdue(ctx.dir, p, ctx.now);
-      return { events, result: events.length };
-    });
+    return this.run(
+      (p, ctx) => {
+        const events = planOverdue(ctx.dir, p, ctx.now);
+        return { events, result: events.length };
+      },
+      // 返事期待の期限を過ぎた候補のスレッドだけ読む（0046 の未決 3）。追いつきが要るときは全件
+      async (ctx) => {
+        const { repo } = this.deps;
+        const ws = repo.projections.overdueSet ? await repo.projections.overdueSet(ctx.now) : null;
+        if (ws && !isStaleProjections(ws) && (await repo.events.read(ws.lastSeq)).length === 0) return { p: ws, partial: true };
+        return { p: await this.state(), partial: false };
+      },
+    );
   }
 
   async tick(): Promise<{ ingested: number; overdue: number }> {

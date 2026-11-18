@@ -42,12 +42,18 @@ export const threads = sqliteTable(
     lastSignalAt: text('last_signal_at'),
     /** 外していない名指しが残っている（`attention.named` が空でない）。返事待ちの上位集合（0046 の決定 3） */
     namedPending: integer('named_pending', { mode: 'boolean' }).notNull().default(false),
+    /**
+     * 期限の見回りの候補（0046 の未決 3）。返事期待の期限（片付け・ソースで完了・期限超過済み・返事期待なしなら null）。
+     * 返事期待が続いているか（名指しが外れていないか）はクエリ層が決めるので、これは候補の上位集合
+     */
+    replyDue: text('reply_due'),
   },
   (t) => [
     index('threads_data_source_idx').on(t.dataSourceId),
     index('threads_source_key_idx').on(t.dataSourceId, t.sourceKey),
     index('threads_last_signal_idx').on(t.dataSourceId, t.lastSignalAt),
     index('threads_named_pending_idx').on(t.dataSourceId, t.namedPending),
+    index('threads_reply_due_idx').on(t.replyDue),
   ],
 );
 

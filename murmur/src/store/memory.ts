@@ -1,4 +1,4 @@
-import { applyMasterChanges, emptyProjections, indexKey, parseEvent, selectWorkingSet, Seed, type WorkingSetRequest, type DomainEvent, type DraftEvent, type MasterChange, type ProjectionChanges, type Projections } from '../domain';
+import { applyMasterChanges, emptyProjections, indexKey, parseEvent, selectOverdueSet, selectWorkingSet, Seed, type WorkingSetRequest, type DomainEvent, type DraftEvent, type MasterChange, type ProjectionChanges, type Projections } from '../domain';
 import { deepFreeze } from './freeze';
 import { ConcurrencyError, type EventStore, type MasterChangeRecord, type MasterStore, type ProjectionStore, type Repo } from './types';
 
@@ -51,6 +51,9 @@ export class MemoryProjectionStore implements ProjectionStore {
   }
   async clear() {
     this.saved = null;
+  }
+  async overdueSet(before: string) {
+    return this.saved ? deepFreeze(structuredClone(selectOverdueSet(this.saved, before))) : null;
   }
   async knownSourceRefs(dataSourceId: string, refs: readonly string[]) {
     const index = this.saved?.index.sourceRefs ?? {};

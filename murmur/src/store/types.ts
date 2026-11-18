@@ -38,6 +38,8 @@ export interface ProjectionStore {
    * 1 件ずつ取り込む前に落とすため（`prepareInbound` の duplicate と同じ判定）。持たない保存先は、呼び手が 1 件ずつ確かめる
    */
   knownSourceRefs?(dataSourceId: string, refs: readonly string[]): Promise<Set<string>>;
+  /** 期限の見回り（planOverdue）の作業範囲。返事期待の期限が before より前のスレッドだけ（意味は `selectOverdueSet`）。保存済みの投影がなければ null */
+  overdueSet?(before: string): Promise<Projections | null>;
 }
 
 /** 変更の記録の 1 行（0030 の 5。マスタはその場で書き換えるので、誰がいつ何を変えたかはここに残す） */

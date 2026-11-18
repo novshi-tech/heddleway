@@ -5,6 +5,7 @@ import {
   dedupeRequest,
   fold,
   mirrorRequest,
+  selectOverdueSet,
   selectWorkingSet,
   threadingRequest,
   type WorkingSetRequest,
@@ -44,6 +45,11 @@ describe.each(listScenarios())('H1 作業範囲（D1）は selectWorkingSet と�
       // 当たらない値
       reqs.push(mirrorRequest({ dataSourceId: signals[0]!.dataSourceId, threadKey: 'NOPE-1' }));
       expect(reqs.length).toBeGreaterThan(10);
+      // 期限の見回りの作業範囲も、いくつかの時刻で selectOverdueSet と一致する
+      const dues = Object.values(full.threads).map((t) => t.replyExpectedBy).filter((x): x is string => !!x).sort();
+      for (const before of ['1970-01-01T00:00:00.000Z', ...dues, '2999-01-01T00:00:00.000Z']) {
+        expect(canonicalJson(await run.repo.projections.overdueSet!(before)), before).toBe(canonicalJson(selectOverdueSet(full, before)));
+      }
       for (const req of reqs) {
         const got = await run.repo.projections.workingSet!(req);
         expect(canonicalJson(got), JSON.stringify(req)).toBe(canonicalJson(selectWorkingSet(full, req)));

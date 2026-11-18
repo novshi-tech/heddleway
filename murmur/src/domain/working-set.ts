@@ -57,9 +57,25 @@ export function lastSignalAt(t: Thread): string | null {
   return last;
 }
 
+/** 期限の見回り（planOverdue）の候補になる返事期待の期限。候補でなければ null（0046 の未決 3） */
+export function replyDue(t: Thread): string | null {
+  if (t.dismissed || t.closedAtSource || t.overdue || t.replyExpectedSignalId == null) return null;
+  return t.replyExpectedBy ?? null;
+}
+
 /** スレッドの行に持つ列（0046 の決定 2） */
-export function threadColumns(t: Thread): { sourceKey: string | null; lastSignalAt: string | null; namedPending: boolean } {
-  return { sourceKey: t.sourceKey ?? null, lastSignalAt: lastSignalAt(t), namedPending: hasPendingNaming(t) };
+export function threadColumns(t: Thread): { sourceKey: string | null; lastSignalAt: string | null; namedPending: boolean; replyDue: string | null } {
+  return { sourceKey: t.sourceKey ?? null, lastSignalAt: lastSignalAt(t), namedPending: hasPendingNaming(t), replyDue: replyDue(t) };
+}
+
+/** 期限の見回りの作業範囲の意味: 返事期待の期限が before より前のスレッド（シグナルは要らない）。D1 は reply_due の索引で引く */
+export function selectOverdueSet(full: Projections, before: string): Projections {
+  const out: Projections = { lastSeq: full.lastSeq, threads: {}, signals: {}, index: { sourceRefs: {}, messageIds: {} } };
+  for (const t of Object.values(full.threads)) {
+    const due = replyDue(t);
+    if (due !== null && due < before) out.threads[t.id] = t;
+  }
+  return out;
 }
 
 // ---- 作業範囲の依頼と、その意味（0046 の決定 1） ----
