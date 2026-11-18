@@ -256,6 +256,16 @@ export class D1ProjectionStore implements ProjectionStore {
     return out;
   }
 
+  async knownSourceRefs(dataSourceId: string, refs: readonly string[]): Promise<Set<string>> {
+    const K = schema.signalKeys;
+    const parts = chunkIds([...new Set(refs)]);
+    const results = (await batch(
+      this.db,
+      parts.map((values) => this.db.select({ value: K.value }).from(K).where(and(eq(K.dataSourceId, dataSourceId), eq(K.kind, 'sourceRef'), inArray(K.value, values)))),
+    )) as { value: string }[][];
+    return new Set(results.flat().map((r) => r.value));
+  }
+
   private async saveAll(p: Projections): Promise<void> {
     await batch(this.db, [
       ...this.deleteAll(),

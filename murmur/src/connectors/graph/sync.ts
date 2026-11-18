@@ -267,12 +267,15 @@ export class GraphMailSync {
         .map((raw) => GraphMessage.safeParse(raw))
         .flatMap((r) => (r.success ? [r.data] : []))
         .sort((a, b) => (a.receivedDateTime ?? '').localeCompare(b.receivedDateTime ?? ''));
+      const signals = [];
       for (const msg of messages) {
         const n = normalizeMessage(ctx.ds.id, msg);
         if (n.kind === 'skip') continue;
-        await this.deps.service.ingestItem(n.signal);
+        signals.push(n.signal);
         if (msg.receivedDateTime && (!lastReceivedAt || msg.receivedDateTime > lastReceivedAt)) lastReceivedAt = msg.receivedDateTime;
       }
+      // delta は既読の変化なども返すので、取り込み済みのものはまとめて落としてから取り込む（0046）
+      await this.deps.service.ingestItems(signals);
       const next = result['@odata.nextLink'] ?? result['@odata.deltaLink'] ?? null;
       await this.putCursor(ctx, folder, { link: next, lastReceivedAt });
       if (!result['@odata.nextLink']) return true;

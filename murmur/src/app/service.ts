@@ -255,6 +255,26 @@ export class MurmurService {
     }, () => this.workingSet(mirrorRequest(inbound)));
   }
 
+  /**
+   * コネクタがまとめて読んだもの（重なりつきの見回りなど）を、順に取り込む。すでに取り込んだシグナル（sourceRef が索引にあるもの）は、
+   * 1 件ずつの取り込みに回す前に 1 回の照会で落とす（判定は prepareInbound の duplicate と同じ。0046）。状態の写しはそのまま回す
+   */
+  async ingestItems(items: readonly InboundItem[]): Promise<(IngestResult | MirrorResult)[]> {
+    const known = new Map<string, Set<string>>();
+    const store = this.deps.repo.projections;
+    if (store.knownSourceRefs) {
+      const byDs = new Map<string, string[]>();
+      for (const it of items) if (!isMirror(it)) byDs.set(it.dataSourceId, [...(byDs.get(it.dataSourceId) ?? []), it.sourceRef]);
+      for (const [ds, refs] of byDs) known.set(ds, await store.knownSourceRefs(ds, refs));
+    }
+    const results: (IngestResult | MirrorResult)[] = [];
+    for (const it of items) {
+      if (!isMirror(it) && known.get(it.dataSourceId)?.has(it.sourceRef)) continue;
+      results.push(await this.ingestItem(it));
+    }
+    return results;
+  }
+
   /** コネクタ・Webhook から来た 1 件（シグナルか状態の写し） */
   async ingestItem(item: InboundItem): Promise<IngestResult | MirrorResult> {
     return isMirror(item) ? this.mirror(item) : this.ingest(item);

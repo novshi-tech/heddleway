@@ -99,3 +99,33 @@ describe('H1 冷えた isolate でも、取り込みは投影の全件を読ま�
     }
   });
 });
+
+describe('H1 まとめて読んだものは、取り込み済みを 1 回の照会で落としてから取り込む（0046）', () => {
+  it.each(['memory', 'd1'] as const)('%s: 取り込み済みは 1 件ずつの取り込みに回らず、新しいものだけが取り込まれる', async (kind) => {
+    const { d1, close } = await localD1Raw();
+    try {
+      const run = await runScenario(loadScenario('development'), kind === 'd1' ? { repo: d1Repo(drizzle(d1) as Db) } : {});
+      const p = fold(await run.repo.events.read());
+      const old = Object.values(p.signals).filter((x) => !x.recorded);
+      const inbound = old.map((s) => ({ dataSourceId: s.dataSourceId, channel: s.channel, from: s.from, to: s.to, subject: s.subject, body: s.body, anchors: s.anchors, sourceRef: s.sourceRef }));
+      const s0 = old[0]!;
+      const fresh = { ...inbound[0]!, sourceRef: `${s0.sourceRef}#fresh`, anchors: s0.anchors.messageId ? { inReplyTo: s0.anchors.messageId } : {} };
+      const calls: string[] = [];
+      const orig = run.service.ingestItem.bind(run.service);
+      run.service.ingestItem = async (it) => {
+        calls.push(it.sourceRef);
+        return orig(it);
+      };
+      const results = await run.service.ingestItems([...inbound, fresh]);
+      expect(calls).toEqual([fresh.sourceRef]);
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({ status: 'threaded' });
+      // 2 回目は全部取り込み済み
+      calls.length = 0;
+      expect(await run.service.ingestItems([...inbound, fresh])).toEqual([]);
+      expect(calls).toEqual([]);
+    } finally {
+      await close();
+    }
+  });
+});
