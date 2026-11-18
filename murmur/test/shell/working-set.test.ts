@@ -3,6 +3,8 @@ import {
   canonicalJson,
   DEFAULT_POLICY,
   dedupeRequest,
+  deriveViewer,
+  listKindOf,
   fold,
   mirrorRequest,
   selectListScope,
@@ -148,5 +150,64 @@ describe('H1 まとめて読んだものは、取り込み済みを 1 回の照�
     } finally {
       await close();
     }
+  });
+});
+
+const ranAcross: string[] = [];
+
+describe.each(listScenarios())('H1 H3 冷えた isolate でも、API の詳細・一覧・操作は投影の全件を読まない（0047。%s）', (name) => {
+  it('詳細・一覧（全部の絞り込み）・アテンションを外す・メモ・送信の記録で、threads と signals の全件の select がない', async () => {
+    const { d1, close } = await localD1Raw();
+    try {
+      const run = await runScenario(loadScenario(name), { repo: d1Repo(drizzle(d1) as Db) });
+      const full: string[] = [];
+      const cold = new Proxy(d1, {
+        get(target, prop) {
+          const value = Reflect.get(target, prop, target) as unknown;
+          if (prop === 'prepare')
+            return (query: string) => {
+              if (/^\s*select\b[^]*\bfrom\s+"?(threads|signals)"?(?![_\w])(?![^]*\bwhere\b)/i.test(query)) full.push(query);
+              return target.prepare(query);
+            };
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      }) as D1Database;
+      const service = new MurmurService({ ...run.service.deps, repo: d1Repo(drizzle(cold) as Db) });
+      const p = fold(await run.repo.events.read());
+      const dir = await service.directory();
+      // 見えるスレッドを持つ User と、そのスレッド
+      const pick = dir.seed.users
+        .map((u) => ({ userId: u.id, viewer: deriveViewer(dir, u.id) }))
+        .map((x) => ({ ...x, t: Object.values(p.threads).find((t) => x.viewer.dataSourceIds.includes(t.dataSourceId) && t.signalIds.length > 0) }))
+        .find((x) => x.t)!;
+      const { userId, t } = pick;
+      const ran: string[] = [];
+      expect((await service.getThread(userId, t!.id)).thread.id).toBe(t!.id);
+      for (const filter of ['my_turn', 'mine', 'open', 'awaiting', 'overdue', 'triage', 'all'] as const) await service.listThreads(userId, { filter });
+      await service.acknowledge(userId, { threadId: t!.id, reason: 'probe' });
+      const personal = Object.values(p.threads).find((x) => pick.viewer.dataSourceIds.includes(x.dataSourceId) && dir.listOfDataSource(x.dataSourceId) && listKindOf(dir, x.dataSourceId) === 'personal');
+      if (personal) await service.addNote(userId, { threadId: personal.id, body: 'probe' });
+      // 送信の記録は、メールのリストのスレッドに返事として
+      const mail = dir.seed.users
+        .map((u) => ({ userId: u.id, viewer: deriveViewer(dir, u.id) }))
+        .flatMap((x) => Object.values(p.threads).filter((m) => x.viewer.dataSourceIds.includes(m.dataSourceId) && dir.dataSource(m.dataSourceId)?.channel === 'email' && m.signalIds.length > 0).map((m) => ({ ...x, m })))[0];
+      if (mail) {
+        const r = await service.recordSent(mail.userId, { dataSourceId: mail.m.dataSourceId, to: ['someone@example.com'], toContactIds: [], body: 'probe', sentRef: '<probe@example.com>', replyToThreadId: mail.m.id });
+        expect(r.thread.id).toBe(mail.m.id);
+        ran.push('recordSent');
+      }
+      if (personal) ran.push('addNote');
+      ranAcross.push(...ran);
+      expect(full).toEqual([]);
+    } finally {
+      await close();
+    }
+  });
+});
+
+describe('H1 冷えた isolate の確かめが空回りしていない（0047）', () => {
+  it('送信の記録とメモが、どこかのシナリオで実際に走った', () => {
+    expect(ranAcross).toContain('recordSent');
+    expect(ranAcross).toContain('addNote');
   });
 });
