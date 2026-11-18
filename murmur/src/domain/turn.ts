@@ -274,7 +274,8 @@ export function derivedBall(dir: Directory, viewer: Viewer, p: Projections, t: T
 export function linkedActiveSinceDismissed(viewer: Viewer, p: Projections, t: Thread): boolean {
   const since = (t.dismissed ? t.dismissedAt : null) ?? (t.closedAtSource ? t.closedAtSourceAt : null);
   if (!since) return false;
-  return visibleLinked(viewer, p, t).some((x) => x.signalIds.some((id) => p.signals[id]!.at > since));
+  // シグナルの時刻はスレッドのログにもある（シグナルを読まない範囲でも決まる。0047 の決定 2）
+  return visibleLinked(viewer, p, t).some((x) => x.log.some((l) => l.kind === 'signal' && l.at > since));
 }
 
 function visibleLinked(viewer: Viewer, p: Projections, t: Thread): Thread[] {
@@ -290,6 +291,14 @@ function visibleLinked(viewer: Viewer, p: Projections, t: Thread): Thread[] {
  * メッセージ ID は sent_ref（`msg:` を付ける）。同じメールや DM を 2 人がそれぞれのデータソースで見ていれば一致する
  */
 export function crossKeys(p: Projections, t: Thread): string[] {
+  // 範囲で読んだ投影は、キーの索引から添えたものを使う（0047 の決定 3）
+  const given = p.keys?.[t.id];
+  if (given) return given;
+  return crossKeysOfSignals(p, t);
+}
+
+/** シグナルのアンカーから作るキー（保存先がキーの索引に書くもの） */
+export function crossKeysOfSignals(p: Projections, t: Thread): string[] {
   const keys = new Set<string>();
   for (const id of t.signalIds) {
     const a = p.signals[id]!.anchors;

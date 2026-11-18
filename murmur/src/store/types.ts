@@ -1,4 +1,4 @@
-import type { DomainEvent, DraftEvent, MasterChange, ProjectionChanges, Projections, Seed, WorkingSetRequest } from '../domain';
+import type { DomainEvent, DraftEvent, ListScopeRequest, MasterChange, ProjectionChanges, Projections, Seed, ThreadScopeRequest, WorkingSetRequest } from '../domain';
 
 export class ConcurrencyError extends Error {
   constructor(expected: number) {
@@ -40,6 +40,10 @@ export interface ProjectionStore {
   knownSourceRefs?(dataSourceId: string, refs: readonly string[]): Promise<Set<string>>;
   /** 期限の見回り（planOverdue）の作業範囲。返事期待の期限が before より前のスレッドだけ（意味は `selectOverdueSet`）。保存済みの投影がなければ null */
   overdueSet?(before: string): Promise<Projections | null>;
+  /** 詳細と操作の範囲（0047 の決定 1。意味は `selectThreadScope`）。保存済みの投影がなければ null */
+  threadScope?(req: ThreadScopeRequest): Promise<Projections | null>;
+  /** 一覧の範囲（0047 の決定 2。意味は `selectListScope`。シグナルを含まず、キーを添える）。保存済みの投影がなければ null */
+  listScope?(req: ListScopeRequest): Promise<Projections | null>;
 }
 
 /** 変更の記録の 1 行（0030 の 5。マスタはその場で書き換えるので、誰がいつ何を変えたかはここに残す） */

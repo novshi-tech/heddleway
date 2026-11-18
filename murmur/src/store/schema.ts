@@ -47,6 +47,8 @@ export const threads = sqliteTable(
      * 返事期待が続いているか（名指しが外れていないか）はクエリ層が決めるので、これは候補の上位集合
      */
     replyDue: text('reply_due'),
+    /** 片付けておらず、ソースで完了していない（一覧の open 系の絞り込み。0047 の決定 2） */
+    isOpen: integer('is_open', { mode: 'boolean' }).notNull().default(true),
   },
   (t) => [
     index('threads_data_source_idx').on(t.dataSourceId),
@@ -54,6 +56,7 @@ export const threads = sqliteTable(
     index('threads_last_signal_idx').on(t.dataSourceId, t.lastSignalAt),
     index('threads_named_pending_idx').on(t.dataSourceId, t.namedPending),
     index('threads_reply_due_idx').on(t.replyDue),
+    index('threads_open_idx').on(t.dataSourceId, t.isOpen),
   ],
 );
 
@@ -66,6 +69,20 @@ export const signals = sqliteTable(
     data: text('data', { mode: 'json' }).notNull(),
   },
   (t) => [index('signals_thread_idx').on(t.threadId)],
+);
+
+/**
+ * スレッドのアンカーのキー（`crossKeysOfSignals`: ソースの区切り・msg:<Message-ID>・Jira キー・PR）の索引（0047 の決定 3）。
+ * 結び候補を、キーを共有するスレッドとして引く。スレッドを保存するたびに、そのスレッドの行を入れ替える
+ */
+export const threadKeys = sqliteTable(
+  'thread_keys',
+  {
+    threadId: text('thread_id').notNull(),
+    key: text('key').notNull(),
+    dataSourceId: text('data_source_id').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.threadId, t.key] }), index('thread_keys_key_idx').on(t.key)],
 );
 
 /**

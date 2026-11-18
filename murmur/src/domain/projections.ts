@@ -165,6 +165,11 @@ export interface Projections {
     sourceRefs: Record<string, string>;
     messageIds: Record<string, string>;
   };
+  /**
+   * 範囲で読んだ投影（0047）にだけ付く、スレッドのアンカーのキー（`crossKeys`）。シグナルを読まずに結び候補を出すため、
+   * 保存先がキーの索引から添える。fold は作らない（全件の投影にはなく、`crossKeys` はシグナルから作る）
+   */
+  keys?: Record<string, string[]>;
 }
 
 /** fold で base から変わったもの。スレッドとシグナルは消えないので、保存は変わった行の upsert で足りる */

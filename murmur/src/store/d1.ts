@@ -7,6 +7,9 @@ import {
   parseEvent,
   signalKeysOf,
   pendingNamedKeys,
+  crossKeysOfSignals,
+  type ThreadScopeRequest,
+  type ListScopeRequest,
   addressKey,
   threadColumns,
   rowKey,
@@ -268,6 +271,113 @@ export class D1ProjectionStore implements ProjectionStore {
     const out = emptyProjections();
     out.lastSeq = meta.lastSeq;
     for (const r of rows) out.threads[r.id] = r.data as Thread;
+    // 期限超過を畳むとスレッドを保存し直す（キーの行はシグナルから作る）ので、シグナルも読む
+    await this.addSignalsOf(out, Object.keys(out.threads));
+    return out;
+  }
+
+  /** スレッドのシグナルを全部読み足す */
+  private async addSignalsOf(out: Projections, threadIds: readonly string[]): Promise<void> {
+    const parts = chunkIds([...new Set(threadIds)]);
+    const results = (await batch(this.db, parts.map((ids) => this.db.select().from(schema.signals).where(inArray(schema.signals.threadId, ids))))) as {
+      id: string;
+      data: unknown;
+    }[][];
+    for (const r of results.flat()) out.signals[r.id] = r.data as SignalRecord;
+  }
+
+  /** スレッドの行を ID で読む（まだ範囲にないものだけ） */
+  private async addThreads(out: Projections, ids: readonly string[]): Promise<string[]> {
+    const want = [...new Set(ids)].filter((id) => !out.threads[id]);
+    const results = (await batch(this.db, chunkIds(want).map((part) => this.db.select().from(schema.threads).where(inArray(schema.threads.id, part))))) as {
+      id: string;
+      data: unknown;
+    }[][];
+    for (const r of results.flat()) out.threads[r.id] = r.data as Thread;
+    return want.filter((id) => out.threads[id]);
+  }
+
+  /** キーを共有するスレッド（thread_keys）。返すのは key → スレッドの ID */
+  private async threadsWithKeys(keys: readonly string[]): Promise<{ threadId: string; key: string }[]> {
+    const K = schema.threadKeys;
+    const results = (await batch(
+      this.db,
+      chunkIds([...new Set(keys)]).map((part) => this.db.select({ threadId: K.threadId, key: K.key }).from(K).where(inArray(K.key, part))),
+    )) as { threadId: string; key: string }[][];
+    return results.flat();
+  }
+
+  private async keysOfThreads(ids: readonly string[]): Promise<{ threadId: string; key: string }[]> {
+    const K = schema.threadKeys;
+    const results = (await batch(
+      this.db,
+      chunkIds([...new Set(ids)]).map((part) => this.db.select({ threadId: K.threadId, key: K.key }).from(K).where(inArray(K.threadId, part))),
+    )) as { threadId: string; key: string }[][];
+    return results.flat();
+  }
+
+  private async meta(): Promise<number | null> {
+    const [m] = await this.db.select({ lastSeq: schema.projectionMeta.lastSeq }).from(schema.projectionMeta).where(eq(schema.projectionMeta.id, META_ID));
+    return m ? m.lastSeq : null;
+  }
+
+  /** 詳細と操作の範囲（0047 の決定 1。意味は selectThreadScope） */
+  async threadScope(req: ThreadScopeRequest): Promise<Projections | null> {
+    const lastSeq = await this.meta();
+    if (lastSeq === null) return null;
+    const out = emptyProjections();
+    out.lastSeq = lastSeq;
+    const primary = new Set(req.threadIds);
+    const sigIds = [...new Set(req.signalIds ?? [])];
+    if (sigIds.length > 0) {
+      const results = (await batch(this.db, chunkIds(sigIds).map((ids) => this.db.select().from(schema.signals).where(inArray(schema.signals.id, ids))))) as {
+        id: string;
+        threadId: string | null;
+        data: unknown;
+      }[][];
+      for (const r of results.flat()) {
+        out.signals[r.id] = r.data as SignalRecord;
+        if (r.threadId) primary.add(r.threadId);
+      }
+    }
+    const found = await this.addThreads(out, [...primary]);
+    if (req.links) await this.addThreads(out, found.flatMap((id) => out.threads[id]!.links.map((l) => l.threadId)));
+    if (req.candidates) {
+      const mine = (await this.keysOfThreads(found)).map((r) => r.key);
+      await this.addThreads(out, (await this.threadsWithKeys(mine)).map((r) => r.threadId));
+    }
+    await this.addSignalsOf(out, Object.keys(out.threads));
+    return out;
+  }
+
+  /** 一覧の範囲（0047 の決定 2。意味は selectListScope）。シグナルは読まず、キーを添える */
+  async listScope(req: ListScopeRequest): Promise<Projections | null> {
+    const lastSeq = await this.meta();
+    if (lastSeq === null) return null;
+    const out = emptyProjections();
+    out.lastSeq = lastSeq;
+    out.keys = {};
+    const T = schema.threads;
+    const results = (await batch(
+      this.db,
+      chunkIds(req.dataSourceIds).map((ds) =>
+        this.db
+          .select()
+          .from(T)
+          .where(req.openOnly ? and(inArray(T.dataSourceId, ds), eq(T.isOpen, true)) : inArray(T.dataSourceId, ds)),
+      ),
+    )) as { id: string; data: unknown }[][];
+    const listed = results.flat().map((r) => r.id);
+    for (const r of results.flat()) out.threads[r.id] = r.data as Thread;
+    await this.addThreads(out, listed.flatMap((id) => out.threads[id]!.links.map((l) => l.threadId)));
+    const listedSet = new Set(listed);
+    const mineRows = await this.keysOfThreads(listed);
+    for (const id of listed) out.keys[id] = [];
+    for (const r of mineRows) out.keys[r.threadId]!.push(r.key);
+    const shared = await this.threadsWithKeys(mineRows.map((r) => r.key));
+    await this.addThreads(out, shared.map((r) => r.threadId));
+    for (const r of shared) if (!listedSet.has(r.threadId)) out.keys[r.threadId] = [...(out.keys[r.threadId] ?? []), r.key];
+    for (const id of Object.keys(out.threads)) out.keys[id] = [...new Set(out.keys[id] ?? [])].sort();
     return out;
   }
 
@@ -289,6 +399,7 @@ export class D1ProjectionStore implements ProjectionStore {
       ...this.signalRows(p, Object.keys(p.signals)).map((rows) => this.db.insert(schema.signals).values(rows)),
       ...this.keyRows(p, Object.keys(p.signals)).map((rows) => this.db.insert(schema.signalKeys).values(rows)),
       ...this.namedRows(p, Object.keys(p.threads)).map((rows) => this.db.insert(schema.threadNamed).values(rows)),
+      ...this.crossKeyRows(p, Object.keys(p.threads)).map((rows) => this.db.insert(schema.threadKeys).values(rows)),
     ]);
   }
 
@@ -316,9 +427,9 @@ export class D1ProjectionStore implements ProjectionStore {
       ...this.threadRows(p, changes.threadIds).map((rows) =>
         d1
           .prepare(
-            `INSERT INTO threads (id, data_source_id, data, source_key, last_signal_at, named_pending, reply_due) SELECT column1, column2, column3, column4, column5, column6, column7 FROM (VALUES ${rows.map(() => '(?, ?, ?, ?, ?, ?, ?)').join(', ')}) WHERE ${cond} ON CONFLICT (id) DO UPDATE SET data_source_id = excluded.data_source_id, data = excluded.data, source_key = excluded.source_key, last_signal_at = excluded.last_signal_at, named_pending = excluded.named_pending, reply_due = excluded.reply_due`,
+            `INSERT INTO threads (id, data_source_id, data, source_key, last_signal_at, named_pending, reply_due, is_open) SELECT column1, column2, column3, column4, column5, column6, column7, column8 FROM (VALUES ${rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}) WHERE ${cond} ON CONFLICT (id) DO UPDATE SET data_source_id = excluded.data_source_id, data = excluded.data, source_key = excluded.source_key, last_signal_at = excluded.last_signal_at, named_pending = excluded.named_pending, reply_due = excluded.reply_due, is_open = excluded.is_open`,
           )
-          .bind(...rows.flatMap((r) => [r.id, r.dataSourceId, JSON.stringify(r.data), r.sourceKey, r.lastSignalAt, r.namedPending ? 1 : 0, r.replyDue])),
+          .bind(...rows.flatMap((r) => [r.id, r.dataSourceId, JSON.stringify(r.data), r.sourceKey, r.lastSignalAt, r.namedPending ? 1 : 0, r.replyDue, r.isOpen ? 1 : 0])),
       ),
       ...this.signalRows(p, changes.signalIds).map((rows) =>
         d1
@@ -346,6 +457,17 @@ export class D1ProjectionStore implements ProjectionStore {
           )
           .bind(...rows.flatMap((r) => [r.threadId, r.addressKey, r.dataSourceId])),
       ),
+      // アンカーのキーの行（0047 の決定 3）。変わったスレッドの行を入れ替える
+      ...chunkIds(changes.threadIds).map((ids) =>
+        d1.prepare(`DELETE FROM thread_keys WHERE thread_id IN (${ids.map(() => '?').join(', ')}) AND ${cond}`).bind(...ids),
+      ),
+      ...this.crossKeyRows(p, changes.threadIds).map((rows) =>
+        d1
+          .prepare(
+            `INSERT INTO thread_keys (thread_id, key, data_source_id) SELECT column1, column2, column3 FROM (VALUES ${rows.map(() => '(?, ?, ?)').join(', ')}) WHERE ${cond} ON CONFLICT DO NOTHING`,
+          )
+          .bind(...rows.flatMap((r) => [r.threadId, r.key, r.dataSourceId])),
+      ),
       d1
         .prepare(`INSERT INTO projection_meta (id, last_seq, idx) SELECT ${META_ID}, ${next}, ? WHERE ${cond} ON CONFLICT (id) DO UPDATE SET last_seq = excluded.last_seq`)
         .bind(JSON.stringify(EMPTY_INDEX)),
@@ -359,7 +481,7 @@ export class D1ProjectionStore implements ProjectionStore {
   }
 
   private deleteAll() {
-    return [this.db.delete(schema.projectionMeta), this.db.delete(schema.threads), this.db.delete(schema.signals), this.db.delete(schema.signalKeys), this.db.delete(schema.threadNamed)];
+    return [this.db.delete(schema.projectionMeta), this.db.delete(schema.threads), this.db.delete(schema.signals), this.db.delete(schema.signalKeys), this.db.delete(schema.threadNamed), this.db.delete(schema.threadKeys)];
   }
 
   private threadRows(p: Projections, ids: readonly string[]) {
@@ -368,7 +490,20 @@ export class D1ProjectionStore implements ProjectionStore {
         const t = p.threads[id]!;
         return { id, dataSourceId: t.dataSourceId, data: t, ...threadColumns(t) };
       }),
-      7,
+      8,
+    );
+  }
+
+  /** 変わったスレッドのアンカーのキーの行。キーはスレッドのシグナルから作るので、範囲にそのシグナルがなければ書けない（例外にする） */
+  private crossKeyRows(p: Projections, threadIds: readonly string[]) {
+    return chunks(
+      threadIds.flatMap((id) => {
+        const t = p.threads[id]!;
+        const missing = t.signalIds.filter((s) => !p.signals[s]);
+        if (missing.length > 0) throw new Error(`thread ${id}: signals ${missing.join(', ')} are not in the saved range`);
+        return crossKeysOfSignals(p, t).map((key) => ({ threadId: t.id, key, dataSourceId: t.dataSourceId }));
+      }),
+      3,
     );
   }
 

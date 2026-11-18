@@ -5,7 +5,9 @@ import {
   dedupeRequest,
   fold,
   mirrorRequest,
+  selectListScope,
   selectOverdueSet,
+  selectThreadScope,
   selectWorkingSet,
   threadingRequest,
   type WorkingSetRequest,
@@ -45,6 +47,19 @@ describe.each(listScenarios())('H1 作業範囲（D1）は selectWorkingSet と�
       // 当たらない値
       reqs.push(mirrorRequest({ dataSourceId: signals[0]!.dataSourceId, threadKey: 'NOPE-1' }));
       expect(reqs.length).toBeGreaterThan(10);
+      // 詳細・操作と一覧の範囲（0047）も、selectThreadScope・selectListScope と一致する
+      for (const t of Object.values(full.threads)) {
+        for (const req of [{ threadIds: [t.id] }, { threadIds: [t.id], links: true, candidates: true }, { threadIds: [], signalIds: t.signalIds.slice(0, 1), links: true }]) {
+          expect(canonicalJson(await run.repo.projections.threadScope!(req)), JSON.stringify(req)).toBe(canonicalJson(selectThreadScope(full, req)));
+        }
+      }
+      const allDs = [...new Set(Object.values(full.threads).map((t) => t.dataSourceId))];
+      for (const dataSourceIds of [allDs, allDs.slice(0, 1), []]) {
+        for (const openOnly of [true, false]) {
+          const req = { dataSourceIds, openOnly };
+          expect(canonicalJson(await run.repo.projections.listScope!(req)), JSON.stringify(req)).toBe(canonicalJson(selectListScope(full, req)));
+        }
+      }
       // 期限の見回りの作業範囲も、いくつかの時刻で selectOverdueSet と一致する
       const dues = Object.values(full.threads).map((t) => t.replyExpectedBy).filter((x): x is string => !!x).sort();
       for (const before of ['1970-01-01T00:00:00.000Z', ...dues, '2999-01-01T00:00:00.000Z']) {
