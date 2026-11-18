@@ -30,9 +30,14 @@ describe.each(listScenarios())('H1 作業範囲（D1）は selectWorkingSet と�
       for (const s of signals) {
         reqs.push(dedupeRequest(s));
         // 窓は 3 通り: 既定、ほぼ全部（10 年）、狭い（1 日・上限 2 本）
-        reqs.push(threadingRequest(s, latestAt, DEFAULT_POLICY));
-        reqs.push(threadingRequest(s, latestAt, { ...DEFAULT_POLICY, candidateWindowDays: 3650 }));
-        reqs.push(threadingRequest(s, latestAt, { ...DEFAULT_POLICY, candidateWindowDays: 1, candidateWindowLimit: 2 }));
+        // 返事待ちの見方は 3 通り: 1 対 1 の受信（送り主で引く）、グループ（全部）、こちらからの送信（読まない）
+        for (const conversation of [{ ours: false, group: false }, { ours: false, group: true }, { ours: true, group: false }]) {
+          reqs.push(threadingRequest(s, latestAt, DEFAULT_POLICY, conversation));
+          reqs.push(threadingRequest(s, latestAt, { ...DEFAULT_POLICY, candidateWindowDays: 3650 }, conversation));
+          reqs.push(threadingRequest(s, latestAt, { ...DEFAULT_POLICY, candidateWindowDays: 1, candidateWindowLimit: 2 }, conversation));
+        }
+        // 名指しされたアドレス（送り主として来たとき）でも引く
+        for (const r of s.to) reqs.push(threadingRequest({ ...s, from: r }, latestAt, DEFAULT_POLICY, { ours: false, group: false }));
         if (s.anchors.threadKey) reqs.push(mirrorRequest({ dataSourceId: s.dataSourceId, threadKey: s.anchors.threadKey }));
       }
       for (const t of Object.values(full.threads)) if (t.sourceKey) reqs.push(mirrorRequest({ dataSourceId: t.dataSourceId, threadKey: t.sourceKey }));

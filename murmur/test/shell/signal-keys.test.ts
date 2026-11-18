@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { drizzle } from 'drizzle-orm/d1';
 import { describe, expect, it } from 'vitest';
-import { fold, indexOfSignals, signalKeysOf, threadColumns, type Projections } from '../../src/domain';
+import { fold, indexOfSignals, pendingNamedKeys, signalKeysOf, threadColumns, type Projections } from '../../src/domain';
 import { d1Repo, type Db } from '../../src/store/d1';
 import { localD1Raw } from '../../scripts/lib/d1';
 import { listScenarios, loadScenario, runScenario } from '../../scripts/lib/scenario';
@@ -27,10 +27,13 @@ function expectedKeys(p: Projections): KeyRow[] {
 
 const sortKeys = (rows: KeyRow[]) => [...rows].sort((a, b) => `${a.data_source_id}\n${a.kind}\n${a.value}`.localeCompare(`${b.data_source_id}\n${b.kind}\n${b.value}`));
 
+type NamedRow = { thread_id: string; address_key: string; data_source_id: string };
+
 async function rows(d1: D1Database) {
   const keys = (await d1.prepare('SELECT data_source_id, kind, value, signal_id, seq FROM signal_keys').all<KeyRow>()).results;
   const threads = (await d1.prepare('SELECT id, source_key, last_signal_at, named_pending FROM threads ORDER BY id').all<ThreadRow>()).results;
-  return { keys: sortKeys(keys), threads };
+  const named = (await d1.prepare('SELECT thread_id, address_key, data_source_id FROM thread_named ORDER BY thread_id, address_key').all<NamedRow>()).results;
+  return { keys: sortKeys(keys), threads, named };
 }
 
 /** 0004 のうち、既存の行から列と索引を埋める文（「0046:」の注記より後ろ） */
@@ -54,22 +57,26 @@ describe.each(listScenarios())('H1 索引の行とスレッドの列（%s）', (
           return { id: t.id, source_key: c.sourceKey, last_signal_at: c.lastSignalAt, named_pending: c.namedPending ? 1 : 0 };
         })
         .sort((a, b) => (a.id < b.id ? -1 : 1));
+      const named = Object.values(p.threads)
+        .flatMap((t) => pendingNamedKeys(t).map((k) => ({ thread_id: t.id, address_key: k, data_source_id: t.dataSourceId })))
+        .sort((a, b) => (a.thread_id < b.thread_id ? -1 : a.thread_id > b.thread_id ? 1 : a.address_key < b.address_key ? -1 : 1));
+      expect(named.length).toBeGreaterThan(0);
 
       // 差分の保存で書いた行
-      expect(await rows(d1)).toEqual({ keys, threads });
+      expect(await rows(d1)).toEqual({ keys, threads, named });
 
       // 作り直し（丸ごとの保存）の行
       await run.service.rebuild();
-      expect(await rows(d1)).toEqual({ keys, threads });
+      expect(await rows(d1)).toEqual({ keys, threads, named });
 
-      // マイグレーションで既存の行から埋める。名指しの列は上位集合（名指しが 1 つでもあれば立てる）でよい
+      // マイグレーションで既存の行から埋める（2 回流しても同じ）
       await d1.prepare('DELETE FROM signal_keys').run();
+      await d1.prepare('DELETE FROM thread_named').run();
       await d1.prepare('UPDATE threads SET source_key = NULL, last_signal_at = NULL, named_pending = 0').run();
       for (const stmt of backfillStatements()) await d1.prepare(stmt).run();
-      const filled = await rows(d1);
-      expect(filled.keys).toEqual(keys);
-      expect(filled.threads.map(({ named_pending: _n, ...r }) => r)).toEqual(threads.map(({ named_pending: _n, ...r }) => r));
-      for (const t of threads) if (t.named_pending) expect(filled.threads.find((x) => x.id === t.id)?.named_pending, t.id).toBe(1);
+      expect(await rows(d1)).toEqual({ keys, threads, named });
+      for (const stmt of backfillStatements()) await d1.prepare(stmt).run();
+      expect(await rows(d1)).toEqual({ keys, threads, named });
     } finally {
       await close();
     }

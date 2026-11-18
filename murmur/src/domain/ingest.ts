@@ -155,7 +155,7 @@ export function resolveAnchors(p: Projections, sig: SignalPayload): Threading | 
  * シグナルの会話がグループか。会話の種類を持つシグナル（Teams のチャット。0044）はそれで、ほかはデータソースの group で決める
  * （1 つのデータソースに 1 対 1 とグループの会話が混ざるリストがあるため）
  */
-function isGroup(ds: ServiceDataSource, sig: SignalPayload): boolean {
+export function isGroup(ds: ServiceDataSource, sig: Pick<SignalPayload, 'anchors'>): boolean {
   return sig.anchors.conversationGroup ?? ds.group;
 }
 

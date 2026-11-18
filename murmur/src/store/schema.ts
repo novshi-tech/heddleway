@@ -63,6 +63,21 @@ export const signals = sqliteTable(
 );
 
 /**
+ * 外していない名指しの索引（0046 の決定 3）。スレッドの名指しのうち、外していないもの（`hasPendingNaming` と同じ規則）のアドレス。
+ * 返事待ちの候補を、受信の送り主のアドレスで引く。スレッドを保存するたびに、そのスレッドの行を入れ替える
+ */
+export const threadNamed = sqliteTable(
+  'thread_named',
+  {
+    threadId: text('thread_id').notNull(),
+    /** `addressKey`（チャネルと、小文字にした値） */
+    addressKey: text('address_key').notNull(),
+    dataSourceId: text('data_source_id').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.threadId, t.addressKey] }), index('thread_named_address_idx').on(t.dataSourceId, t.addressKey)],
+);
+
+/**
  * シグナルの索引（0046 の決定 2）。データソースの中の値 → その値を持つ最新のシグナル（seq の大きいもの）。
  * kind: sourceRef（重複排除）・messageId（記録との統合・In-Reply-To・引用）・threadKey（ソースの区切り）・threadTs（同じスレッド）。
  * シグナルの記録から決まる投影なので、いつでも作り直せる。行は消えない（シグナルが消えないので）

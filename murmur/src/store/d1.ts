@@ -6,6 +6,8 @@ import {
   indexOfSignals,
   parseEvent,
   signalKeysOf,
+  pendingNamedKeys,
+  addressKey,
   threadColumns,
   rowKey,
   Seed,
@@ -195,7 +197,22 @@ export class D1ProjectionStore implements ProjectionStore {
             : none,
         ),
       this.db.select().from(T).where(req.sourceKeys.length > 0 ? and(eq(T.dataSourceId, ds), inArray(T.sourceKey, req.sourceKeys)) : none),
-      this.db.select().from(T).where(req.awaiting ? and(eq(T.dataSourceId, ds), eq(T.namedPending, true)) : none),
+      this.db
+        .select()
+        .from(T)
+        .where(
+          req.awaiting === 'all'
+            ? and(eq(T.dataSourceId, ds), eq(T.namedPending, true))
+            : req.awaiting
+              ? inArray(
+                  T.id,
+                  this.db
+                    .select({ id: schema.threadNamed.threadId })
+                    .from(schema.threadNamed)
+                    .where(and(eq(schema.threadNamed.dataSourceId, ds), eq(schema.threadNamed.addressKey, addressKey(req.awaiting.address)))),
+                )
+              : none,
+        ),
       this.db
         .select()
         .from(T)
@@ -241,6 +258,7 @@ export class D1ProjectionStore implements ProjectionStore {
       ...this.threadRows(p, Object.keys(p.threads)).map((rows) => this.db.insert(schema.threads).values(rows)),
       ...this.signalRows(p, Object.keys(p.signals)).map((rows) => this.db.insert(schema.signals).values(rows)),
       ...this.keyRows(p, Object.keys(p.signals)).map((rows) => this.db.insert(schema.signalKeys).values(rows)),
+      ...this.namedRows(p, Object.keys(p.threads)).map((rows) => this.db.insert(schema.threadNamed).values(rows)),
     ]);
   }
 
@@ -287,6 +305,17 @@ export class D1ProjectionStore implements ProjectionStore {
           )
           .bind(...rows.flatMap((r) => [r.dataSourceId, r.kind, r.value, r.signalId, r.seq])),
       ),
+      // 外していない名指しの行（0046 の決定 3）。変わったスレッドの行を入れ替える
+      ...chunkIds(changes.threadIds).map((ids) =>
+        d1.prepare(`DELETE FROM thread_named WHERE thread_id IN (${ids.map(() => '?').join(', ')}) AND ${cond}`).bind(...ids),
+      ),
+      ...this.namedRows(p, changes.threadIds).map((rows) =>
+        d1
+          .prepare(
+            `INSERT INTO thread_named (thread_id, address_key, data_source_id) SELECT column1, column2, column3 FROM (VALUES ${rows.map(() => '(?, ?, ?)').join(', ')}) WHERE ${cond} ON CONFLICT DO NOTHING`,
+          )
+          .bind(...rows.flatMap((r) => [r.threadId, r.addressKey, r.dataSourceId])),
+      ),
       d1
         .prepare(`INSERT INTO projection_meta (id, last_seq, idx) SELECT ${META_ID}, ${next}, ? WHERE ${cond} ON CONFLICT (id) DO UPDATE SET last_seq = excluded.last_seq`)
         .bind(JSON.stringify(EMPTY_INDEX)),
@@ -300,7 +329,7 @@ export class D1ProjectionStore implements ProjectionStore {
   }
 
   private deleteAll() {
-    return [this.db.delete(schema.projectionMeta), this.db.delete(schema.threads), this.db.delete(schema.signals), this.db.delete(schema.signalKeys)];
+    return [this.db.delete(schema.projectionMeta), this.db.delete(schema.threads), this.db.delete(schema.signals), this.db.delete(schema.signalKeys), this.db.delete(schema.threadNamed)];
   }
 
   private threadRows(p: Projections, ids: readonly string[]) {
@@ -310,6 +339,16 @@ export class D1ProjectionStore implements ProjectionStore {
         return { id, dataSourceId: t.dataSourceId, data: t, ...threadColumns(t) };
       }),
       6,
+    );
+  }
+
+  private namedRows(p: Projections, threadIds: readonly string[]) {
+    return chunks(
+      threadIds.flatMap((id) => {
+        const t = p.threads[id]!;
+        return pendingNamedKeys(t).map((k) => ({ threadId: t.id, addressKey: k, dataSourceId: t.dataSourceId }));
+      }),
+      3,
     );
   }
 

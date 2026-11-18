@@ -17,6 +17,8 @@ import {
   unresolvedAddresses,
   acknowledgeAttention,
   isStaleProjections,
+  isGroup,
+  isOurs,
   dedupeRequest,
   mirrorRequest,
   threadingRequest,
@@ -234,7 +236,13 @@ export class MurmurService {
         events: [sigEvent, ...decided.events],
         result: { status: 'threaded', signalId: payload.signalId, ...decided.outcome },
       };
-    }, (ctx) => this.workingSet(threadingRequest(inbound, ctx.now, this.deps.policy)));
+    }, (ctx) => {
+      // 返事待ちの段の見方（awaitingThread と同じ: こちらからの送信は見ない、グループの会話は全部、ほかは送り主）
+      const ds = ctx.dir.dataSource(inbound.dataSourceId);
+      const conversation =
+        ds?.kind === 'service' ? { ours: isOurs(ctx.dir, ds, inbound.from, ctx.now), group: isGroup(ds, { anchors: inbound.anchors ?? {} }) } : { ours: false, group: true };
+      return this.workingSet(threadingRequest(inbound, ctx.now, this.deps.policy, conversation));
+    });
   }
 
   /** 状態の写し（Jira の課題・PR の状態）。変わった項目だけを ThreadMirrored で写す（0031） */

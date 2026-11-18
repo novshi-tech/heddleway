@@ -1,4 +1,5 @@
-import { comparePos } from './comm';
+import { addressKey, comparePos } from './comm';
+import type { AddressRef } from './entities';
 import type { InboundSignal, IngestPolicy } from './ingest';
 import type { InboundMirror } from './mirror';
 import { indexKey, type Projections, type SignalRecord, type Thread } from './projections';
@@ -37,10 +38,16 @@ export function indexOfSignals(signals: Iterable<SignalRecord>): Projections['in
   return index;
 }
 
+/** 外していない名指しのアドレスのキー（`addressKey`。返事待ちの候補を送り主で引く索引。0046 の決定 3） */
+export function pendingNamedKeys(t: Thread): string[] {
+  // 形が古い投影（0038 より前。isStaleProjections）にも書けるように、名指しがなければ空
+  const keys = (t.attention?.named ?? []).filter((n) => !n.ackedThrough || comparePos(n.last, n.ackedThrough) > 0).map((n) => addressKey(n.address));
+  return [...new Set(keys)].sort();
+}
+
 /** 外していない名指しが 1 つでも残っているか（返事待ちの上位集合。向きと読者はクエリ層が決める。0046 の決定 3） */
 export function hasPendingNaming(t: Thread): boolean {
-  // 形が古い投影（0038 より前。isStaleProjections）にも書けるように、名指しがなければ false
-  return (t.attention?.named ?? []).some((n) => !n.ackedThrough || comparePos(n.last, n.ackedThrough) > 0);
+  return pendingNamedKeys(t).length > 0;
 }
 
 /** 最後のシグナルの時刻（向きは問わない）。シグナルがなければ null */
@@ -61,7 +68,8 @@ export function threadColumns(t: Thread): { sourceKey: string | null; lastSignal
  * 取り込みの作業範囲の依頼。保存先は、保存済みの投影から次のものを返す（`selectWorkingSet` がその意味。D1 は SQL で同じものを引く）:
  * - keys: データソースの中で、その値を持つ最新のシグナルと、そのスレッド（の全シグナル）。種類が sourceRef・messageId なら索引にも載せる
  * - sourceKeys: 写しの区切り（`Thread.sourceKey`）がその値のスレッド
- * - awaiting: 外していない名指しが残っているスレッドの全部（返事待ちの上位集合。決定 3）
+ * - awaiting: 返事待ちの上位集合（決定 3）。`all` は外していない名指しが残っているスレッドの全部（グループの会話）、
+ *   `{ address }` はそのアドレスへの外していない名指しが残っているスレッド（1 対 1 の会話の受信の送り主）
  * - window: 最後のシグナルが since 以降のスレッドを、新しい順に limit 本まで（決定 4）
  * 返すスレッドは、そのシグナルを全部含む。lastSeq は保存済みの投影のもの
  */
@@ -69,7 +77,7 @@ export interface WorkingSetRequest {
   dataSourceId: string;
   keys: SignalKey[];
   sourceKeys: string[];
-  awaiting: boolean;
+  awaiting: false | 'all' | { address: AddressRef };
   window: { since: string; limit: number } | null;
 }
 
@@ -94,7 +102,13 @@ export function dedupeRequest(inbound: Pick<InboundSignal, 'dataSourceId' | 'sou
  * 区切り（`planThreading`）まで含めた作業範囲。重複排除の分も入れる（間に別の書き手が同じものを取り込んでいても、ここで重複と分かる）。
  * アンカーの照合（`resolveAnchors`・`threadOfSourceKey`）はどの値も messageId の索引でも引くので、両方の種類で引く
  */
-export function threadingRequest(inbound: Pick<InboundSignal, 'dataSourceId' | 'sourceRef' | 'anchors'>, now: string, policy: IngestPolicy): WorkingSetRequest {
+export function threadingRequest(
+  inbound: Pick<InboundSignal, 'dataSourceId' | 'sourceRef' | 'anchors' | 'from'>,
+  now: string,
+  policy: IngestPolicy,
+  /** 返事待ち（awaitingThread）の見方: こちらからの送信なら読まない、グループの会話なら全部、ほかは送り主で引く */
+  conversation: { ours: boolean; group: boolean },
+): WorkingSetRequest {
   const a = inbound.anchors ?? {};
   const keys = dedupeRequest(inbound).keys;
   if (a.threadKey) keys.push({ kind: 'threadKey', value: a.threadKey }, { kind: 'messageId', value: a.threadKey });
@@ -105,7 +119,7 @@ export function threadingRequest(inbound: Pick<InboundSignal, 'dataSourceId' | '
     dataSourceId: inbound.dataSourceId,
     keys: uniqueKeys(keys),
     sourceKeys: a.threadKey ? [a.threadKey] : [],
-    awaiting: true,
+    awaiting: conversation.ours ? false : conversation.group ? 'all' : { address: inbound.from },
     window: { since: windowStart(now, policy.candidateWindowDays), limit: policy.candidateWindowLimit },
   };
 }
@@ -168,7 +182,13 @@ export function selectWorkingSet(full: Projections, req: WorkingSetRequest): Pro
   const inDs = Object.values(full.threads).filter((t) => t.dataSourceId === ds);
   const sourceKeys = new Set(req.sourceKeys);
   for (const t of inDs) if (t.sourceKey && sourceKeys.has(t.sourceKey)) addThread(t);
-  if (req.awaiting) for (const t of inDs) if (hasPendingNaming(t)) addThread(t);
+  const awaiting = req.awaiting;
+  if (awaiting === 'all') {
+    for (const t of inDs) if (hasPendingNaming(t)) addThread(t);
+  } else if (awaiting) {
+    const key = addressKey(awaiting.address);
+    for (const t of inDs) if (pendingNamedKeys(t).includes(key)) addThread(t);
+  }
   if (req.window) {
     const since = req.window.since;
     inDs

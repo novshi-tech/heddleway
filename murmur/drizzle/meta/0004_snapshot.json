@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "adbc0cb5-764f-4282-8704-541d900460bd",
+  "id": "4e577051-7eb4-41a4-b0f1-3f85cffefcdf",
   "prevId": "4f955ab6-0b9a-4641-bfd4-fa45b45c4209",
   "tables": {
     "connector_sources": {
@@ -461,6 +461,54 @@
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "thread_named": {
+      "name": "thread_named",
+      "columns": {
+        "thread_id": {
+          "name": "thread_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "address_key": {
+          "name": "address_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "data_source_id": {
+          "name": "data_source_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "thread_named_address_idx": {
+          "name": "thread_named_address_idx",
+          "columns": [
+            "data_source_id",
+            "address_key"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "thread_named_thread_id_address_key_pk": {
+          "columns": [
+            "thread_id",
+            "address_key"
+          ],
+          "name": "thread_named_thread_id_address_key_pk"
+        }
+      },
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
