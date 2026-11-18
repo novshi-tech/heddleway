@@ -1,4 +1,4 @@
-import { applyMasterChanges, emptyProjections, indexKey, parseEvent, selectOverdueSet, selectWorkingSet, Seed, type WorkingSetRequest, type DomainEvent, type DraftEvent, type MasterChange, type ProjectionChanges, type Projections } from '../domain';
+import { applyMasterChanges, emptyProjections, indexKey, parseEvent, selectListScope, selectOverdueSet, selectThreadScope, selectWorkingSet, Seed, type ListScopeRequest, type ThreadScopeRequest, type WorkingSetRequest, type DomainEvent, type DraftEvent, type MasterChange, type ProjectionChanges, type Projections } from '../domain';
 import { deepFreeze } from './freeze';
 import { ConcurrencyError, type EventStore, type MasterChangeRecord, type MasterStore, type ProjectionStore, type Repo } from './types';
 
@@ -51,6 +51,12 @@ export class MemoryProjectionStore implements ProjectionStore {
   }
   async clear() {
     this.saved = null;
+  }
+  async threadScope(req: ThreadScopeRequest) {
+    return this.saved ? deepFreeze(structuredClone(selectThreadScope(this.saved, req))) : null;
+  }
+  async listScope(req: ListScopeRequest) {
+    return this.saved ? deepFreeze(structuredClone(selectListScope(this.saved, req))) : null;
   }
   async overdueSet(before: string) {
     return this.saved ? deepFreeze(structuredClone(selectOverdueSet(this.saved, before))) : null;

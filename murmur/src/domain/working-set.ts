@@ -64,16 +64,19 @@ export function replyDue(t: Thread): string | null {
 }
 
 /** スレッドの行に持つ列（0046 の決定 2） */
-export function threadColumns(t: Thread): { sourceKey: string | null; lastSignalAt: string | null; namedPending: boolean; replyDue: string | null } {
-  return { sourceKey: t.sourceKey ?? null, lastSignalAt: lastSignalAt(t), namedPending: hasPendingNaming(t), replyDue: replyDue(t) };
+export function threadColumns(t: Thread): { sourceKey: string | null; lastSignalAt: string | null; namedPending: boolean; replyDue: string | null; isOpen: boolean } {
+  return { sourceKey: t.sourceKey ?? null, lastSignalAt: lastSignalAt(t), namedPending: hasPendingNaming(t), replyDue: replyDue(t), isOpen: !t.dismissed && !t.closedAtSource };
 }
 
-/** 期限の見回りの作業範囲の意味: 返事期待の期限が before より前のスレッド（シグナルは要らない）。D1 は reply_due の索引で引く */
+/** 期限の見回りの作業範囲の意味: 返事期待の期限が before より前のスレッドとそのシグナル（畳んで保存し直すとき、キーの行をシグナルから作る）。D1 は reply_due の索引で引く */
 export function selectOverdueSet(full: Projections, before: string): Projections {
   const out: Projections = { lastSeq: full.lastSeq, threads: {}, signals: {}, index: { sourceRefs: {}, messageIds: {} } };
   for (const t of Object.values(full.threads)) {
     const due = replyDue(t);
-    if (due !== null && due < before) out.threads[t.id] = t;
+    if (due !== null && due < before) {
+      out.threads[t.id] = t;
+      for (const id of t.signalIds) if (full.signals[id]) out.signals[id] = full.signals[id]!;
+    }
   }
   return out;
 }

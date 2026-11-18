@@ -17,6 +17,7 @@ import {
   unresolvedAddresses,
   acknowledgeAttention,
   isStaleProjections,
+  type ThreadScopeRequest,
   isGroup,
   isOurs,
   dedupeRequest,
@@ -146,10 +147,24 @@ export class MurmurService {
    * 全件（state()）を使う。全件は作業範囲を必ず含むので、どちらでも同じ判断になる（窓の外の候補を除く）
    */
   private async workingSet(req: WorkingSetRequest): Promise<{ p: Projections; partial: boolean }> {
-    const { repo } = this.deps;
-    const ws = repo.projections.workingSet ? await repo.projections.workingSet(req) : null;
-    if (ws && !isStaleProjections(ws) && (await repo.events.read(ws.lastSeq)).length === 0) return { p: ws, partial: true };
+    const store = this.deps.repo.projections;
+    return this.scoped(store.workingSet ? () => store.workingSet!(req) : null);
+  }
+
+  /**
+   * 範囲で読む（0046・0047）。保存先が持たない・保存済みの投影より先のイベントがある（追いつきが要る）・投影の形が古いときは、
+   * 全件（state()）を使う。全件は範囲を必ず含むので、どちらでも同じ判断になる（0046 の窓の外の候補を除く）
+   */
+  private async scoped(read: (() => Promise<Projections | null>) | null): Promise<{ p: Projections; partial: boolean }> {
+    const ws = read ? await read() : null;
+    if (ws && !isStaleProjections(ws) && (await this.deps.repo.events.read(ws.lastSeq)).length === 0) return { p: ws, partial: true };
     return { p: await this.state(), partial: false };
+  }
+
+  /** 詳細と操作の範囲（0047 の決定 1） */
+  private threadScope(req: ThreadScopeRequest): Promise<{ p: Projections; partial: boolean }> {
+    const store = this.deps.repo.projections;
+    return this.scoped(store.threadScope ? () => store.threadScope!(req) : null);
   }
 
   private context(dir: Directory): CoreContext {
@@ -305,11 +320,9 @@ export class MurmurService {
         return { events, result: events.length };
       },
       // 返事期待の期限を過ぎた候補のスレッドだけ読む（0046 の未決 3）。追いつきが要るときは全件
-      async (ctx) => {
-        const { repo } = this.deps;
-        const ws = repo.projections.overdueSet ? await repo.projections.overdueSet(ctx.now) : null;
-        if (ws && !isStaleProjections(ws) && (await repo.events.read(ws.lastSeq)).length === 0) return { p: ws, partial: true };
-        return { p: await this.state(), partial: false };
+      (ctx) => {
+        const store = this.deps.repo.projections;
+        return this.scoped(store.overdueSet ? () => store.overdueSet!(ctx.now) : null);
       },
     );
   }
@@ -434,12 +447,19 @@ export class MurmurService {
 
   async listThreads(userId: string, opts: { filter?: ThreadFilter; dataSourceId?: string; since?: string } = {}) {
     const { viewer, dir } = await this.viewer(userId);
-    return listThreads(dir, viewer, await this.state(), opts);
+    // 見えるリストのスレッドの行だけ。open 系の絞り込みは開いているものだけ（0047 の決定 2）
+    const filter = opts.filter ?? 'open';
+    const dataSourceIds = opts.dataSourceId ? viewer.dataSourceIds.filter((d) => d === opts.dataSourceId) : viewer.dataSourceIds;
+    const store = this.deps.repo.projections;
+    const req = { dataSourceIds, openOnly: filter !== 'all' && filter !== 'mine' };
+    const { p } = await this.scoped(store.listScope ? () => store.listScope!(req) : null);
+    return listThreads(dir, viewer, p, opts);
   }
 
   async getThread(userId: string, threadId: string, opts: { since?: string } = {}) {
     const { viewer, dir } = await this.viewer(userId);
-    const view = getThreadView(dir, viewer, await this.state(), threadId, opts);
+    const { p } = await this.threadScope({ threadIds: [threadId], links: true, candidates: true });
+    const view = getThreadView(dir, viewer, p, threadId, opts);
     if (!view) throw new DomainError('not_found', `thread ${threadId} not found`);
     return view;
   }
@@ -447,20 +467,20 @@ export class MurmurService {
   /** メモ（経過の記録）を個人リストのスレッドに書く（0039 の決定 2）。返すのはそのスレッド */
   async addNote(userId: string, input: { threadId: string; body: string; author?: Author }) {
     const { viewer } = await this.viewer(userId);
-    await this.run((p, ctx) => ({ events: addNote(p, viewer, ctx, input).events, result: undefined }));
+    await this.run((p, ctx) => ({ events: addNote(p, viewer, ctx, input).events, result: undefined }), () => this.threadScope({ threadIds: [input.threadId] }));
     return this.getThread(userId, input.threadId);
   }
 
   async claimThread(userId: string, input: { threadId: string; userId: string | null; reason?: string }) {
     const { viewer } = await this.viewer(userId);
-    await this.run((p, ctx) => ({ events: claimThread(p, viewer, ctx.dir, input), result: undefined }));
+    await this.run((p, ctx) => ({ events: claimThread(p, viewer, ctx.dir, input), result: undefined }), () => this.threadScope({ threadIds: [input.threadId] }));
     return this.getThread(userId, input.threadId);
   }
 
   /** 名指しを外す（0038 の決定 3・4） */
   async acknowledge(userId: string, input: { threadId: string; untilSignalId?: string; addresses?: AddressRef[]; reason?: string }) {
     const { viewer } = await this.viewer(userId);
-    await this.run((p, ctx) => ({ events: acknowledgeAttention(p, viewer, ctx.dir, input), result: undefined }));
+    await this.run((p, ctx) => ({ events: acknowledgeAttention(p, viewer, ctx.dir, input), result: undefined }), () => this.threadScope({ threadIds: [input.threadId] }));
     return this.getThread(userId, input.threadId);
   }
 
@@ -470,19 +490,19 @@ export class MurmurService {
     const acknowledged = await this.run((p, ctx) => {
       const events = [...new Set(input.threadIds)].flatMap((threadId) => acknowledgeAttention(p, viewer, ctx.dir, { threadId, reason: input.reason }));
       return { events, result: events.length };
-    });
+    }, () => this.threadScope({ threadIds: [...new Set(input.threadIds)] }));
     return { acknowledged };
   }
 
   async linkThreads(userId: string, input: { threadId: string; otherThreadId: string; reason?: string }) {
     const { viewer } = await this.viewer(userId);
-    await this.run((p) => ({ events: linkThreads(p, viewer, input), result: undefined }));
+    await this.run((p) => ({ events: linkThreads(p, viewer, input), result: undefined }), () => this.threadScope({ threadIds: [input.threadId, input.otherThreadId] }));
     return this.getThread(userId, input.threadId);
   }
 
   async unlinkThreads(userId: string, input: { threadId: string; otherThreadId: string; reason?: string }) {
     const { viewer } = await this.viewer(userId);
-    await this.run((p) => ({ events: unlinkThreads(p, viewer, input), result: undefined }));
+    await this.run((p) => ({ events: unlinkThreads(p, viewer, input), result: undefined }), () => this.threadScope({ threadIds: [input.threadId, input.otherThreadId] }));
     return this.getThread(userId, input.threadId);
   }
 
@@ -496,19 +516,46 @@ export class MurmurService {
     const threadId = await this.run((p, ctx) => {
       const { events, threadId } = recordSent(p, viewer, ctx, input);
       return { events, result: threadId };
-    });
+    }, (ctx) => this.recordScope(input, ctx));
     return this.getThread(userId, threadId);
+  }
+
+  /**
+   * 送信の記録の範囲（0047 の決定 1）: 取り込みと同じ索引の引き方（送信の ID・アンカー）で引いた範囲と、返事の置き先・元のスレッド。
+   * 2 つを同じ lastSeq で読めなければ全件
+   */
+  private async recordScope(input: RecordSentInput, ctx: CoreContext): Promise<{ p: Projections; partial: boolean }> {
+    const anchors = { ...(input.anchors ?? {}), messageId: input.sentRef, threadKey: input.anchors?.threadKey ?? input.sentRef };
+    const base = threadingRequest(
+      { dataSourceId: input.dataSourceId, sourceRef: `sent:${input.sentRef}`, anchors, from: { channel: 'email', value: '' } },
+      ctx.now,
+      this.deps.policy,
+      { ours: true, group: false },
+    );
+    const lookup = { ...base, window: null };
+    const ids = [input.replyToThreadId, input.sourceThreadId].filter((x): x is string => !!x);
+    const a = await this.workingSet(lookup);
+    const b = await this.threadScope({ threadIds: ids });
+    if (!a.partial || !b.partial || a.p.lastSeq !== b.p.lastSeq) return a.partial ? { p: await this.state(), partial: false } : a;
+    // 2 つの範囲を合わせる（どちらも保存済みの投影の部分。同じ ID は同じ行）
+    const p: Projections = {
+      lastSeq: a.p.lastSeq,
+      threads: { ...a.p.threads, ...b.p.threads },
+      signals: { ...a.p.signals, ...b.p.signals },
+      index: { sourceRefs: { ...a.p.index.sourceRefs }, messageIds: { ...a.p.index.messageIds } },
+    };
+    return { p, partial: true };
   }
 
   async dismissThread(userId: string, input: { threadId: string; reason: string }) {
     const { viewer } = await this.viewer(userId);
-    await this.run((p, ctx) => ({ events: dismissThread(p, viewer, ctx.dir, input), result: undefined }));
+    await this.run((p, ctx) => ({ events: dismissThread(p, viewer, ctx.dir, input), result: undefined }), () => this.threadScope({ threadIds: [input.threadId] }));
     return this.getThread(userId, input.threadId);
   }
 
   async reopenThread(userId: string, input: { threadId: string; reason?: string }) {
     const { viewer } = await this.viewer(userId);
-    await this.run((p, ctx) => ({ events: reopenThread(p, viewer, ctx.dir, input), result: undefined }));
+    await this.run((p, ctx) => ({ events: reopenThread(p, viewer, ctx.dir, input), result: undefined }), () => this.threadScope({ threadIds: [input.threadId] }));
     return this.getThread(userId, input.threadId);
   }
 
@@ -517,7 +564,7 @@ export class MurmurService {
     const threadId = await this.run((p, ctx) => {
       const { events, threadId } = moveSignal(p, viewer, ctx, input);
       return { events, result: threadId };
-    });
+    }, () => this.threadScope({ threadIds: input.to.kind === 'existing' ? [input.to.threadId] : [], signalIds: [input.signalId] }));
     return this.getThread(userId, threadId);
   }
 

@@ -48,3 +48,4 @@
 - [0044](0044-teams-chats-as-personal-list.md) Teams のチャット（1 対 1・グループ）を、本人の個人リストとして取り込む
 - [0045](0045-google-chat-spaces-and-chats.md) Google Chat のスペースを共有リストに、DM とグループのチャットを個人リストにする（スペースのタスクは入れない）
 - [0046](0046-ingest-working-set.md) 取り込みは投影の全件ではなく、区切りに要る範囲だけを読む（機械的に引けるものは索引で、AI に渡す候補だけ窓で切る）
+- [0047](0047-query-and-command-working-sets.md) API の一覧・詳細・操作も、投影の全件ではなく要る範囲だけを読む（結び候補はキーの索引で）

@@ -43,6 +43,13 @@
       "when": 1794981054269,
       "tag": "0005_reply_due",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1794999339896,
+      "tag": "0006_query_scopes",
+      "breakpoints": true
     }
   ]
 }
