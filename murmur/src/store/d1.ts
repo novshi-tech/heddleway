@@ -256,6 +256,21 @@ export class D1ProjectionStore implements ProjectionStore {
     return out;
   }
 
+  /** 期限の見回りの作業範囲（selectOverdueSet と同じ意味。reply_due の索引で引く） */
+  async overdueSet(before: string): Promise<Projections | null> {
+    const T = schema.threads;
+    const [metas, rows] = await this.db.batch([
+      this.db.select({ lastSeq: schema.projectionMeta.lastSeq }).from(schema.projectionMeta).where(eq(schema.projectionMeta.id, META_ID)),
+      this.db.select().from(T).where(sql`${T.replyDue} IS NOT NULL AND ${T.replyDue} < ${before}`),
+    ]);
+    const meta = metas[0];
+    if (!meta) return null;
+    const out = emptyProjections();
+    out.lastSeq = meta.lastSeq;
+    for (const r of rows) out.threads[r.id] = r.data as Thread;
+    return out;
+  }
+
   async knownSourceRefs(dataSourceId: string, refs: readonly string[]): Promise<Set<string>> {
     const K = schema.signalKeys;
     const parts = chunkIds([...new Set(refs)]);
@@ -301,9 +316,9 @@ export class D1ProjectionStore implements ProjectionStore {
       ...this.threadRows(p, changes.threadIds).map((rows) =>
         d1
           .prepare(
-            `INSERT INTO threads (id, data_source_id, data, source_key, last_signal_at, named_pending) SELECT column1, column2, column3, column4, column5, column6 FROM (VALUES ${rows.map(() => '(?, ?, ?, ?, ?, ?)').join(', ')}) WHERE ${cond} ON CONFLICT (id) DO UPDATE SET data_source_id = excluded.data_source_id, data = excluded.data, source_key = excluded.source_key, last_signal_at = excluded.last_signal_at, named_pending = excluded.named_pending`,
+            `INSERT INTO threads (id, data_source_id, data, source_key, last_signal_at, named_pending, reply_due) SELECT column1, column2, column3, column4, column5, column6, column7 FROM (VALUES ${rows.map(() => '(?, ?, ?, ?, ?, ?, ?)').join(', ')}) WHERE ${cond} ON CONFLICT (id) DO UPDATE SET data_source_id = excluded.data_source_id, data = excluded.data, source_key = excluded.source_key, last_signal_at = excluded.last_signal_at, named_pending = excluded.named_pending, reply_due = excluded.reply_due`,
           )
-          .bind(...rows.flatMap((r) => [r.id, r.dataSourceId, JSON.stringify(r.data), r.sourceKey, r.lastSignalAt, r.namedPending ? 1 : 0])),
+          .bind(...rows.flatMap((r) => [r.id, r.dataSourceId, JSON.stringify(r.data), r.sourceKey, r.lastSignalAt, r.namedPending ? 1 : 0, r.replyDue])),
       ),
       ...this.signalRows(p, changes.signalIds).map((rows) =>
         d1
@@ -353,7 +368,7 @@ export class D1ProjectionStore implements ProjectionStore {
         const t = p.threads[id]!;
         return { id, dataSourceId: t.dataSourceId, data: t, ...threadColumns(t) };
       }),
-      6,
+      7,
     );
   }
 

@@ -11,7 +11,7 @@ import { listScenarios, loadScenario, runScenario } from '../../scripts/lib/scen
 // 差分の保存で書いた行も、マイグレーションで既存の行から埋めた行も、イベントから畳んだ投影から作ったものと一致する
 
 type KeyRow = { data_source_id: string; kind: string; value: string; signal_id: string; seq: number };
-type ThreadRow = { id: string; source_key: string | null; last_signal_at: string | null; named_pending: number };
+type ThreadRow = { id: string; source_key: string | null; last_signal_at: string | null; named_pending: number; reply_due: string | null };
 
 function expectedKeys(p: Projections): KeyRow[] {
   const latest = new Map<string, KeyRow>();
@@ -31,16 +31,18 @@ type NamedRow = { thread_id: string; address_key: string; data_source_id: string
 
 async function rows(d1: D1Database) {
   const keys = (await d1.prepare('SELECT data_source_id, kind, value, signal_id, seq FROM signal_keys').all<KeyRow>()).results;
-  const threads = (await d1.prepare('SELECT id, source_key, last_signal_at, named_pending FROM threads ORDER BY id').all<ThreadRow>()).results;
+  const threads = (await d1.prepare('SELECT id, source_key, last_signal_at, named_pending, reply_due FROM threads ORDER BY id').all<ThreadRow>()).results;
   const named = (await d1.prepare('SELECT thread_id, address_key, data_source_id FROM thread_named ORDER BY thread_id, address_key').all<NamedRow>()).results;
   return { keys: sortKeys(keys), threads, named };
 }
 
 /** 0004 のうち、既存の行から列と索引を埋める文（「0046:」の注記より後ろ） */
 function backfillStatements(): string[] {
-  const sql = readFileSync(join(import.meta.dirname, '../../drizzle/0004_ingest_working_set.sql'), 'utf8');
-  const tail = sql.slice(sql.indexOf('-- 0046:'));
-  return tail.split('--> statement-breakpoint').map((s) => s.trim()).filter(Boolean);
+  const read = (file: string, marker: string) => {
+    const sql = readFileSync(join(import.meta.dirname, '../../drizzle', file), 'utf8');
+    return sql.slice(sql.indexOf(marker)).split('--> statement-breakpoint').map((s) => s.trim()).filter(Boolean);
+  };
+  return [...read('0004_ingest_working_set.sql', '-- 0046:'), ...read('0005_reply_due.sql', '-- 0046 の未決 3')];
 }
 
 describe.each(listScenarios())('H1 索引の行とスレッドの列（%s）', (name) => {
@@ -54,7 +56,7 @@ describe.each(listScenarios())('H1 索引の行とスレッドの列（%s）', (
       const threads = Object.values(p.threads)
         .map((t) => {
           const c = threadColumns(t);
-          return { id: t.id, source_key: c.sourceKey, last_signal_at: c.lastSignalAt, named_pending: c.namedPending ? 1 : 0 };
+          return { id: t.id, source_key: c.sourceKey, last_signal_at: c.lastSignalAt, named_pending: c.namedPending ? 1 : 0, reply_due: c.replyDue };
         })
         .sort((a, b) => (a.id < b.id ? -1 : 1));
       const named = Object.values(p.threads)
@@ -72,7 +74,7 @@ describe.each(listScenarios())('H1 索引の行とスレッドの列（%s）', (
       // マイグレーションで既存の行から埋める（2 回流しても同じ）
       await d1.prepare('DELETE FROM signal_keys').run();
       await d1.prepare('DELETE FROM thread_named').run();
-      await d1.prepare('UPDATE threads SET source_key = NULL, last_signal_at = NULL, named_pending = 0').run();
+      await d1.prepare('UPDATE threads SET source_key = NULL, last_signal_at = NULL, named_pending = 0, reply_due = NULL').run();
       for (const stmt of backfillStatements()) await d1.prepare(stmt).run();
       expect(await rows(d1)).toEqual({ keys, threads, named });
       for (const stmt of backfillStatements()) await d1.prepare(stmt).run();
