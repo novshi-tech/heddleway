@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, gt, inArray, or, sql } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
 import type { DrizzleD1Database } from 'drizzle-orm/d1';
 import {
@@ -18,6 +18,8 @@ import {
   type Projections,
   type SignalRecord,
   type Thread,
+  type WorkingSetRequest,
+  indexKey,
 } from '../domain';
 import { deepFreeze } from './freeze';
 import * as schema from './schema';
@@ -30,6 +32,13 @@ import { ConcurrencyError, type EventStore, type MasterChangeRecord, type Master
 export type Db = DrizzleD1Database & { $client: D1Database };
 
 const MAX_PARAMS = 100;
+
+/** IN (...) に並べる ID の数（バインド変数の上限の内側） */
+function chunkIds(ids: readonly string[], size = 90): string[][] {
+  const out: string[][] = [];
+  for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
+  return out;
+}
 
 function chunks<T>(rows: readonly T[], paramsPerRow: number, reserved = 0): T[][] {
   const size = Math.max(1, Math.floor((MAX_PARAMS - reserved) / paramsPerRow));
@@ -156,12 +165,73 @@ export class D1ProjectionStore implements ProjectionStore {
     return p;
   }
 
-  async save(p: Projections, changes?: ProjectionChanges): Promise<void> {
+  async save(p: Projections, changes?: ProjectionChanges, opts?: { partial?: boolean }): Promise<void> {
     if (changes) await this.saveChanges(p, changes);
     else await this.saveAll(p);
+    // 作業範囲の上で畳んだもの（0046）は全件ではないので、写しにしない（写しは次の load で追記から追いつく）
+    if (opts?.partial) return;
     // 保存が弾かれても p はイベントからの正しい fold なので、写しを進めてよい（p は呼び手の手を離れるので、その場で凍らせる）
     const cache = cacheOf(this.db);
     if (!cache.projections || p.lastSeq >= cache.projections.lastSeq) cache.projections = deepFreeze(p);
+  }
+
+  /**
+   * 取り込みの作業範囲（0046 の決定 1）。意味は selectWorkingSet と同じ。往復は 3 回まで:
+   * (1) lastSeq・索引の行・写しの区切りのスレッド・名指しの残るスレッド・窓のスレッド、
+   * (2) 索引が指すシグナル、(3) それらのスレッドのうちまだ読んでいないものと、読んだスレッドの全シグナル
+   */
+  async workingSet(req: WorkingSetRequest): Promise<Projections | null> {
+    const ds = req.dataSourceId;
+    const T = schema.threads;
+    const none = sql`0`;
+    const [metas, keys, bySourceKey, awaiting, windowed] = await this.db.batch([
+      this.db.select({ lastSeq: schema.projectionMeta.lastSeq }).from(schema.projectionMeta).where(eq(schema.projectionMeta.id, META_ID)),
+      this.db
+        .select()
+        .from(schema.signalKeys)
+        .where(
+          req.keys.length > 0
+            ? and(eq(schema.signalKeys.dataSourceId, ds), or(...req.keys.map((k) => and(eq(schema.signalKeys.kind, k.kind), eq(schema.signalKeys.value, k.value)))))
+            : none,
+        ),
+      this.db.select().from(T).where(req.sourceKeys.length > 0 ? and(eq(T.dataSourceId, ds), inArray(T.sourceKey, req.sourceKeys)) : none),
+      this.db.select().from(T).where(req.awaiting ? and(eq(T.dataSourceId, ds), eq(T.namedPending, true)) : none),
+      this.db
+        .select()
+        .from(T)
+        .where(req.window ? and(eq(T.dataSourceId, ds), gte(T.lastSignalAt, req.window.since)) : none)
+        .orderBy(desc(T.lastSignalAt), asc(T.id))
+        .limit(req.window?.limit ?? 0),
+    ]);
+    const meta = metas[0];
+    if (!meta) return null;
+    const out = emptyProjections();
+    out.lastSeq = meta.lastSeq;
+    for (const r of [...bySourceKey, ...awaiting, ...windowed]) out.threads[r.id] = r.data as Thread;
+
+    const keySignalIds = [...new Set(keys.map((k) => k.signalId))];
+    for (const part of chunkIds(keySignalIds)) {
+      for (const r of await this.db.select().from(schema.signals).where(inArray(schema.signals.id, part))) out.signals[r.id] = r.data as SignalRecord;
+    }
+    for (const k of keys) {
+      if (!out.signals[k.signalId]) continue;
+      if (k.kind === 'sourceRef') out.index.sourceRefs[indexKey(ds, k.value)] = k.signalId;
+      if (k.kind === 'messageId') out.index.messageIds[indexKey(ds, k.value)] = k.signalId;
+    }
+    const missing = [...new Set(keySignalIds.map((id) => out.signals[id]?.threadId).filter((t): t is string => !!t && !out.threads[t]))];
+    const threadIds = [...new Set([...Object.keys(out.threads), ...missing])];
+    const reads: BatchItem<'sqlite'>[] = [];
+    for (const part of chunkIds(missing)) reads.push(this.db.select().from(T).where(inArray(T.id, part)));
+    for (const part of chunkIds(threadIds)) reads.push(this.db.select().from(schema.signals).where(inArray(schema.signals.threadId, part)));
+    const results = (await batch(this.db, reads)) as { id: string; data: unknown; threadId?: string | null }[][];
+    const missingParts = chunkIds(missing).length;
+    results.forEach((rows, i) => {
+      for (const r of rows) {
+        if (i < missingParts) out.threads[r.id] = r.data as Thread;
+        else out.signals[r.id] = r.data as SignalRecord;
+      }
+    });
+    return out;
   }
 
   private async saveAll(p: Projections): Promise<void> {

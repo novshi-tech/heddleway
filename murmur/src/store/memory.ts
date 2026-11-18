@@ -1,4 +1,4 @@
-import { applyMasterChanges, emptyProjections, parseEvent, Seed, type DomainEvent, type DraftEvent, type MasterChange, type ProjectionChanges, type Projections } from '../domain';
+import { applyMasterChanges, emptyProjections, parseEvent, selectWorkingSet, Seed, type WorkingSetRequest, type DomainEvent, type DraftEvent, type MasterChange, type ProjectionChanges, type Projections } from '../domain';
 import { deepFreeze } from './freeze';
 import { ConcurrencyError, type EventStore, type MasterChangeRecord, type MasterStore, type ProjectionStore, type Repo } from './types';
 
@@ -41,12 +41,20 @@ export class MemoryProjectionStore implements ProjectionStore {
     if (!(changes.baseSeq <= stored && stored < p.lastSeq)) return;
     const saved = (this.saved ??= emptyProjections());
     saved.lastSeq = p.lastSeq;
-    if (changes.index) saved.index = structuredClone(p.index);
+    // 索引は足し込む（作業範囲の上で畳んだ p は、引いた値の分しか索引を持たない。0046。全件の p なら置き換えと同じ）
+    if (changes.index) {
+      Object.assign(saved.index.sourceRefs, structuredClone(p.index.sourceRefs));
+      Object.assign(saved.index.messageIds, structuredClone(p.index.messageIds));
+    }
     for (const id of changes.threadIds) saved.threads[id] = structuredClone(p.threads[id]!);
     for (const id of changes.signalIds) saved.signals[id] = structuredClone(p.signals[id]!);
   }
   async clear() {
     this.saved = null;
+  }
+  /** 作業範囲の意味（selectWorkingSet）そのもの。D1 の実装と同じものを返す（0046） */
+  async workingSet(req: WorkingSetRequest) {
+    return this.saved ? deepFreeze(structuredClone(selectWorkingSet(this.saved, req))) : null;
   }
 }
 

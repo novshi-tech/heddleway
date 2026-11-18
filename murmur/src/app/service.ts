@@ -17,6 +17,10 @@ import {
   unresolvedAddresses,
   acknowledgeAttention,
   isStaleProjections,
+  dedupeRequest,
+  mirrorRequest,
+  threadingRequest,
+  type WorkingSetRequest,
   claimThread,
   deriveViewer,
   planOverdue,
@@ -135,6 +139,17 @@ export class MurmurService {
     return projections;
   }
 
+  /**
+   * 取り込みの作業範囲（0046）。保存先が持たない・保存済みの投影より先のイベントがある（追いつきが要る）・投影の形が古いときは、
+   * 全件（state()）を使う。全件は作業範囲を必ず含むので、どちらでも同じ判断になる（窓の外の候補を除く）
+   */
+  private async workingSet(req: WorkingSetRequest): Promise<{ p: Projections; partial: boolean }> {
+    const { repo } = this.deps;
+    const ws = repo.projections.workingSet ? await repo.projections.workingSet(req) : null;
+    if (ws && !isStaleProjections(ws) && (await repo.events.read(ws.lastSeq)).length === 0) return { p: ws, partial: true };
+    return { p: await this.state(), partial: false };
+  }
+
   private context(dir: Directory): CoreContext {
     return { dir, now: this.deps.clock.now(), newId: this.deps.newId };
   }
@@ -145,16 +160,18 @@ export class MurmurService {
    */
   private async run<T>(
     decide: (p: Projections, ctx: CoreContext) => Promise<{ events: DraftEvent[]; result: T }> | { events: DraftEvent[]; result: T },
+    load: (ctx: CoreContext) => Promise<{ p: Projections; partial: boolean }> = async () => ({ p: await this.state(), partial: false }),
   ): Promise<T> {
     for (let attempt = 0; ; attempt++) {
-      const p = await this.state();
       const ctx = this.context(await this.directory());
+      const { p, partial } = await load(ctx);
       const { events, result } = await decide(p, ctx);
       if (events.length === 0) return result;
       try {
         const stored = await this.deps.repo.events.append(p.lastSeq, events, ctx.now);
         const { projections, changes } = foldChanges(stored, p);
-        await this.deps.repo.projections.save(projections, changes);
+        // 作業範囲の上で畳んだものは、変わった行だけ書き、全件の写しとしては持たない（0046）
+        await this.deps.repo.projections.save(projections, changes, partial ? { partial: true } : undefined);
         return result;
       } catch (err) {
         if (err instanceof ConcurrencyError && attempt < MAX_RETRIES) continue;
@@ -190,6 +207,12 @@ export class MurmurService {
   // ---- Ingest ----
 
   async ingest(inbound: InboundSignal): Promise<IngestResult> {
+    // 重複と記録との統合は、索引の数行で決まる（0046 の決定 1 の段 1）。どちらでもなければ、区切りの作業範囲で読み直して決める
+    // 確かめるだけなので ID を使わない（採番を進めると、後の判断の ID がずれる）
+    const ctx0 = { ...this.context(await this.directory()), newId: (prefix: string) => `${prefix}_probe` };
+    const quick = prepareInbound((await this.workingSet(dedupeRequest(inbound))).p, ctx0, inbound);
+    if (quick.kind === 'duplicate') return { status: 'duplicate', signalId: quick.signalId };
+    if (quick.kind === 'merged') return { status: 'merged', signalId: quick.signalId, threadId: quick.threadId };
     return this.run<IngestResult>(async (p, ctx) => {
       const prepared = prepareInbound(p, ctx, inbound);
       if (prepared.kind === 'duplicate') return { events: [], result: { status: 'duplicate', signalId: prepared.signalId } };
@@ -211,7 +234,7 @@ export class MurmurService {
         events: [sigEvent, ...decided.events],
         result: { status: 'threaded', signalId: payload.signalId, ...decided.outcome },
       };
-    });
+    }, (ctx) => this.workingSet(threadingRequest(inbound, ctx.now, this.deps.policy)));
   }
 
   /** 状態の写し（Jira の課題・PR の状態）。変わった項目だけを ThreadMirrored で写す（0031） */
@@ -221,7 +244,7 @@ export class MurmurService {
       if (plan.kind === 'no_thread') return { events: [], result: { status: 'no_thread', threadKey: plan.threadKey } };
       if (plan.kind === 'unchanged') return { events: [], result: { status: 'unchanged', threadId: plan.threadId } };
       return { events: plan.events, result: { status: 'mirrored', threadId: plan.threadId, newThread: plan.newThread, fields: plan.fields } };
-    });
+    }, () => this.workingSet(mirrorRequest(inbound)));
   }
 
   /** コネクタ・Webhook から来た 1 件（シグナルか状態の写し） */
