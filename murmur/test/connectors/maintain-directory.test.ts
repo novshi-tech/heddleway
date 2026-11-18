@@ -98,7 +98,8 @@ describe('組み立て（createMurmur）の見回り', () => {
       get(target, prop) {
         const value = Reflect.get(target, prop, target) as unknown;
         if (prop === 'prepare') return (query: string) => {
-          if (/^\s*select\b[^]*\bfrom\s+"?master"?/i.test(query)) masterLoads++;
+          // 版の確認（master_changes の最大の id）は数えない
+          if (/^\s*select\b[^]*\bfrom\s+"?master"?(?![_\w])/i.test(query)) masterLoads++;
           return target.prepare(query);
         };
         return typeof value === 'function' ? value.bind(target) : value;

@@ -87,10 +87,50 @@ export class D1EventStore implements EventStore {
 
 const META_ID = 1;
 
+/**
+ * isolate の中の写し（投影とマスタ）。D1 のバインディングごとに 1 つ。
+ * 投影は全件を読むと行数ぶん rows_read を食う（取り込みの 1 件ごと・API の 1 回ごとに読むので、見回りだけで 1 日数百万行になる）。
+ * 写しを持っていれば、確かめるのは projection_meta の 1 行だけにし、足りないイベントは呼び手（state()）が追記から追いつく
+ */
+interface IsolateCache {
+  /** イベントを lastSeq まで畳んだ投影（保存できたかに関わらず、イベントからの正しい fold） */
+  projections?: Projections;
+  /** マスタと、読んだときの変更の記録の最大の id */
+  seed?: { version: number; seed: Seed };
+}
+
+const caches = new WeakMap<object, IsolateCache>();
+
+function cacheOf(db: Db): IsolateCache {
+  const key = db.$client as object;
+  let c = caches.get(key);
+  if (!c) caches.set(key, (c = {}));
+  return c;
+}
+
+/** 写しから追いつくイベントがこれより多ければ、全件を読み直す（追いつくほうが重い） */
+const MAX_CATCH_UP = 500;
+
 export class D1ProjectionStore implements ProjectionStore {
   constructor(private readonly db: Db) {}
 
   async load(): Promise<Projections | null> {
+    const cache = cacheOf(this.db);
+    const cached = cache.projections;
+    if (cached) {
+      // 保存済みの lastSeq だけを見る。写しより先に進んでいれば、写しを返して呼び手が追記から追いつく
+      //（差分の保存は「土台 ≤ 保存済み < 新しい lastSeq」なので、古い土台からの保存も正しく書くか弾かれる）。
+      // 保存先が消された・戻った（作り直し・seed）なら写しを捨てる
+      const [meta] = await this.db.select({ lastSeq: schema.projectionMeta.lastSeq }).from(schema.projectionMeta).where(eq(schema.projectionMeta.id, META_ID));
+      if (meta && meta.lastSeq >= cached.lastSeq && meta.lastSeq - cached.lastSeq <= MAX_CATCH_UP) return structuredClone(cached);
+      cache.projections = undefined;
+    }
+    const p = await this.loadAll();
+    if (p) cache.projections = structuredClone(p);
+    return p;
+  }
+
+  private async loadAll(): Promise<Projections | null> {
     // 1 往復で読む（Worker と DB の距離が往復の回数分効く）
     const [metas, threads, signals] = await this.db.batch([
       this.db.select().from(schema.projectionMeta).where(eq(schema.projectionMeta.id, META_ID)),
@@ -108,7 +148,14 @@ export class D1ProjectionStore implements ProjectionStore {
   }
 
   async save(p: Projections, changes?: ProjectionChanges): Promise<void> {
-    if (changes) return this.saveChanges(p, changes);
+    if (changes) await this.saveChanges(p, changes);
+    else await this.saveAll(p);
+    // 保存が弾かれても p はイベントからの正しい fold なので、写しを進めてよい
+    const cache = cacheOf(this.db);
+    if (!cache.projections || p.lastSeq >= cache.projections.lastSeq) cache.projections = structuredClone(p);
+  }
+
+  private async saveAll(p: Projections): Promise<void> {
     await batch(this.db, [
       ...this.deleteAll(),
       this.db.insert(schema.projectionMeta).values({ id: META_ID, lastSeq: p.lastSeq, idx: p.index }),
@@ -162,6 +209,7 @@ export class D1ProjectionStore implements ProjectionStore {
   }
 
   async clear(): Promise<void> {
+    cacheOf(this.db).projections = undefined;
     await batch(this.db, this.deleteAll());
   }
 
@@ -190,14 +238,25 @@ export class D1ProjectionStore implements ProjectionStore {
 export class D1MasterStore implements MasterStore {
   constructor(private readonly db: Db) {}
 
+  /**
+   * マスタの書き換えは必ず変更の記録に 1 行足す（applyChanges）ので、記録の最大の id（主キーの末尾なので 1 行）を版にして写しを確かめる。
+   * 記録を残さない入れ替え（replaceSeed）は、同じ isolate なら写しを捨て、別のプロセス（seed のスクリプト）なら記録も消すので版が変わる
+   */
   async loadSeed(): Promise<Seed> {
+    const cache = cacheOf(this.db);
+    const [row] = await this.db.select({ version: sql<number | null>`max(${schema.masterChanges.id})` }).from(schema.masterChanges);
+    const version = row?.version ?? 0;
+    if (cache.seed && cache.seed.version === version) return structuredClone(cache.seed.seed);
     const rows = await this.db.select().from(schema.master).orderBy(asc(schema.master.kind), asc(schema.master.ord));
     const raw: Record<string, unknown[]> = Object.fromEntries(SEED_KINDS.map((k) => [k, []]));
     for (const r of rows) raw[r.kind]?.push(r.data);
-    return Seed.parse(raw);
+    const seed = Seed.parse(raw);
+    cache.seed = { version, seed: structuredClone(seed) };
+    return seed;
   }
 
   async replaceSeed(seed: Seed): Promise<void> {
+    cacheOf(this.db).seed = undefined;
     const rows = SEED_KINDS.flatMap((kind) => (seed[kind] as unknown[]).map((data, ord) => ({ kind, key: rowKey(kind, data), ord, data })));
     await batch(this.db, [this.db.delete(schema.master), ...chunks(rows, 4).map((part) => this.db.insert(schema.master).values(part))]);
   }
