@@ -16,6 +16,7 @@ import {
   type SignalRecord,
   type Thread,
 } from '../domain';
+import { deepFreeze } from './freeze';
 import * as schema from './schema';
 import { ConcurrencyError, type EventStore, type MasterChangeRecord, type MasterStore, type ProjectionStore, type Repo } from './types';
 
@@ -90,7 +91,8 @@ const META_ID = 1;
 /**
  * isolate の中の写し（投影とマスタ）。D1 のバインディングごとに 1 つ。
  * 投影は全件を読むと行数ぶん rows_read を食う（取り込みの 1 件ごと・API の 1 回ごとに読むので、見回りだけで 1 日数百万行になる）。
- * 写しを持っていれば、確かめるのは projection_meta の 1 行だけにし、足りないイベントは呼び手（state()）が追記から追いつく
+ * 写しを持っていれば、確かめるのは projection_meta の 1 行だけにし、足りないイベントは呼び手（state()）が追記から追いつく。
+ * 写しは凍らせて、コピーせずにそのまま返す（呼び手は読むだけ。fold は自分でコピーしてから畳む。書き換えれば TypeError）
  */
 interface IsolateCache {
   /** イベントを lastSeq まで畳んだ投影（保存できたかに関わらず、イベントからの正しい fold） */
@@ -122,11 +124,11 @@ export class D1ProjectionStore implements ProjectionStore {
       //（差分の保存は「土台 ≤ 保存済み < 新しい lastSeq」なので、古い土台からの保存も正しく書くか弾かれる）。
       // 保存先が消された・戻った（作り直し・seed）なら写しを捨てる
       const [meta] = await this.db.select({ lastSeq: schema.projectionMeta.lastSeq }).from(schema.projectionMeta).where(eq(schema.projectionMeta.id, META_ID));
-      if (meta && meta.lastSeq >= cached.lastSeq && meta.lastSeq - cached.lastSeq <= MAX_CATCH_UP) return structuredClone(cached);
+      if (meta && meta.lastSeq >= cached.lastSeq && meta.lastSeq - cached.lastSeq <= MAX_CATCH_UP) return cached;
       cache.projections = undefined;
     }
     const p = await this.loadAll();
-    if (p) cache.projections = structuredClone(p);
+    if (p) cache.projections = deepFreeze(p);
     return p;
   }
 
@@ -150,9 +152,9 @@ export class D1ProjectionStore implements ProjectionStore {
   async save(p: Projections, changes?: ProjectionChanges): Promise<void> {
     if (changes) await this.saveChanges(p, changes);
     else await this.saveAll(p);
-    // 保存が弾かれても p はイベントからの正しい fold なので、写しを進めてよい
+    // 保存が弾かれても p はイベントからの正しい fold なので、写しを進めてよい（p は呼び手の手を離れるので、その場で凍らせる）
     const cache = cacheOf(this.db);
-    if (!cache.projections || p.lastSeq >= cache.projections.lastSeq) cache.projections = structuredClone(p);
+    if (!cache.projections || p.lastSeq >= cache.projections.lastSeq) cache.projections = deepFreeze(p);
   }
 
   private async saveAll(p: Projections): Promise<void> {
@@ -246,12 +248,12 @@ export class D1MasterStore implements MasterStore {
     const cache = cacheOf(this.db);
     const [row] = await this.db.select({ version: sql<number | null>`max(${schema.masterChanges.id})` }).from(schema.masterChanges);
     const version = row?.version ?? 0;
-    if (cache.seed && cache.seed.version === version) return structuredClone(cache.seed.seed);
+    if (cache.seed && cache.seed.version === version) return cache.seed.seed;
     const rows = await this.db.select().from(schema.master).orderBy(asc(schema.master.kind), asc(schema.master.ord));
     const raw: Record<string, unknown[]> = Object.fromEntries(SEED_KINDS.map((k) => [k, []]));
     for (const r of rows) raw[r.kind]?.push(r.data);
-    const seed = Seed.parse(raw);
-    cache.seed = { version, seed: structuredClone(seed) };
+    const seed = deepFreeze(Seed.parse(raw));
+    cache.seed = { version, seed };
     return seed;
   }
 

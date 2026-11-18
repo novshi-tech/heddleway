@@ -83,19 +83,29 @@ describe('H1 isolate の中の写し（D1）', () => {
     expect(a.counts.projections).toBeGreaterThan(loadsBefore);
   });
 
-  it('返した投影を書き換えても、写しは変わらない', async () => {
+  it('返した投影とマスタは凍っていて、書き換えると TypeError になる（写しを黙って壊さない）', async () => {
     const { d1, close } = await localD1Raw();
     closers.push(close);
     const a = isolate(d1);
     const made = await makeService(seed, { repo: a.repo });
-    const first = await made.service.state();
-    first.lastSeq = 999;
-    first.threads['thr_x'] = {} as never;
-    const second = await made.service.state();
-    expect(second.lastSeq).not.toBe(999);
-    expect(second.threads['thr_x']).toBeUndefined();
-    const seedA = await made.service.directory();
-    seedA.seed.users.length = 0;
-    expect((await made.service.directory()).seed.users.length).toBeGreaterThan(0);
+    const { result } = await made.service.changeMaster('u_bob', 'To Do をつなぐ', (d, c) =>
+      connectTaskList(d, c, { userId: 'u_bob', gatewayCredentialId: 'gw_bob', displayName: 'Bob', address: 'bob.todo@ubs.example', listId: 'L', listName: 'Murmur' }),
+    );
+    await made.service.mirror({
+      kind: 'mirror',
+      dataSourceId: result.dataSource.id,
+      channel: 'todo',
+      threadKey: 'A',
+      fields: { closed: false, holders: ['bob.todo@ubs.example'], title: 'A', statusLabel: 'Murmur', due: null },
+      sourceRef: 'A',
+    });
+    const p = await made.service.state();
+    expect(Object.isFrozen(p) && Object.isFrozen(p.threads)).toBe(true);
+    expect(() => {
+      p.lastSeq = 999;
+    }).toThrow(TypeError);
+    const dir = await made.service.directory();
+    expect(() => dir.seed.users.push({} as never)).toThrow(TypeError);
+    expect((await made.service.state()).lastSeq).not.toBe(999);
   });
 });
