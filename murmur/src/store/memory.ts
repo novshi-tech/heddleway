@@ -1,4 +1,5 @@
 import { applyMasterChanges, emptyProjections, parseEvent, Seed, type DomainEvent, type DraftEvent, type MasterChange, type ProjectionChanges, type Projections } from '../domain';
+import { deepFreeze } from './freeze';
 import { ConcurrencyError, type EventStore, type MasterChangeRecord, type MasterStore, type ProjectionStore, type Repo } from './types';
 
 /** テスト・CLI 用のインメモリ実装 */
@@ -21,7 +22,7 @@ export class MemoryEventStore implements EventStore {
 export class MemoryProjectionStore implements ProjectionStore {
   private saved: Projections | null = null;
   async load() {
-    return this.saved ? structuredClone(this.saved) : null;
+    return this.saved ? deepFreeze(structuredClone(this.saved)) : null;
   }
   /**
    * 差分は保存済みのものに当てる（差分の取りこぼしがあれば、読み出した投影がリプレイと食い違って H1 で見つかる）。
@@ -59,7 +60,7 @@ export class MemoryMasterStore implements MasterStore {
     attributeDefs: [],
   });
   async loadSeed() {
-    return structuredClone(this.seed);
+    return deepFreeze(structuredClone(this.seed));
   }
   private log: MasterChangeRecord[] = [];
   async replaceSeed(seed: Seed) {

@@ -19,10 +19,11 @@ export interface EventStore {
 
 /** 投影の保存先。fold の結果をそのまま置き、いつでも消して作り直せる */
 export interface ProjectionStore {
+  /** 返す投影は読むだけ（凍っていることがある。畳むときは fold がコピーする） */
   load(): Promise<Projections | null>;
   /**
    * changes を渡せば、保存済みの投影に変わったスレッド・シグナル（と索引）だけを書く（0021）。
-   * 渡さなければ丸ごと入れ替える（作り直しのとき）
+   * 渡さなければ丸ごと入れ替える（作り直しのとき）。保存したあと、p は書き換えない（保存先がそのまま写しとして凍らせて持つことがある）
    */
   save(p: Projections, changes?: ProjectionChanges): Promise<void>;
   clear(): Promise<void>;
@@ -38,6 +39,7 @@ export interface MasterChangeRecord extends MasterChange {
 }
 
 export interface MasterStore {
+  /** 返すマスタは読むだけ（凍っていることがある。書き換えは planMasterEdit がコピーしてから） */
   loadSeed(): Promise<Seed>;
   /** マスタを丸ごと入れ替える（seed 投入用。変更の記録は残さない） */
   replaceSeed(seed: Seed): Promise<void>;
