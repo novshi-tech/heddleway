@@ -185,46 +185,51 @@ export class D1ProjectionStore implements ProjectionStore {
   async workingSet(req: WorkingSetRequest): Promise<Projections | null> {
     const ds = req.dataSourceId;
     const T = schema.threads;
-    const none = sql`0`;
-    const [metas, keys, bySourceKey, awaiting, windowed] = await this.db.batch([
-      this.db.select({ lastSeq: schema.projectionMeta.lastSeq }).from(schema.projectionMeta).where(eq(schema.projectionMeta.id, META_ID)),
-      this.db
-        .select()
-        .from(schema.signalKeys)
-        .where(
-          req.keys.length > 0
-            ? and(eq(schema.signalKeys.dataSourceId, ds), or(...req.keys.map((k) => and(eq(schema.signalKeys.kind, k.kind), eq(schema.signalKeys.value, k.value)))))
-            : none,
-        ),
-      this.db.select().from(T).where(req.sourceKeys.length > 0 ? and(eq(T.dataSourceId, ds), inArray(T.sourceKey, req.sourceKeys)) : none),
-      this.db
-        .select()
-        .from(T)
-        .where(
-          req.awaiting === 'all'
-            ? and(eq(T.dataSourceId, ds), eq(T.namedPending, true))
-            : req.awaiting
-              ? inArray(
-                  T.id,
-                  this.db
-                    .select({ id: schema.threadNamed.threadId })
-                    .from(schema.threadNamed)
-                    .where(and(eq(schema.threadNamed.dataSourceId, ds), eq(schema.threadNamed.addressKey, addressKey(req.awaiting.address)))),
-                )
-              : none,
-        ),
-      this.db
-        .select()
-        .from(T)
-        .where(req.window ? and(eq(T.dataSourceId, ds), gte(T.lastSignalAt, req.window.since)) : none)
-        .orderBy(desc(T.lastSignalAt), asc(T.id))
-        .limit(req.window?.limit ?? 0),
-    ]);
+    const K = schema.signalKeys;
+    // 要るクエリだけ投げる（条件を偽にしても、並べ替えや走査で行を読むことがある）
+    const reads: BatchItem<'sqlite'>[] = [this.db.select({ lastSeq: schema.projectionMeta.lastSeq }).from(schema.projectionMeta).where(eq(schema.projectionMeta.id, META_ID))];
+    const tags: ('keys' | 'threads')[] = [];
+    // 索引は種類ごとに value IN (…) で引く（主キー (data_source_id, kind, value) で引ける形。OR で並べると走査になる）
+    const byKind = new Map<string, string[]>();
+    for (const k of req.keys) byKind.set(k.kind, [...(byKind.get(k.kind) ?? []), k.value]);
+    for (const [kind, values] of byKind) {
+      reads.push(this.db.select().from(K).where(and(eq(K.dataSourceId, ds), eq(K.kind, kind), inArray(K.value, values))));
+      tags.push('keys');
+    }
+    if (req.sourceKeys.length > 0) {
+      reads.push(this.db.select().from(T).where(and(eq(T.dataSourceId, ds), inArray(T.sourceKey, req.sourceKeys))));
+      tags.push('threads');
+    }
+    if (req.awaiting === 'all') {
+      reads.push(this.db.select().from(T).where(and(eq(T.dataSourceId, ds), eq(T.namedPending, true))));
+      tags.push('threads');
+    } else if (req.awaiting) {
+      const named = this.db
+        .select({ id: schema.threadNamed.threadId })
+        .from(schema.threadNamed)
+        .where(and(eq(schema.threadNamed.dataSourceId, ds), eq(schema.threadNamed.addressKey, addressKey(req.awaiting.address))));
+      reads.push(this.db.select().from(T).where(inArray(T.id, named)));
+      tags.push('threads');
+    }
+    if (req.window) {
+      reads.push(
+        this.db
+          .select()
+          .from(T)
+          .where(and(eq(T.dataSourceId, ds), gte(T.lastSignalAt, req.window.since)))
+          .orderBy(desc(T.lastSignalAt), asc(T.id))
+          .limit(req.window.limit),
+      );
+      tags.push('threads');
+    }
+    const [metas, ...rest] = (await batch(this.db, reads)) as [{ lastSeq: number }[], ...unknown[][]];
+    const keys = rest.flatMap((rows, i) => (tags[i] === 'keys' ? (rows as (typeof K.$inferSelect)[]) : []));
+    const threadRowsRead = rest.flatMap((rows, i) => (tags[i] === 'threads' ? (rows as (typeof T.$inferSelect)[]) : []));
     const meta = metas[0];
     if (!meta) return null;
     const out = emptyProjections();
     out.lastSeq = meta.lastSeq;
-    for (const r of [...bySourceKey, ...awaiting, ...windowed]) out.threads[r.id] = r.data as Thread;
+    for (const r of threadRowsRead) out.threads[r.id] = r.data as Thread;
 
     const keySignalIds = [...new Set(keys.map((k) => k.signalId))];
     for (const part of chunkIds(keySignalIds)) {
@@ -237,10 +242,10 @@ export class D1ProjectionStore implements ProjectionStore {
     }
     const missing = [...new Set(keySignalIds.map((id) => out.signals[id]?.threadId).filter((t): t is string => !!t && !out.threads[t]))];
     const threadIds = [...new Set([...Object.keys(out.threads), ...missing])];
-    const reads: BatchItem<'sqlite'>[] = [];
-    for (const part of chunkIds(missing)) reads.push(this.db.select().from(T).where(inArray(T.id, part)));
-    for (const part of chunkIds(threadIds)) reads.push(this.db.select().from(schema.signals).where(inArray(schema.signals.threadId, part)));
-    const results = (await batch(this.db, reads)) as { id: string; data: unknown; threadId?: string | null }[][];
+    const more: BatchItem<'sqlite'>[] = [];
+    for (const part of chunkIds(missing)) more.push(this.db.select().from(T).where(inArray(T.id, part)));
+    for (const part of chunkIds(threadIds)) more.push(this.db.select().from(schema.signals).where(inArray(schema.signals.threadId, part)));
+    const results = (await batch(this.db, more)) as { id: string; data: unknown; threadId?: string | null }[][];
     const missingParts = chunkIds(missing).length;
     results.forEach((rows, i) => {
       for (const r of rows) {

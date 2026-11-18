@@ -298,6 +298,8 @@ export function createMurmur(config: MurmurConfig, authenticate: GatewayPort['au
           continue;
         }
         try {
+          // どの仕事が重いか（CPU の上限で打ち切られたとき、ログにはこの行しか残らない）を見分けるため、始める前に種類を残す
+          console.log(JSON.stringify({ msg: 'sync_job', kind: job.data.kind, dataSourceId: 'dataSourceId' in job.data ? job.data.dataSourceId : undefined }));
           await shell.sync.handle(job.data);
           message.ack();
         } catch (err) {

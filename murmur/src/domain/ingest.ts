@@ -92,7 +92,7 @@ export interface IngestPolicy {
   candidateWindowLimit: number;
 }
 
-export const DEFAULT_POLICY: IngestPolicy = { recentThreadLimit: 5, candidateWindowDays: 30, candidateWindowLimit: 200 };
+export const DEFAULT_POLICY: IngestPolicy = { recentThreadLimit: 5, candidateWindowDays: 30, candidateWindowLimit: 50 };
 
 // ---- 区切り（上から順に） ----
 
