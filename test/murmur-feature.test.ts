@@ -57,6 +57,7 @@ describe("Murmur off (no MURMUR_DB)", () => {
     expect(features(env)).toEqual([]);
     expect((await call(env, "/murmur/timeline.html")).status).toBe(404);
     expect((await call(env, "/features/murmur/consent?state=aaaaaaaaaaaaaaaaaaaa", { headers: { cookie: await sessionCookie(bob) } })).status).toBe(404);
+    expect((await call(env, "/features/murmur", { headers: { cookie: await sessionCookie(bob) } })).status).toBe(404);
     const home = await (await call(env, "/", { headers: { cookie: await sessionCookie(bob) } })).text();
     expect(home).not.toContain("このゲートウェイの機能");
   });
@@ -81,6 +82,27 @@ describe("Murmur on", () => {
     const v = await call(on, "/murmur/webhooks/graph?validationToken=hello", { method: "POST" });
     expect(v.status).toBe(200);
     expect(await v.text()).toBe("hello");
+  });
+
+  it("shows the signed-in user the lists they are a member of, at /features/murmur (Murmur's 0048)", async () => {
+    // Not signed in: sign in first, then come back here.
+    const anon = await call(on, "/features/murmur");
+    expect(anon.headers.get("location")).toBe(`/login?next=${encodeURIComponent("/features/murmur")}`);
+
+    const cookie = await sessionCookie(bob);
+    const home = await (await call(on, "/", { headers: { cookie } })).text();
+    expect(home).toContain('<a href="/features/murmur">参加中のリストを見る</a>');
+
+    const off = await (await call(on, "/features/murmur", { headers: { cookie } })).text();
+    expect(off).toContain("<h1>参加中のリスト</h1>");
+    expect(off).toContain("まだどの共有リストのメンバーにもなっていません");
+    expect(off).toContain("トピック索引は無効になっています");
+
+    await vaultFor(env, bob).setConsent("murmur", true);
+    const on_ = await (await call(on, "/features/murmur", { headers: { cookie } })).text();
+    expect(on_).not.toContain("トピック索引は無効になっています");
+    // Only features with a page have one.
+    expect((await call(on, "/features/nothing", { headers: { cookie } })).status).toBe(404);
   });
 
   it("asks the user to turn Murmur on at the gateway, and returns to Murmur with a code for that user", async () => {

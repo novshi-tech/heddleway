@@ -75,7 +75,7 @@ src/
   ports/gateway.ts  ゲートウェイの口（型と取り決めだけ。0023）。認証・本人の接続・上流を読む関数・同意。読める口の許可リストはゲートウェイの入口で固定し、ゲートウェイの中核が強制する
   api/           HTTP API の入力スキーマ
   auth/          Bearer の取り出し（確かめるのは口）と、ダミーの Webhook の署名
-  http/          経路（router.ts は app.ts が使う口だけの小さな仕組み）、参照専用の管理画面（admin.ts: /admin・timeline.html）
+  http/          経路（router.ts は app.ts が使う口だけの小さな仕組み）、参照専用の管理画面（admin.ts: /admin・timeline.html）、本人の「参加中のリスト」の画面の本文（my-lists.ts。0048）
   feature.ts     組み立て（設定とゲートウェイの口だけで fetch / scheduled / queue を作る。env を読まない。入口はゲートウェイの側）
 scripts/         scenario CLI と、その部品（Node 専用。Worker には入らない）
 fixtures/<scenario>/  seed.json / signals.jsonl / expected.json / scenario.json / recordings/
@@ -103,5 +103,5 @@ npm run seed <scenario> -- --deployment <名前>    # ゲートウェイのデ�
 
 - 本体は上流サービスのトークンを持たず、データソースの中身は書き換えない（購読の管理だけはする。`docs/adr/0024`）。上流を読むのはゲートウェイの口の `upstream` だけで、トークンはゲートウェイの中核の中で使われ、読める口の許可リストもゲートウェイの中核が強制する。本人がゲートウェイの画面で Murmur を有効にしていなければ何も読めない。コネクタは `src/connectors/` の下（上の構成）。外部コネクタは `MURMUR_WEBHOOK_SECRET` があるデプロイだけ有効
 - 初めてつないだ sub は User の行だけ作る（名無し、Contact なし）。自分の Contact はリストに入るときのアイデンティティで決まり、名寄せは人とスタンドが API で付ける（`docs/adr/0030`）。seed の `--user` の差し替えはシナリオを実環境で回すときだけ
-- 本体の API はゲートウェイの中継の後ろ（`<ゲートウェイ>/api/murmur/*`）だけで、`issue_token` の `identity:murmur` で発行したゲートウェイのトークンが要る（口の `authenticate` でもう一度確かめる）。公開の経路は `<ゲートウェイ>/murmur/` の下の `/webhooks/*`（Graph の通知は clientState、Jira の通知は URL の本人ごとの秘密で照合）、同意のコールバック（`/oauth/callback`）、`MURMUR_TIMELINE_TOKEN` で守る参照専用の画面（`/admin`・`/timeline.html`）だけ
+- 本体の API はゲートウェイの中継の後ろ（`<ゲートウェイ>/api/murmur/*`）だけで、`issue_token` の `identity:murmur` で発行したゲートウェイのトークンが要る（口の `authenticate` でもう一度確かめる）。公開の経路は `<ゲートウェイ>/murmur/` の下の `/webhooks/*`（Graph の通知は clientState、Jira の通知は URL の本人ごとの秘密で照合）、同意のコールバック（`/oauth/callback`）、`MURMUR_TIMELINE_TOKEN` で守る参照専用の画面（`/admin`・`/timeline.html`）だけ。本人の「参加中のリスト」の画面は、ゲートウェイの `/features/murmur` がサインインを確かめて `myLists` を呼ぶ（`docs/adr/0048`。Murmur の公開の経路ではない）
 - スタンド（Cowork / Claude Code）用のスキルは同じリポジトリの `plugins/heddleway/skills/topic-index/SKILL.md`（`murmur/` から見て `../plugins/...`）（共通のプラグイン `heddleway`。ゲートウェイに同梱し、`/setup` とマーケットプレイスで配る）、接続手順は `docs/stand/connect.md`。下書きは置かない。HTTP API を変えたら、同じ時期にゲートウェイのスキル（API の表と手順）も直し、プラグインの版を上げる

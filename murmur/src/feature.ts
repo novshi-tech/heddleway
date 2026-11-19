@@ -8,6 +8,7 @@ import type { Connectors } from './connectors/types';
 import { AiDecider } from './ingest/deciders';
 import { AnthropicLlm } from './ingest/llm';
 import { createApp, type ConnectorHttp } from './http/app';
+import { renderMyLists } from './http/my-lists';
 import { d1Repo, type Db } from './store/d1';
 import { Connections } from './app/connections';
 import { GatewayAuthError, type GatewayPort, type UpstreamCall } from './ports/gateway';
@@ -72,6 +73,11 @@ export interface MurmurHandlers {
   scheduled(ctx: ExecutionContext): Promise<void>;
   /** 取り込みのキュー（同時実行 1）。失敗した仕事はキューが試し直す */
   queue(batch: MessageBatch<unknown>, ctx: ExecutionContext): Promise<void>;
+  /**
+   * 本人の「参加中のリスト」の画面の本文（HTML の断片。0048）。ゲートウェイがサインインを確かめた本人の User ID で呼び、自分の枠に入れて出す。
+   * 読むのは Murmur の中だけで、上流は呼ばない
+   */
+  myLists(userId: string, ctx: ExecutionContext): Promise<string>;
 }
 
 const CHANNELS = ['email', 'slack', 'line', 'jira', 'bitbucket'] as const;
@@ -278,6 +284,13 @@ export function createMurmur(config: MurmurConfig, authenticate: GatewayPort['au
         connectors: () => (shell === undefined ? (shell = buildConnectors(config, service, (p) => ctx.waitUntil(p))) : shell),
       });
       return app.fetch(request);
+    },
+
+    async myLists(userId, ctx) {
+      const service = build(config);
+      const shell = buildConnectors(config, service, (p) => ctx.waitUntil(p));
+      const [data, connections] = await Promise.all([service.myLists(userId), shell ? shell.connections.list(userId) : Promise.resolve([])]);
+      return renderMyLists({ ...data, userId, connections, sharedServices: config.sharedServices ?? [] });
     },
 
     async scheduled(ctx) {

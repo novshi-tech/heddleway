@@ -573,6 +573,17 @@ export class MurmurService {
     return listLists(dir, viewer);
   }
 
+  /** 本人の「参加中のリスト」の画面の材料（0048）。見えるリストと、その開いているトピック。User を作らない（画面を開いただけでは名乗らない） */
+  async myLists(userId: string) {
+    const { viewer, dir } = await this.viewer(userId);
+    const lists = listLists(dir, viewer).map((l) => {
+      const ds = dir.dataSource(l.dataSource.id);
+      return { ...l, shared: ds?.kind === 'service' && !!ds.shared };
+    });
+    const threads = lists.length > 0 ? await this.listThreads(userId, { filter: 'open' }) : [];
+    return { name: dir.user(userId)?.name ?? '', lists, threads };
+  }
+
   async getList(userId: string, listId: string) {
     const { viewer, dir } = await this.viewer(userId);
     const view = getListView(dir, viewer, listId);
