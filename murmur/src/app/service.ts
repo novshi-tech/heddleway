@@ -576,9 +576,17 @@ export class MurmurService {
   /** 本人の「参加中のリスト」の画面の材料（0048）。見えるリストと、その開いているトピック。User を作らない（画面を開いただけでは名乗らない） */
   async myLists(userId: string) {
     const { viewer, dir } = await this.viewer(userId);
+    // 呼び方のない人の Contact は、名前がアドレスそのまま（Teams の ID など）で作られている（people.ts）。画面には出さず、名前なしにする
+    const displayName = (r: { userId: string; contactId: string | null }) => {
+      const own = dir.user(r.userId)?.name;
+      if (own) return own;
+      const c = r.contactId ? dir.contact(r.contactId) : undefined;
+      if (!c || dir.addressesOfContact(c.id).some((a) => a.value === c.name)) return '';
+      return c.name;
+    };
     const lists = listLists(dir, viewer).map((l) => {
       const ds = dir.dataSource(l.dataSource.id);
-      return { ...l, shared: ds?.kind === 'service' && !!ds.shared };
+      return { ...l, readers: l.readers.map((r) => ({ ...r, name: displayName(r) })), shared: ds?.kind === 'service' && !!ds.shared };
     });
     const threads = lists.length > 0 ? await this.listThreads(userId, { filter: 'open' }) : [];
     return { name: dir.user(userId)?.name ?? '', lists, threads };
