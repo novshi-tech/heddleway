@@ -3,6 +3,7 @@ import type { ConnectionView } from '../../src/app/connections';
 import type { ListView } from '../../src/domain';
 import { renderMyLists, type MyListsInput } from '../../src/http/my-lists';
 import { makeService } from '../helpers/service';
+import { Seed } from '../../src/domain';
 import { answer, email, seed } from '../helpers/world';
 
 // 本人の「参加中のリスト」の画面（0048）
@@ -94,5 +95,19 @@ describe('参加中のリストの画面（0048）', () => {
     const stranger = await service.myLists('entra_t_nobody');
     expect(stranger).toEqual({ name: '', lists: [], threads: [] });
     expect((await service.directory()).user('entra_t_nobody')).toBeUndefined();
+  });
+
+  it('H3 service.myLists は、呼び方のない人をアドレス（Teams の ID など）でなく名前なしで出す', async () => {
+    const id = 'tenant/oid-x';
+    const withNameless = Seed.parse({
+      ...seed,
+      users: [...seed.users, { id: 'u_x', name: '' }],
+      contacts: [...seed.contacts, { id: 'p_x', name: id, userId: 'u_x' }],
+      addresses: [...seed.addresses, { id: 'a_x', channel: 'teams', value: id, contactId: 'p_x' }],
+      listMembers: [...seed.listMembers, { listId: 'l_support', userId: 'u_x' }],
+    });
+    const { service } = await makeService(withNameless);
+    const support = (await service.myLists('u_alice')).lists.find((l) => l.dataSource.id === 'ds_support')!;
+    expect(support.readers.map((r) => r.name).sort()).toEqual(['', 'Alice', 'Bob']);
   });
 });
