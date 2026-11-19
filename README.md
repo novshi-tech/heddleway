@@ -27,6 +27,7 @@ Claude の Cowork で動作を確認しています。MCP の OAuth に従って
 
 - ゲートウェイの Worker に入っていて、デプロイの設定に Murmur の D1 を足すと有効になります(`wrangler.example.jsonc` の末尾)。足さなければ、ゲートウェイはトピック索引なしで今までどおり動きます
 - 利用者ごとに、ゲートウェイの画面で有効にします(エージェントにトピック索引への接続を頼むと、有効にする画面に案内されます)。有効にした人の接続だけを、読み取りだけで使います。「つないだサービス」の画面でいつでも無効にできます
+- 自分がメンバーになっているリスト(取り込みの状態、担当とアテンション・割当待ちの件数、共有リストのメンバー)と、リストの増やし方は、ホームの「参加中のリストを見る」(`/features/murmur`)で見られます。メンバーでない共有リストは出しません(Murmur の [0048](murmur/docs/adr/0048-my-lists-page.md))
 - 個人のメールとタスクは、組織のデプロイにあるサービスで決まります。Microsoft 365 の組織は Outlook と To Do(`graph`)、Google Workspace の組織は Gmail と Google Tasks(`gmail`・`tasks`)と Google Chat のチャット(`chat`)です。Google の準備と設定は [docs/deploy.md](docs/deploy.md) の「Google」にあります
 - エージェントからは、ほかのサービスと同じく `issue_token`(`identity:murmur`)と REST(`/api/murmur/...`)で使います。使い方はプラグイン `heddleway` の `topic-index` スキルです
 

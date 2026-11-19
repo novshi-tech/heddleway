@@ -25,11 +25,12 @@ Murmur(チームの仕事の記憶)を、ゲートウェイの機能にする。
 
 ## 段取り 3 の形(2026-11-04)
 
-- **機能(feature)の口**: 中核にあるのは汎用の `src/features.ts` だけ(名前・同意の文言・`fetch`・`scheduled`・`queue`)。Murmur を組み立てて登録するのは入口(`src/index.ts` が読み込む `src/murmur-feature.ts`)だけで、中核のほかのファイルは Murmur を import しない。Murmur から中核が読むのは口の取り決め(`murmur/src/ports/gateway.ts`)だけ。境界は `murmur/test/architecture.test.ts` が検査する
+- **機能(feature)の口**: 中核にあるのは汎用の `src/features.ts` だけ(名前・同意の文言・`fetch`・`scheduled`・`queue`、任意で本人の画面 `userPage`)。Murmur を組み立てて登録するのは入口(`src/index.ts` が読み込む `src/murmur-feature.ts`)だけで、中核のほかのファイルは Murmur を import しない。Murmur から中核が読むのは口の取り決め(`murmur/src/ports/gateway.ts`)だけ。境界は `murmur/test/architecture.test.ts` が検査する
 - **Murmur の口の実装**: `src/feature-port.ts`。本人の接続で上流を読む関数を渡し、トークンは中核の中だけで使う。読める口は入口が種類ごとに固定し(Graph・Jira)、外れた呼び出しは送る前に断る。本人が有効にしていなければ何も読めない
 - **スタンドから見た API は変えない**: 今までどおり `issue_token` の `identity:murmur` と `/api/murmur/...`。中継(`proxy.ts`)が、別の Worker に送る代わりに同じ Worker の Murmur に渡す。Murmur はトークンを口でもう一度確かめる。同じ名前の `SERVICES` の定義(別の Worker の Murmur)より機能が優先する。スキルは文言だけ直した(`api-gateway-murmur` 0.1.7)
 - **公開の経路**は `/murmur/...`(Graph と Jira の Webhook、Murmur の参照専用の画面)。`/murmur/api/` は経路にしない(API は中継の後ろだけ)
 - **同意**: Murmur に接続をつなぐよう頼むと、`/features/murmur/consent` に案内される。本人がサインインして「有効にする」を押すと、保管庫(`UserVault`)に印が残り、Murmur の画面に戻る(サインインの戻り先 `next` を足した)。ホームの「このゲートウェイの機能」から無効にできる
+- **本人の画面**: 機能は任意で `userPage` を持てる。ゲートウェイが `/features/<name>` でサインインを確かめ、本人の User ID で本文(HTML の断片)を描かせて、自分の枠に入れて出す。Murmur は「参加中のリスト」を出す(Murmur の [0048](../../murmur/docs/adr/0048-my-lists-page.md))
 - **cron とキュー**: 毎日の `0 18 * * *` は今までどおり期限切れの許可の掃除、ほかの cron は機能に渡す(Murmur の見回り)。キューは機能に渡す
 - **有効にする条件**: `MURMUR_DB` と `ANTHROPIC_API_KEY`。Webhook(Graph・Jira)は `MURMUR_WEBHOOK_SECRET` も要る。Murmur に渡すのはこれらと口だけで、ゲートウェイの鍵は渡さない
 - **ルートの `npm install`** が `murmur/` の依存も入れる(`postinstall`)。CI は Worker のドライランのビルドも行う

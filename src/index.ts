@@ -21,7 +21,7 @@ import {
 import { deleteClient, editClient, saveClient } from "./web/admin-clients";
 import { confirmDeleteApp, deleteApp, listAppsPage, previewApp, saveApp } from "./web/admin-apps";
 import { confirmDeletePlugin, deletePlugin, listPluginsPage, uploadPlugin } from "./web/admin-plugins";
-import { consentPage, consentSubmit, disableFeature } from "./web/features";
+import { consentPage, consentSubmit, disableFeature, userPage } from "./web/features";
 import { confirmRevoke, revoke } from "./web/grants";
 import { login, LOGIN_CALLBACK_PATH, loginCallback, logout } from "./web/session";
 import { downloadPlugin, setup, SETUP_PATH } from "./web/setup";
@@ -40,7 +40,7 @@ type RouteEnv = Env & { OAUTH_PROVIDER: OAuthHelpers };
 type Route = [
   method: string,
   path: string | RegExp,
-  handler: (request: Request, env: RouteEnv, params: string[]) => Response | Promise<Response>,
+  handler: (request: Request, env: RouteEnv, params: string[], ctx: ExecutionContext) => Response | Promise<Response>,
 ];
 
 // Everything but the MCP endpoint and the token proxy. A RegExp path passes its groups as params.
@@ -84,6 +84,7 @@ const ROUTES: Route[] = [
   ["GET", /^\/admin\/plugins\/([a-z0-9][a-z0-9-]*)\/delete$/, (request, env, [name]) => confirmDeletePlugin(request, env, name)],
   ["POST", /^\/admin\/plugins\/([a-z0-9][a-z0-9-]*)\/delete$/, (request, env, [name]) => deletePlugin(request, env, name)],
   ["GET", CONNECT_CALLBACK_PATH, connectCallback],
+  ["GET", /^\/features\/([a-z0-9][a-z0-9-]*)$/, (request, env, [name], ctx) => userPage(request, env, name, ctx)],
   ["GET", /^\/features\/([a-z0-9][a-z0-9-]*)\/consent$/, (request, env, [name]) => consentPage(request, env, name)],
   ["POST", /^\/features\/([a-z0-9][a-z0-9-]*)\/consent$/, (request, env, [name]) => consentSubmit(request, env, name)],
   ["POST", /^\/features\/([a-z0-9][a-z0-9-]*)\/disable$/, (request, env, [name]) => disableFeature(request, env, name)],
@@ -122,7 +123,7 @@ const defaultHandler: ExportedHandler<Env> = {
     if (own) return own.feature.fetch(withPath(request, own.path), ctx);
     const found = route(request.method, pathname);
     if (!found) return new Response("not found", { status: 404 });
-    return found.route[2](request, env as RouteEnv, found.params);
+    return found.route[2](request, env as RouteEnv, found.params, ctx);
   },
 };
 

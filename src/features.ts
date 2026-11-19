@@ -15,6 +15,11 @@ export interface Feature {
   consentText: string;
   // Where the consent page sends the user back to, under `/<name>`.
   consentCallbackPath: string;
+  // A page for the signed-in user at `/features/<name>` (Murmur's 0048), linked from the home page.
+  // The gateway checks the session and passes the user's ID; the feature returns the page's
+  // body as HTML (escaping what it shows itself; it may use the gateway's page classes such as
+  // list, row-*, badge, hint, empty and notice), and the gateway wraps it in its own layout.
+  userPage?: { linkText: string; render(userId: string, ctx: ExecutionContext): Promise<string> };
   // Requests under `/api/<name>` arrive as `/api/...`, public ones under `/<name>` with the prefix removed.
   fetch(request: Request, ctx: ExecutionContext): Promise<Response>;
   scheduled?(controller: ScheduledController, ctx: ExecutionContext): Promise<void>;

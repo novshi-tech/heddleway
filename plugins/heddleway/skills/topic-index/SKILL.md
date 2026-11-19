@@ -64,6 +64,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/gw_request.py POST murmur /sent --json '{"da
    - `merge_candidate`: そのアドレスは別の仮の連絡先(`ghostContactId`)に付いている。同じ人なら、ユーザーに確かめてから `POST /contacts/{自分の contactId}/merge` で `from` に仮の連絡先を渡してまとめる
 4. **共有リスト**(Jira のプロジェクト、Teams のチャネル、Google Chat のスペース、これから Slack のチャネル)は、スペースに 1 つ。そのスペースを読める人なら誰でもつなげ、メンバーはソースから自動で写る(Jira はプロジェクトを閲覧できる人のうち、自分の Jira をゲートウェイにつないでトピック索引を有効にした人。Teams はチャネルのメンバーのうち、Google Chat はスペースのメンバーのうち、このゲートウェイにサインインしたことのある人)。共有メールボックス・LINE 公式アカウントのメンバーは管理者が足す。メンバーになったリストで自分のアカウントを登録するなら `POST /lists/{list_id}/identity`
 5. タスクで追うなら、タスクのサービスのリストをつなぐ(下の「To Do をつなぐ」「Google Tasks をつなぐ」)。メモ(`add_note`)は個人リストのトピックに書くので、メール(Outlook・Gmail)かタスクのサービスをつないでから使える
+6. 終わったら、ユーザーに `<ゲートウェイ>/features/murmur`(ホームの「参加中のリストを見る」)を案内する。自分がメンバーのリストと取り込みの状態、まだつないでいないものを、ユーザーが自分で確かめられる。「どのリストに入っている?」と聞かれたときも、`GET /connections` で答えたうえでこの画面を案内してよい
 
 ### Outlook をつなぐ
 

@@ -2,7 +2,7 @@ import { consentCode } from "../feature-port";
 import { feature, features, type Feature } from "../features";
 import { vaultFor } from "../vault";
 import { masthead } from "./connections";
-import { html, type Html } from "./html";
+import { html, Html } from "./html";
 import { page } from "./layout";
 import { redirect, sameOrigin, session } from "./session";
 
@@ -63,6 +63,25 @@ export async function disableFeature(request: Request, env: Env, name: string): 
   return redirect("/?disabled=1");
 }
 
+// A feature's page for the signed-in user (Feature.userPage). The feature renders the body for
+// the user the session names; turning the feature off does not hide it, since it reads only
+// what the feature already holds (it calls no upstream), and the user may want to see it first.
+export async function userPage(request: Request, env: Env, name: string, ctx: ExecutionContext): Promise<Response> {
+  const f = feature(env, name);
+  if (!f?.userPage) return new Response("not found", { status: 404 });
+  const user = await session(request, env);
+  if (!user) return redirect(`/login?next=${encodeURIComponent(new URL(request.url).pathname)}`);
+  const on = await vaultFor(env, user.sub).consented(f.name);
+  const body = await f.userPage.render(user.sub, ctx);
+  return page(
+    f.displayName,
+    html`${masthead(env, user)}
+<a class="back" href="/">← つないだサービス</a>
+${!on && html`<p class="notice" role="status">${f.displayName}は無効になっています。新しいやりとりは取り込まれません。エージェント(Claude など)に頼んでつなぐと、有効にする画面に案内されます。</p>`}
+${new Html(body)}`,
+  );
+}
+
 // The features section on the home page, or nothing when the deployment has none.
 export async function featureRows(env: Env, userId: string): Promise<Html | false> {
   const own = features(env);
@@ -72,7 +91,7 @@ export async function featureRows(env: Env, userId: string): Promise<Html | fals
     own.map(async (f) => {
       const on = await vault.consented(f.name);
       return html`<li>
-<div class="row-main"><p class="row-title">${f.displayName}</p><p class="row-sub">${f.consentText}</p></div>
+<div class="row-main"><p class="row-title">${f.displayName}</p><p class="row-sub">${f.consentText}</p>${f.userPage && html`<p class="row-sub"><a href="/features/${f.name}">${f.userPage.linkText}</a></p>`}</div>
 <div class="row-actions">${on
         ? html`<span class="badge">有効</span><form method="post" action="/features/${f.name}/disable"><button class="quiet">無効にする</button></form>`
         : html`<span class="badge">無効</span><span class="hint">Claude から使い始めると、ここで有効にするよう案内されます</span>`}</div>
