@@ -23,7 +23,7 @@ Teams のチャネルを共有リストにする案（0036）を議論するう�
 
 - 読者は「そのスペースを読める人」のうち、Murmur の User に対応が付く人。見回りでソースの一覧を読み、リストの `ListMember` に写す（足す・外す。マスタの書き換えとして変更の記録に残る。0030）
   - Teams・Slack: チャネルのメンバーの一覧
-  - Jira: プロジェクトの閲覧の権限を持つ人の一覧（`/user/permission/search?permissions=BROWSE_PROJECTS`。アプリのアカウントは外す。S0 で読めることを確かめた）
+  - Jira: プロジェクトの閲覧の権限を持つ人の一覧（`/user/viewissue/search?projectKey=KEY&query=*`。アプリのアカウントは外す）。当初の `/user/permission/search?permissions=BROWSE_PROJECTS` は Jira の管理者かプロジェクトの管理者でないと 403 になり、一般の人がつなげなかったので 2026-11-20 に替えた（S0 で読めたのは管理者の接続だったため）
 - ソースのアカウントと Murmur の User の対応は、**本人が名乗ったものだけ**を使う。推測（メールアドレスの一致など）では付けない
   - サインインと同じ IdP のサービス: IdP の ID でそのまま付く（Entra でサインインするゲートウェイと Teams なら、ゲートウェイの User ID に入っている Entra のオブジェクト ID）
   - それ以外（Jira・Slack）: 本人がゲートウェイでそのサービスをつなぎ、Murmur を有効にしているとき、本人の接続で自分のアカウント ID を読んで付ける（Jira の `myself`）。つないでいない人は、つなぐまで読者にならない
@@ -81,7 +81,7 @@ Teams のチャネルを共有リストにする案（0036）を議論するう�
 
 - 接続先に `projectKey`。範囲は `project = KEY AND level IS EMPTY`（セキュリティレベル付きを除く）。Webhook の絞りは `project = KEY`（JQL の `level` が Webhook の絞りで使えるか分からないので広めにし、差分の JQL で除く）。共有リストの差分は `key in (...)` で広げない（あとからセキュリティレベルが付いた課題を取らないため）
 - つなぐ: `POST /connections/jira` に `project`。省けばつなぐ人が見えるプロジェクトの一覧（`choose_project`）。デプロイの設定で許していなければ `forbidden`。既にあれば、つなぐ人の権限でその場で読者を写し、止まっていればその人の委任でつなぎ直す。個人リストを作る経路（本人の JQL、`PATCH /connections/{id}`）はやめた。今ある個人リストは、消すまで今のまま動く
-- 読者の同期: 見回りで 60 分ごと（と setup で）、`/user/permission/search?permissions=BROWSE_PROJECTS` の人（`atlassian`・有効）を `syncSharedReaders` に渡す。つないだ人が閲覧できなくなったら broken
+- 読者の同期: 見回りで 60 分ごと（と setup で）、`/user/viewissue/search` の人（`atlassian`・有効）を `syncSharedReaders` に渡す。この API は「ユーザーとグループの閲覧」の権限がないと空を返すので、本人が載っていない一覧や Jira が断った一覧（403 など）は当てにせず、読者を変えない。そのときプロジェクトも見えなければ、つないだ人が閲覧できなくなったとして broken。つなぐときに一覧が読めなければ、つなぐ人だけを読者に足す（プロジェクトが見えることは確かめてある）
 - 一覧（`GET /connections`）に、読者になっている共有リストも出す（`shared`・`created_by`）
 - スキル: `api-gateway-murmur` 0.1.8
 

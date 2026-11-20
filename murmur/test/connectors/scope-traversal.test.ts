@@ -163,6 +163,23 @@ describe('本物らしい ID で組み立てたパスは新しい照合でも通
     expect(calls).toHaveLength(4);
   });
 
+  it('Jira: 閲覧できる人は管理者の権限の要らない /user/viewissue/search で読み、短いページでも空のページまで続ける', async () => {
+    const calls: string[] = [];
+    const pages = [[{ accountId: 'a1', accountType: 'atlassian' }], [{ accountId: 'a2', accountType: 'app', active: false }], []];
+    const api = new GatewayJiraApi(async (_method, path) => {
+      calls.push(path);
+      return new Response(JSON.stringify(pages[calls.length - 1] ?? []), { status: 200 });
+    });
+    expect(await api.browsers('cloud-1', 'SPW')).toEqual([
+      { accountId: 'a1', accountType: 'atlassian', active: true },
+      { accountId: 'a2', accountType: 'app', active: false },
+    ]);
+    expect(calls).toHaveLength(3);
+    expect(calls[0]).toBe('/ex/jira/cloud-1/rest/api/3/user/viewissue/search?projectKey=SPW&query=*&startAt=0&maxResults=100');
+    expect(calls[1]).toContain('startAt=100');
+    expect(inScope(JIRA_SCOPE, 'GET', '/ex/jira/cloud-1/rest/api/3/user/permission/search?permissions=BROWSE_PROJECTS&projectKey=SPW')).toBe(false);
+  });
+
   it('Google（Gmail・Tasks）: ID と pageToken', async () => {
     const g = recording(GMAIL_SCOPE);
     const gmail = new GatewayGmailApi(g.upstream);

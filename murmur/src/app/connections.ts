@@ -1,7 +1,7 @@
 import { addSharedReader, canDisconnect, connectGoogleChatDms, connectGoogleChatSpace, connectSharedMailbox, connectJiraProject, connectorOwner, connectTaskList, connectTeamsChannel, connectTeamsChats, deriveViewer, DomainError, googleAccountOf, teamsAddress, connectMailbox, replaceSharedCredential, syncSharedReaders, type ServiceDataSource } from '../domain';
 import { GoogleChatError, type GoogleChatApi } from '../connectors/google-chat/api';
 import { chatMembers, isThreaded } from '../connectors/google-chat/plan';
-import { jiraMembers } from '../connectors/jira/readers';
+import { readJiraReaders } from '../connectors/jira/readers';
 import type { TeamRef, TeamsApi } from '../connectors/teams/api';
 import type { TeamsChatApi } from '../connectors/teams-chat/api';
 import type { TodoApi } from '../connectors/todo/api';
@@ -470,8 +470,14 @@ export class Connections {
     const current = await this.deps.state.source(ds.id);
     if (plan.kind === 'exists') {
       // つなぐ人の権限で、その場で読者を写す（つないだ人も名乗ったので読者になる）
-      const members = jiraMembers(await api.browsers(site.id, project.key));
-      await this.deps.service.changeMaster(null, 'Jira の読者の同期', (d, ctx) => syncSharedReaders(d, ctx, ds.id, members));
+      const readers = await readJiraReaders(api, site.id, project.key, me.accountId);
+      if (readers.ok) {
+        await this.deps.service.changeMaster(null, 'Jira の読者の同期', (d, ctx) => syncSharedReaders(d, ctx, ds.id, readers.members));
+      } else {
+        // 一覧が読めない（閲覧できる人の一覧を読む権限がない）。つなぐ人はプロジェクトが見えている（上で確かめた）ので、その人だけ読者に足す。
+        // ほかの人は、見回りの読者の同期で写る
+        await this.deps.service.changeMaster(userId, 'Jira の共有リストの読者に入る', (d, ctx) => addSharedReader(d, ctx, ds.id, userId, { channel: 'jira', value: me.accountId }));
+      }
       // 動いていれば何もしない。止まっていれば（つないだ人が読めなくなった・外した）、この人の委任でつなぎ直す
       if (current && current.status === 'ok') return { status: 'connected', data_source: { id: ds.id, name: ds.name }, created: false };
       await this.deps.service.changeMaster(userId, 'Jira の共有リストをつなぎ直す', (d, ctx) =>

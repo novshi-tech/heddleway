@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { SyncJob } from '../../src/connectors/graph/jobs';
 import type { SourceState } from '../../src/connectors/graph/state';
-import { isAllowed } from '../../src/connectors/jira/api';
+import { isAllowed, JiraError } from '../../src/connectors/jira/api';
 import { deltaJql, planJiraMaintenance, webhookFilter } from '../../src/connectors/jira/plan';
 import { JiraSync } from '../../src/connectors/jira/sync';
 import { connectJiraProject, Directory, planMasterEdit, assigneeOf, type SharedSpacePlan } from '../../src/domain';
@@ -270,9 +270,35 @@ describe('H9 H5 Jira の同期（偽の Jira）', () => {
   it('H3 つないだ人がプロジェクトを閲覧できなくなったら broken（ほかの読者がつなぎ直す）', async () => {
     await ctx.sync.handle({ kind: 'setup', dataSourceId: ctx.ds.id });
     jira.browserList = [];
+    jira.projectList = [];
     now = at(61);
     await ctx.sync.handle({ kind: 'maintain' });
     expect(await state.source(ctx.ds.id)).toMatchObject({ status: 'broken', reason: expect.stringMatching(/閲覧できなくなった/) });
+  });
+
+  it('H3 閲覧できる人の一覧が当てにならない（Jira が断る・本人が載らない）ときは、読者を変えず止めもしない。次の間隔で試す', async () => {
+    await ctx.service.changeMaster('u_alice', '名乗り', (d) => void d.addresses.push({ id: 'a_alice_jira', channel: 'jira', value: 'acct-alice', contactId: 'p_alice' }));
+    jira.browserList.push({ accountId: 'acct-alice', accountType: 'atlassian', active: true });
+    await ctx.sync.handle({ kind: 'setup', dataSourceId: ctx.ds.id });
+    const readers = async () => {
+      const dir = await ctx.service.directory();
+      return dir.readersOfList(dir.seed.lists.find((l) => l.dataSourceId === ctx.ds.id)!.id).sort();
+    };
+    expect(await readers()).toEqual(['u_alice', 'u_bob']);
+    // 「ユーザーとグループの閲覧」の権限がないと空が返る（プロジェクトは見えている）
+    jira.browserList = [];
+    now = at(61);
+    await ctx.sync.handle({ kind: 'maintain' });
+    expect(await readers()).toEqual(['u_alice', 'u_bob']);
+    expect(await state.source(ctx.ds.id)).toMatchObject({ status: 'ok', jira: { readersSyncedAt: at(61) } });
+    // Jira が 403 で断る
+    jira.browsers = async () => {
+      throw new JiraError(403, 'forbidden');
+    };
+    now = at(122);
+    await ctx.sync.handle({ kind: 'maintain' });
+    expect(await readers()).toEqual(['u_alice', 'u_bob']);
+    expect(await state.source(ctx.ds.id)).toMatchObject({ status: 'ok', jira: { readersSyncedAt: at(122) } });
   });
 
   it('共有リストの差分は key in (...) で広げない（あとからセキュリティレベルが付いた課題を取らない）', async () => {
