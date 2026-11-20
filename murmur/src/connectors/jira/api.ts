@@ -62,6 +62,9 @@ export class JiraError extends Error {
   }
 }
 
+/** /user/viewissue/search が見る人数の上限（Jira の仕様） */
+const BROWSERS_LIMIT = 1000;
+
 type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
 /**
@@ -72,7 +75,7 @@ export const JIRA_SCOPE: ReadScope = Object.freeze([
   ['GET', /^\/oauth\/token\/accessible-resources$/],
   ['GET', /^\/ex\/jira\/[\w-]+\/rest\/api\/3\/myself$/],
   ['GET', /^\/ex\/jira\/[\w-]+\/rest\/api\/3\/project\/search(\?.*)?$/],
-  ['GET', /^\/ex\/jira\/[\w-]+\/rest\/api\/3\/user\/permission\/search(\?.*)?$/],
+  ['GET', /^\/ex\/jira\/[\w-]+\/rest\/api\/3\/user\/viewissue\/search(\?.*)?$/],
   ['GET', /^\/ex\/jira\/[\w-]+\/rest\/api\/3\/search\/jql$/],
   ['GET', /^\/ex\/jira\/[\w-]+\/rest\/api\/3\/issue\/[A-Z][A-Z0-9_]*-\d+\/comment$/],
   ['POST', /^\/ex\/jira\/[\w-]+\/rest\/api\/3\/webhook$/],
@@ -110,15 +113,21 @@ export class GatewayJiraApi implements JiraApi {
     }
   }
 
+  /**
+   * 閲覧できる人は /user/viewissue/search で読む。/user/permission/search は Jira の管理者（かプロジェクトの管理者）でないと 403 になるので使わない。
+   * こちらは「ユーザーとグループの閲覧」のグローバル権限で読め、権限がなければ空が返る（本人が載らないので、呼び出し側で当てにならないと分かる）。
+   * query は必須で、* で全員に当たる。Jira は先頭から 1000 人までを startAt・maxResults の範囲で取ってから絞るので、ページが短くても続きがある。空のページか 1000 人で終わる
+   */
   async browsers(cloudId: string, projectKey: string): Promise<JiraBrowser[]> {
     const out: JiraBrowser[] = [];
     const max = 100;
-    for (let startAt = 0; ; startAt += max) {
-      const q = new URLSearchParams({ permissions: 'BROWSE_PROJECTS', projectKey, startAt: String(startAt), maxResults: String(max) });
-      const page = (await this.call('GET', `${site(cloudId)}/user/permission/search`, undefined, q)) as { accountId: string; accountType?: string; active?: boolean }[];
+    for (let startAt = 0; startAt < BROWSERS_LIMIT; startAt += max) {
+      const q = new URLSearchParams({ projectKey, query: '*', startAt: String(startAt), maxResults: String(max) });
+      const page = (await this.call('GET', `${site(cloudId)}/user/viewissue/search`, undefined, q)) as { accountId: string; accountType?: string; active?: boolean }[];
+      if (page.length === 0) break;
       out.push(...page.map((u) => ({ accountId: u.accountId, accountType: u.accountType ?? 'atlassian', active: u.active !== false })));
-      if (page.length < max) return out;
     }
+    return out;
   }
 
   async search(cloudId: string, jql: string, nextPageToken?: string): Promise<SearchPage> {

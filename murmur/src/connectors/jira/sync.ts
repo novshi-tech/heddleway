@@ -10,7 +10,7 @@ import type { JiraApi } from './api';
 import type { JiraComment, JiraIssue } from './issue';
 import { itemsOfIssue, toUtc } from './normalize';
 import { chunk, deltaJql, KEYS_PER_QUERY, minutesBefore, minutesBetween, OVERLAP_MINUTES, planJiraMaintenance, WEBHOOK_EVENTS, webhookFilter } from './plan';
-import { jiraMembers, READERS_SYNC_MINUTES } from './readers';
+import { readJiraReaders, READERS_SYNC_MINUTES } from './readers';
 
 // Jira のキューの仕事（0034 の決定 3）。通知はヒントで、正は JQL の差分。位置（syncedUntil）は取り込みが終わってから進める。
 // Graph と同じキューを使い、Jira の経路のデータソースだけを扱う。
@@ -242,7 +242,20 @@ export class JiraSync {
    */
   private async syncReaders(ctx: Ctx): Promise<void> {
     const projectKey = ctx.ds.connector.projectKey!;
-    const members = jiraMembers(await (await this.api(ctx)).browsers(ctx.ds.connector.cloudId, projectKey));
+    const cloudId = ctx.ds.connector.cloudId;
+    const api = await this.api(ctx);
+    const me = await api.myself(cloudId);
+    const readers = await readJiraReaders(api, cloudId, projectKey, me.accountId);
+    if (!readers.ok) {
+      // 一覧が当てにならない。プロジェクトが見えなければ、つないだ人が閲覧できなくなった（broken）。見えていれば読者はそのままにして、次の間隔で試す
+      if (!(await api.projects(cloudId)).some((p) => p.key === projectKey)) {
+        throw new GatewayAuthError(`つないだ人がプロジェクト ${projectKey} を閲覧できなくなった。ほかの読者がつなぎ直す`);
+      }
+      await this.put(ctx, { jira: { ...this.cursor(ctx), readersSyncedAt: this.deps.now() } });
+      this.deps.log?.({ msg: 'jira_readers_unavailable', dataSourceId: ctx.ds.id, reason: readers.reason });
+      return;
+    }
+    const members = readers.members;
     const { result } = await this.deps.service.changeMaster(null, `Jira の読者の同期（${projectKey}）`, (d, c) => syncSharedReaders(d, c, ctx.ds.id, members));
     await this.put(ctx, { jira: { ...this.cursor(ctx), readersSyncedAt: this.deps.now() } });
     if (result.added.length > 0 || result.removed.length > 0) {

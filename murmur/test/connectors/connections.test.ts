@@ -7,6 +7,7 @@ import { MemoryConnectorState } from '../../src/store/connector-state';
 import { counterIds, makeService } from '../helpers/service';
 import { FakeGraph } from '../helpers/fake-graph';
 import { FakeJira } from '../helpers/fake-jira';
+import { JiraError } from '../../src/connectors/jira/api';
 import { FakeTeams } from '../helpers/fake-teams';
 import { FakeTeamsChat } from '../helpers/fake-teams-chat';
 import { FakeTodo } from '../helpers/fake-todo';
@@ -316,6 +317,27 @@ describe('H3 個人の箱をつなぐ', () => {
       expect(await state.source(ds.id)).toMatchObject({ userId: 'u_bob', status: 'ok' });
       // Alice の一覧にも出る（読者になっている共有リスト）
       expect(await ctx.connections.list('u_alice')).toEqual([expect.objectContaining({ data_source: ds.id, shared: true, created_by: 'u_bob' })]);
+    });
+
+    it('閲覧できる人の一覧を読めない人（Jira の管理者でない・403）がつないでも 500 にせず、その人だけ読者に足す', async () => {
+      await consentJira('u_bob');
+      const ds = await sharedDs();
+      await state.putSource({ ...(await state.source(ds.id))!, status: 'ok' });
+      const aliceJira = new FakeJira(() => now, undefined, { accountId: 'acct-alice', displayName: 'Alice' });
+      aliceJira.browsers = async () => {
+        throw new JiraError(403, 'forbidden');
+      };
+      const asAlice = new Connections({ ...(ctx.connections as unknown as { deps: ConstructorParameters<typeof Connections>[0] }).deps, jiraFor: () => aliceJira });
+      gw.approve('u_alice');
+      expect(await asAlice.connectJira('u_alice', { projectKey: 'SPW' })).toMatchObject({ status: 'connected', created: false, data_source: { id: ds.id } });
+      const dir = await ctx.service.directory();
+      expect(dir.readersOfList(dir.seed.lists.find((l) => l.dataSourceId === ds.id)!.id).sort()).toEqual(['u_alice', 'u_bob']);
+      expect(dir.contactIdOfAddress({ channel: 'jira', value: 'acct-alice' })).toBe('p_alice');
+      // 空の一覧（ユーザーとグループの閲覧の権限がない）でも同じ。ほかの読者は外さない
+      aliceJira.browsers = async () => [];
+      expect(await asAlice.connectJira('u_alice', { projectKey: 'SPW' })).toMatchObject({ status: 'connected', created: false });
+      const after = await ctx.service.directory();
+      expect(after.readersOfList(after.seed.lists.find((l) => l.dataSourceId === ds.id)!.id).sort()).toEqual(['u_alice', 'u_bob']);
     });
 
     it('止まっている共有リストに別の読者がつなぐと、その人の委任でつなぎ直す（作った人は変わらない）', async () => {
