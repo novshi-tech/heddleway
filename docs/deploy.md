@@ -31,7 +31,7 @@ npm run deploy -- acme
 - `SIGNING_KEY` を変えると、発行済みのトークンと MCP の接続が無効になり、ユーザーは接続し直しになります。
 - `IDENTITY_SIGNING_KEY` を変えると、`identity` の上流が古い公開鍵をキャッシュしている間は検証に失敗します。上流が JWKS を取り直すまで待つか、上流の公開鍵を差し替えます。
 - 設定を変えたら、`npm run deploy -- <名前>` で出し直します。設定をリポジトリで管理しているなら、コミットしてプッシュもします。
-- 新しい版で Durable Object やその migration が増えたときは(`wrangler.example.jsonc` の `durable_objects` と `migrations`)、各デプロイの設定にも同じものを足してから出し直します。deploy スキルが照らし合わせて直します。
+- 新しい版で Durable Object やその migration が増えたときは(`wrangler.example.jsonc` の `durable_objects` と `migrations`)、各デプロイの設定にも同じものを足してから出し直します。deploy スキルが照らし合わせて直します。逆向きの接続([ADR 0003](adr/0003-reverse-connection.md))の Durable Object `REVERSE`(`ReverseConnection`、migration `v3`)も、そうして足します。足していないデプロイでは、逆向きの接続は使えません(ほかは今までどおり動きます)。
 
 ### 設定をリポジトリで管理する
 

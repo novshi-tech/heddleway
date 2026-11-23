@@ -12,12 +12,15 @@
   "durable_objects": {
     "bindings": [
       { "name": "VAULT", "class_name": "UserVault" },
-      { "name": "REGISTRY", "class_name": "Registry" }
+      { "name": "REGISTRY", "class_name": "Registry" },
+      // Reverse connections (docs/adr/0003): one object per local service holds its WebSocket.
+      { "name": "REVERSE", "class_name": "ReverseConnection" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["UserVault"] },
-    { "tag": "v2", "new_sqlite_classes": ["Registry"] }
+    { "tag": "v2", "new_sqlite_classes": ["Registry"] },
+    { "tag": "v3", "new_sqlite_classes": ["ReverseConnection"] }
   ],
   "vars": {
     // Public origin of this Worker, without a trailing slash.
@@ -49,6 +52,8 @@
       //   "auth": { "type": "headers", "headers": [{ "name": "X-API-Key", "label": "Example の API キー" }] }
       // }
     }
+    // Optional: "REVERSE_PAIRING": "off" stops users from pairing local services over reverse
+    // connections (docs/adr/0003, the REVERSE Durable Object); services already paired keep working.
   }
   // Secrets (wrangler secret put): OIDC_CLIENT_SECRET, SIGNING_KEY, ENCRYPTION_KEY, and
   // OAUTH_<CLIENT>_CLIENT_ID / _CLIENT_SECRET for each OAuth client you use: FREEE (freee),

@@ -5,6 +5,7 @@ import { features, withPath } from "./features";
 import { jwks, JWKS_PATH } from "./identity";
 import { mcpHandler } from "./mcp";
 import { API_PREFIX, handleProxy } from "./proxy";
+import { challenge, CHALLENGE_PATH, CONNECT_PATH, OWNER_PAIR_PATH, PAIR_PATH, PAIR_STATUS_PATH, pairingStatus, reverseConnect, startPairing } from "./reverse";
 import { confirmDeleteService, deleteService, editService, listServices, newService, saveService } from "./web/admin";
 import { APP_JS_PATH, appJs } from "./web/assets";
 import {
@@ -23,6 +24,7 @@ import { confirmDeleteApp, deleteApp, listAppsPage, previewApp, saveApp } from "
 import { confirmDeletePlugin, deletePlugin, listPluginsPage, uploadPlugin } from "./web/admin-plugins";
 import { consentPage, consentSubmit, disableFeature, userPage } from "./web/features";
 import { confirmRevoke, revoke } from "./web/grants";
+import { adminPage as adminLocalServices, confirmRemove as confirmRemoveLocal, pairPage, pairSubmit, remove as removeLocal } from "./web/reverse";
 import { login, LOGIN_CALLBACK_PATH, loginCallback, logout } from "./web/session";
 import { downloadPlugin, setup, SETUP_PATH } from "./web/setup";
 
@@ -30,6 +32,7 @@ import "./murmur-feature";
 
 export { Background } from "./background";
 export { Registry } from "./registry";
+export { ReverseConnection } from "./reverse-connection";
 export { UserVault } from "./vault";
 
 const DAY = 24 * 60 * 60;
@@ -84,6 +87,16 @@ const ROUTES: Route[] = [
   ["GET", /^\/admin\/plugins\/([a-z0-9][a-z0-9-]*)\/delete$/, (request, env, [name]) => confirmDeletePlugin(request, env, name)],
   ["POST", /^\/admin\/plugins\/([a-z0-9][a-z0-9-]*)\/delete$/, (request, env, [name]) => deletePlugin(request, env, name)],
   ["GET", CONNECT_CALLBACK_PATH, connectCallback],
+  // Reverse connections (src/reverse.ts): the local service's endpoints, then the owner's pages.
+  ["POST", PAIR_PATH, startPairing],
+  ["POST", PAIR_STATUS_PATH, pairingStatus],
+  ["POST", CHALLENGE_PATH, challenge],
+  ["GET", CONNECT_PATH, reverseConnect],
+  ["GET", OWNER_PAIR_PATH, pairPage],
+  ["POST", OWNER_PAIR_PATH, pairSubmit],
+  ["GET", /^\/local-services\/([0-9a-f-]+)\/delete$/, (request, env, [id]) => confirmRemoveLocal(request, env, id)],
+  ["POST", /^\/local-services\/([0-9a-f-]+)\/delete$/, (request, env, [id]) => removeLocal(request, env, id)],
+  ["GET", "/admin/local-services", adminLocalServices],
   ["GET", /^\/features\/([a-z0-9][a-z0-9-]*)$/, (request, env, [name], ctx) => userPage(request, env, name, ctx)],
   ["GET", /^\/features\/([a-z0-9][a-z0-9-]*)\/consent$/, (request, env, [name]) => consentPage(request, env, name)],
   ["POST", /^\/features\/([a-z0-9][a-z0-9-]*)\/consent$/, (request, env, [name]) => consentSubmit(request, env, name)],

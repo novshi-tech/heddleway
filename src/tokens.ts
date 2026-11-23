@@ -2,7 +2,8 @@ import { jwtVerify, SignJWT, type JWTPayload } from "jose";
 
 // One HS256 key signs every token; the audience keeps the kinds apart.
 // "appdef" carries an app definition from the admin's confirmation page to the approval.
-export type TokenKind = "api" | "session" | "login" | "connect" | "consent" | "appdef";
+// "rchallenge" is the one-time value a local service signs to open a reverse connection.
+export type TokenKind = "api" | "session" | "login" | "connect" | "consent" | "appdef" | "rchallenge";
 
 export const GATEWAY_TOKEN_TTL_SECONDS = 15 * 60;
 
