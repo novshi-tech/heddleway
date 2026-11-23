@@ -14,6 +14,7 @@ import { FakeTodo } from '../helpers/fake-todo';
 import { FakeGtasks } from '../helpers/fake-gtasks';
 import { FakeGmail } from '../helpers/fake-gmail';
 import { FakeGoogleChat, human } from '../helpers/fake-google-chat';
+import { FakeLine, FakeLineStore } from '../helpers/fake-line';
 import { seed } from '../helpers/world';
 
 // 個人の箱をつなぐ（0024 の決定 3）。ゲートウェイは口（ports/gateway.ts）の偽物。
@@ -22,7 +23,7 @@ import { seed } from '../helpers/world';
 const GATEWAY = 'https://gateway.test';
 
 /** 種類ごとのゲートウェイの接続先（本物は組み立て時に決まる。Teams は Graph の接続で読む） */
-const serviceOf = (kind: UpstreamKind) => (kind === 'teams' || kind === 'teams-chat' ? 'graph' : kind === 'gtasks' ? 'tasks' : kind === 'google-chat' || kind === 'google-chat-dm' ? 'chat' : kind);
+const serviceOf = (kind: UpstreamKind) => (kind === 'teams' || kind === 'teams-chat' ? 'graph' : kind === 'gtasks' ? 'tasks' : kind === 'google-chat' || kind === 'google-chat-dm' ? 'chat' : kind === 'line' ? 'bm-next' : kind);
 
 /** ゲートウェイの口の偽物。本人が「有効にする」を押すと同意が残り、コールバックに本人のコードで戻ってくる */
 class FakeGatewayPort implements GatewayPort {
@@ -89,6 +90,8 @@ describe('H3 個人の箱をつなぐ', () => {
   let googleChat: FakeGoogleChat;
   /** 共有メールボックス（0042）: 人ごとの偽の Graph（なければ Bob の箱の偽物） */
   let graphsOf: Map<string, FakeGraph>;
+  /** LINE 公式アカウント（0049）: 人ごとの受け口の接続 */
+  let linesOf: Map<string, FakeLine>;
 
   async function setup(world = seed) {
     const made = await makeService(world);
@@ -107,6 +110,7 @@ describe('H3 個人の箱をつなぐ', () => {
       gtasksFor: () => gtasks,
       gmailFor: () => gmail,
       googleChatFor: () => googleChat,
+      lineFor: (call) => linesOf.get((call as { userId?: string }).userId ?? '')!,
       sharedServices,
     });
     return { ...made, connections };
@@ -143,6 +147,7 @@ describe('H3 個人の箱をつなぐ', () => {
     gw.credentialsOf.set('u_bob', [...gw.credentialsOf.get('u_bob')!, { id: 'gw_tasks', service: 'tasks', label: 'gws' }]);
     sharedServices = ['jira'];
     graphsOf = new Map();
+    linesOf = new Map();
     ctx = await setup();
   });
 
@@ -972,6 +977,87 @@ describe('H3 個人の箱をつなぐ', () => {
       expect(await ctx.connections.connectOutlook('u_bob')).toMatchObject({ status: 'connected', created: true });
       const kinds = (await ctx.connections.list('u_bob')).map((c) => c.kind).sort();
       expect(kinds).toEqual(['outlook', 'shared-mailbox']);
+    });
+  });
+  describe('H3 LINE 公式アカウントの共有リスト（0049）', () => {
+    let store: FakeLineStore;
+
+    beforeEach(async () => {
+      sharedServices = ['line'];
+      ctx = await setup();
+      store = new FakeLineStore();
+      linesOf.set('u_bob', new FakeLine(store));
+      linesOf.set('u_alice', new FakeLine(store));
+      gw.credentialsOf.set('u_bob', [...gw.credentialsOf.get('u_bob')!, { id: 'gw_bob_bmn', service: 'bm-next', label: 'ubs' }]);
+      gw.credentialsOf.set('u_alice', [...gw.credentialsOf.get('u_alice')!, { id: 'gw_alice_bmn', service: 'bm-next', label: 'ubs' }]);
+      gw.approve('u_bob');
+      gw.approve('u_alice');
+    });
+
+    const sharedDs = async () => (await ctx.service.directory()).seed.dataSources.find((d) => d.kind === 'service' && d.shared)!;
+    const readers = async (dsId: string) => {
+      const dir = await ctx.service.directory();
+      return dir.readersOfList(dir.seed.lists.find((l) => l.dataSourceId === dsId)!.id).sort();
+    };
+
+    it('受け口でメッセージが読めればつなぐ: 組織の共有リスト（窓口は公式アカウント）を作り、作った人が読者、キューに setup', async () => {
+      const r = await ctx.connections.connectLine('u_bob');
+      expect(r).toMatchObject({ status: 'connected', created: true, data_source: { name: 'アーバン（LINE 公式アカウント）' } });
+      const ds = await sharedDs();
+      expect(ds).toMatchObject({
+        channel: 'line',
+        group: false,
+        selfAddresses: [{ channel: 'line', value: 'oa:org_ubs' }],
+        connector: { kind: 'line', organizationId: 'org_ubs' },
+        shared: { spaceKey: 'line:org_ubs', createdBy: 'u_bob' },
+      });
+      expect(await readers(ds.id)).toEqual(['u_bob']);
+      expect(await state.source(ds.id)).toMatchObject({ kind: 'line', userId: 'u_bob', gatewayCredentialId: 'gw_bob_bmn', status: 'setup', connectedAt: now, line: { after: null } });
+      expect(queued).toEqual([{ kind: 'setup', dataSourceId: ds.id }]);
+      expect(await ctx.connections.list('u_bob')).toEqual([expect.objectContaining({ kind: 'line', shared: true, created_by: 'u_bob', status: 'setup' })]);
+      expect(seedProblems((await ctx.service.directory()).seed)).toEqual([]);
+    });
+
+    it('受け口で読めない接続はつながない（何も作らない）。デプロイの設定で許していなければつながない', async () => {
+      linesOf.get('u_bob')!.readable = false;
+      await expect(ctx.connections.connectLine('u_bob')).rejects.toMatchObject({ code: 'forbidden', message: expect.stringMatching(/読めない/) });
+      expect((await ctx.service.directory()).seed.dataSources.some((d) => d.kind === 'service' && d.shared)).toBe(false);
+      sharedServices = ['jira'];
+      ctx = await setup();
+      linesOf.get('u_bob')!.readable = true;
+      await expect(ctx.connections.connectLine('u_bob')).rejects.toMatchObject({ code: 'forbidden', message: expect.stringMatching(/MURMUR_SHARED_SERVICES/) });
+    });
+
+    it('同意がなければ有効にする画面へ。戻ってきたら、受け口の接続でつなぐ', async () => {
+      gw.consents.clear();
+      const r = await ctx.connections.connectLine('u_bob');
+      if (r.status !== 'authorize') throw new Error(r.status);
+      const st = new URL(r.authorize_url).searchParams.get('state');
+      expect(await ctx.connections.callback({ state: st, code: gw.approve('u_bob'), error: null })).toMatchObject({ ok: true, message: expect.stringMatching(/LINE 公式アカウント.*つなぎました/) });
+      expect(await state.source((await sharedDs()).id)).toMatchObject({ kind: 'line', gatewayCredentialId: 'gw_bob_bmn' });
+    });
+
+    it('2 人目が読めればその場で読者に入る。止まっていれば、その人の接続でつなぎ直す（位置は残す）', async () => {
+      await ctx.connections.connectLine('u_bob');
+      const ds = await sharedDs();
+      await state.putSource({ ...(await state.source(ds.id))!, status: 'ok' });
+      queued.length = 0;
+      expect(await ctx.connections.connectLine('u_alice')).toMatchObject({ status: 'connected', created: false, data_source: { id: ds.id } });
+      expect(await readers(ds.id)).toEqual(['u_alice', 'u_bob']);
+      expect(await state.source(ds.id)).toMatchObject({ userId: 'u_bob', status: 'ok' });
+      expect(queued).toEqual([]);
+      const line = { after: '2026-10-29T00:00:00.0000000Z|ev9' };
+      await state.putSource({ ...(await state.source(ds.id))!, status: 'broken', reason: 'x', line });
+      expect(await ctx.connections.connectLine('u_alice')).toMatchObject({ status: 'connected', created: false });
+      expect(await state.source(ds.id)).toMatchObject({ userId: 'u_alice', gatewayCredentialId: 'gw_alice_bmn', status: 'setup', line: { after: line.after }, connectedAt: now });
+      expect(queued).toEqual([{ kind: 'setup', dataSourceId: ds.id }]);
+      expect((await sharedDs()).shared?.createdBy).toBe('u_bob');
+    });
+
+    it('別の組織の接続でつなぐと、別の共有リスト（組織ごとに 1 つ）', async () => {
+      await ctx.connections.connectLine('u_bob');
+      linesOf.set('u_alice', new FakeLine(new FakeLineStore(), { id: 'org_other', name: 'よそ' }));
+      expect(await ctx.connections.connectLine('u_alice')).toMatchObject({ status: 'connected', created: true, data_source: { name: 'よそ（LINE 公式アカウント）' } });
     });
   });
 });

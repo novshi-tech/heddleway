@@ -1,7 +1,7 @@
 import type { CoreContext } from './context';
 import { sameAddress } from './comm';
 import { Directory, sameValue } from './directory';
-import type { DataSource, Seed, ServiceDataSource } from './entities';
+import type { AddressRef, DataSource, Seed, ServiceDataSource } from './entities';
 import { DomainError } from './errors';
 import { bindIdentity, createPersonalDataSource, type IdentityOutcome } from './people';
 import { connectSharedSpace, type SharedSpacePlan } from './shared';
@@ -441,4 +441,52 @@ function dedupe(values: string[]): string[] {
   const out: string[] = [];
   for (const v of values) if (!out.some((o) => sameValue(o, v))) out.push(v);
   return out;
+}
+
+// ---- LINE 公式アカウント（0049）: 受け口（業務システム）の組織に 1 つの共有リスト ----
+
+export function lineSpaceKey(organizationId: string): string {
+  return `line:${organizationId}`;
+}
+
+/** 公式アカウントの窓口のアドレス（0049 の決定 3）。受信はこの窓口宛て、受け口から送ったものはこの窓口から */
+export function lineOfficialAccount(organizationId: string): AddressRef {
+  return { channel: 'line', value: `oa:${organizationId}` };
+}
+
+/**
+ * 読者の名乗りのアドレス（0049 の決定 4）。読者は公式アカウントの中の人で、LINE の友だちではないので、LINE の userId は使わない。
+ * 受け口には本人のメンバーを返す口がないので、受け口の組織とトピック索引の User の組で 1 人に 1 つ
+ */
+export function lineReaderIdentity(organizationId: string, userId: string): AddressRef {
+  return { channel: 'line', value: `bm-next:${organizationId}:${userId}` };
+}
+
+export interface LineAccountInput {
+  userId: string;
+  /** つなぐ人のゲートウェイの受け口（bm-next）の接続 */
+  gatewayCredentialId: string;
+  /** 受け口の組織（そのつなぐ人の接続で読めた組織） */
+  organizationId: string;
+  organizationName: string;
+}
+
+/** 公式アカウントの共有リストがあればそれを返し、なければ作る（0049 の決定 3）。読者は自分の接続で読めた人（0042 と同じ） */
+export function connectLineAccount(draft: Seed, ctx: CoreContext, input: LineAccountInput): SharedSpacePlan {
+  const organizationId = input.organizationId.trim();
+  if (!organizationId) throw new DomainError('invalid', 'organization is required');
+  const name = input.organizationName.trim() || organizationId;
+  return connectSharedSpace(draft, ctx, {
+    userId: input.userId,
+    gatewayCredentialId: input.gatewayCredentialId,
+    channel: 'line',
+    spaceKey: lineSpaceKey(organizationId),
+    name: `${name}（LINE 公式アカウント）`,
+    description: `${name} の LINE 公式アカウント。読者は、自分の接続で受け口のメッセージを読めた人（0049）`,
+    identity: lineReaderIdentity(organizationId, input.userId).value,
+    connector: { kind: 'line', organizationId },
+    // 相手ごとの会話は会話のアンカー（conversationId）で分ける。グループ・トークルームはシグナルの conversationGroup で決まる
+    group: false,
+    selfAddresses: [lineOfficialAccount(organizationId)],
+  });
 }

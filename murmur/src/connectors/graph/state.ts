@@ -155,9 +155,21 @@ export interface GoogleChatDmCursor {
   setupAt?: string | null;
 }
 
+/**
+ * LINE 公式アカウントの取り込みの位置（0049 の決定 2）。受け口の lineEvents の endCursor（保存の順の文字列）をそのまま持ち、
+ * 次の見回りの after に渡す。まだ読んでいなければ null で、つないだ時刻（since）から読む
+ */
+export interface LineCursor {
+  after: string | null;
+  /** 読者を最後に確かめ直した時刻（0042 の決定 4 と同じ） */
+  readersSyncedAt?: string;
+  /** つないだ（つなぎ直した）直後の取り込みの仕事を積んだ時刻 */
+  setupAt?: string | null;
+}
+
 /** 実行時に作ったデータソースの取り込みの状態。kind がなければ Outlook（Jira より前の行） */
 export interface SourceState {
-  kind?: 'outlook' | 'shared-mailbox' | 'jira' | 'teams' | 'teams-chat' | 'todo' | 'gtasks' | 'gmail' | 'google-chat' | 'google-chat-dm';
+  kind?: 'outlook' | 'shared-mailbox' | 'jira' | 'teams' | 'teams-chat' | 'todo' | 'gtasks' | 'gmail' | 'google-chat' | 'google-chat-dm' | 'line';
   dataSourceId: string;
   /** 個人の箱の本人（ゲートウェイの User）。共有リストでは、取り込みに委任を使っている読者 */
   userId: string;
@@ -179,6 +191,8 @@ export interface SourceState {
   googleChatDm?: GoogleChatDmCursor;
   /** Google Tasks: 取り込みの位置（見回りの最後の読み切りの時刻は lastSyncAt） */
   gtasks?: GtasksCursor;
+  /** LINE 公式アカウント（0049）: 受け口の差分読みの位置と読者の確かめ直し */
+  line?: LineCursor;
   /** Gmail: 取り込みの位置（見回りの最後の読み切りの時刻は lastSyncAt） */
   gmail?: GmailCursor;
   /** 共有メールボックス（0042）: 読者を最後に確かめ直した時刻。delta の位置は folders */

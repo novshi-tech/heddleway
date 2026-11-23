@@ -4,6 +4,7 @@ import { JIRA_SCOPE } from "../murmur/src/connectors/jira/api";
 import { GMAIL_SCOPE } from "../murmur/src/connectors/gmail/scope";
 import { GTASKS_SCOPE } from "../murmur/src/connectors/gtasks/scope";
 import { GOOGLE_CHAT_DM_SCOPE, GOOGLE_CHAT_SCOPE } from "../murmur/src/connectors/google-chat/scope";
+import { LINE_SCOPE } from "../murmur/src/connectors/line/scope";
 import { TEAMS_SCOPE } from "../murmur/src/connectors/teams/scope";
 import { TEAMS_CHAT_SCOPE } from "../murmur/src/connectors/teams-chat/scope";
 import type { SyncJob } from "../murmur/src/connectors/graph/jobs";
@@ -36,6 +37,8 @@ interface MurmurEnv {
   MURMUR_GMAIL_SERVICE?: string;
   MURMUR_TASKS_SERVICE?: string;
   MURMUR_CHAT_SERVICE?: string;
+  // The front system that keeps the LINE Official Account's messages (Murmur's 0049). Default bm-next.
+  MURMUR_BM_NEXT_SERVICE?: string;
   // Patrol interval of the Google Tasks connector, in minutes. Unset or invalid: every tick (Murmur's 0041).
   MURMUR_TASKS_POLL_MINUTES?: string;
 }
@@ -68,6 +71,8 @@ export function murmurFeature(env: Env): Feature | null {
       // Google Chat (Murmur's 0045): spaces as shared lists and the user's DMs as a personal list, one credential, two scopes.
       "google-chat": { service: m.MURMUR_CHAT_SERVICE || "chat", scope: GOOGLE_CHAT_SCOPE },
       "google-chat-dm": { service: m.MURMUR_CHAT_SERVICE || "chat", scope: GOOGLE_CHAT_DM_SCOPE },
+      // LINE Official Account (Murmur's 0049): read from the front system that keeps it, through GET-only GraphQL.
+      line: { service: m.MURMUR_BM_NEXT_SERVICE || "bm-next", scope: LINE_SCOPE },
     },
   });
   const config: MurmurConfig = {
@@ -89,7 +94,7 @@ export function murmurFeature(env: Env): Feature | null {
     name: NAME,
     displayName: "トピック索引",
     consentText:
-      "トピック索引は、あなたがつないだメール(Outlook・Gmail)・To Do・Google Tasks のタスク・Teams のチャネルとチャット・Google Chat のスペースとチャット・Jira を読み取り、やりとりをトピックにまとめて、誰が担当か・誰に見てほしいと届いたかを記録します。エージェント(Claude など)が「いまやるべきこと」に答えるときに使います。読むのは、あなたがエージェントに頼んでつないだものだけで、送信や書き込みはしません。",
+      "トピック索引は、あなたがつないだメール(Outlook・Gmail)・To Do・Google Tasks のタスク・Teams のチャネルとチャット・Google Chat のスペースとチャット・Jira・LINE 公式アカウント(業務システムが受けたもの)を読み取り、やりとりをトピックにまとめて、誰が担当か・誰に見てほしいと届いたかを記録します。エージェント(Claude など)が「いまやるべきこと」に答えるときに使います。読むのは、あなたがエージェントに頼んでつないだものだけで、送信や書き込みはしません。",
     consentCallbackPath: CALLBACK_PATH,
     userPage: { linkText: "参加中のリストを見る", render: (userId, ctx) => murmur.myLists(userId, ctx) },
     fetch: (request, ctx) => murmur.fetch(request, ctx),

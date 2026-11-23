@@ -78,8 +78,9 @@
   // (openssl rand -base64 32; Graph and Jira webhooks), optionally MURMUR_TIMELINE_TOKEN (its operator pages).
   // Optional vars: MURMUR_CLAUDE_MODEL, MURMUR_GRAPH_SERVICE (default graph), MURMUR_JIRA_SERVICE (default jira),
   // MURMUR_GMAIL_SERVICE (default gmail), MURMUR_TASKS_SERVICE (default tasks), MURMUR_CHAT_SERVICE (default chat),
+  // MURMUR_BM_NEXT_SERVICE (default bm-next; the front system that keeps the LINE Official Account. Murmur's 0049),
   // MURMUR_TASKS_POLL_MINUTES (patrol interval of the Google Tasks connector in minutes; unset = every cron tick. Murmur's 0041),
-  // MURMUR_SHARED_SERVICES (services whose spaces may become shared lists, e.g. "jira,teams,shared-mailbox,google-chat"; none by default. Murmur's 0037・0042・0045).
+  // MURMUR_SHARED_SERVICES (services whose spaces may become shared lists, e.g. "jira,teams,shared-mailbox,google-chat,line"; none by default. Murmur's 0037・0042・0045・0049).
   // Create the database and queue with `npx wrangler d1 create <name>-murmur` and `npx wrangler queues create <name>-murmur-sync`,
   // then `npm run d1-migrate -- <name>` before deploying.
 }

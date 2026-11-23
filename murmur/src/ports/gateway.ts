@@ -4,7 +4,8 @@
 
 /** 取り込みに使うサービスの種類。種類ごとに、ゲートウェイの接続先の名前と読める口が組み立て時に決まる */
 /** teams-chat は本人の Teams のチャット（0044）。接続は graph と同じで、読める口だけが違う */
-export type UpstreamKind = 'graph' | 'jira' | 'teams' | 'teams-chat' | 'gmail' | 'gtasks' | 'google-chat' | 'google-chat-dm';
+/** line は LINE 公式アカウント（0049）。接続は受け口（業務システム）のもので、読める口は GET の GraphQL だけ */
+export type UpstreamKind = 'graph' | 'jira' | 'teams' | 'teams-chat' | 'gmail' | 'gtasks' | 'google-chat' | 'google-chat-dm' | 'line';
 
 export interface GatewayCredential {
   id: string;

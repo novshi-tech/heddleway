@@ -66,6 +66,8 @@ export type SourceOrigin =
   | { kind: 'google-chat'; space: string }
   /** 本人の Google Chat の DM・グループ（0045）。どれかはメッセージの anchors.conversationId（スペースの名前） */
   | { kind: 'google-chat-dm' }
+  /** LINE 公式アカウント（0049）。organizationId は受け口の組織。相手はメッセージの anchors.conversationId（userId か groupId） */
+  | { kind: 'line'; organizationId: string }
   | { kind: 'graph-todo'; listId: string }
   | { kind: 'google-tasks'; listId: string };
 
@@ -85,6 +87,8 @@ export function originOf(connector: SourceConnector | undefined): SourceOrigin |
       return { kind: 'google-chat', space: connector.space };
     case 'google-chat-dm':
       return { kind: 'google-chat-dm' };
+    case 'line':
+      return { kind: 'line', organizationId: connector.organizationId };
     case 'graph-todo':
     case 'google-tasks':
       return { kind: connector.kind, listId: connector.listId };

@@ -129,6 +129,14 @@ export const SourceConnector = z.discriminatedUnion('kind', [
     kind: z.literal('google-chat-dm'),
     account: z.string().min(1),
   }),
+  /**
+   * LINE 公式アカウント（0049）。共有リスト。原本は受け口（業務システム）が持ち、本体は受け口の差分読みの口を見回りで読む。
+   * organizationId は受け口の組織の ID（受け口の 1 組織に公式アカウントは 1 つ）
+   */
+  z.object({
+    kind: z.literal('line'),
+    organizationId: z.string().min(1),
+  }),
   /** Microsoft To Do のタスクのリスト（0039）。本人の委任で読む個人リスト。listName は写しの statusLabel に使う */
   z.object({
     kind: z.literal('graph-todo'),

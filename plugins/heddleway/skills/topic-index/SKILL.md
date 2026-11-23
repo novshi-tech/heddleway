@@ -58,11 +58,11 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/gw_request.py POST murmur /sent --json '{"da
 初めてつないだユーザーは名無しで、自分の連絡先もリストもない(`GET /me` が `contact: null`・`lists: []`)。次の順に案内する。
 
 1. 呼び方を聞いて `PATCH /me` で付ける
-2. 個人リストにするものは、組織のデプロイで決まる。Microsoft 365 の組織は Outlook(`POST /connections/outlook`)・To Do(`POST /connections/todo`)・Teams のチャット(`POST /connections/teams-chat`)、Google Workspace の組織は Gmail(`POST /connections/gmail`)・Google Tasks(`POST /connections/google-tasks`)・Google Chat のチャット(`POST /connections/google-chat-dm`)。コネクタの `list_credentials` を見て、あるサービス(`graph` か `gmail`・`tasks`・`chat`)のものだけを案内する。共有リストは、Jira のプロジェクトなら `POST /connections/jira`、Teams のチャネルなら `POST /connections/teams`、Google Chat のスペースなら `POST /connections/google-chat`、Microsoft 365 の共有メールボックスなら `POST /connections/shared-mailbox`(下の「Outlook をつなぐ」「Gmail をつなぐ」「To Do をつなぐ」「Google Tasks をつなぐ」「Teams のチャットをつなぐ」「Google Chat のチャットをつなぐ」「Jira をつなぐ」「Teams をつなぐ」「Google Chat のスペースをつなぐ」「共有メールボックスをつなぐ」)。トピック索引が取り込み続けるのはこの経路だけ
+2. 個人リストにするものは、組織のデプロイで決まる。Microsoft 365 の組織は Outlook(`POST /connections/outlook`)・To Do(`POST /connections/todo`)・Teams のチャット(`POST /connections/teams-chat`)、Google Workspace の組織は Gmail(`POST /connections/gmail`)・Google Tasks(`POST /connections/google-tasks`)・Google Chat のチャット(`POST /connections/google-chat-dm`)。コネクタの `list_credentials` を見て、あるサービス(`graph` か `gmail`・`tasks`・`chat`)のものだけを案内する。共有リストは、Jira のプロジェクトなら `POST /connections/jira`、Teams のチャネルなら `POST /connections/teams`、Google Chat のスペースなら `POST /connections/google-chat`、Microsoft 365 の共有メールボックスなら `POST /connections/shared-mailbox`、LINE 公式アカウントなら `POST /connections/line`(下の「Outlook をつなぐ」「Gmail をつなぐ」「To Do をつなぐ」「Google Tasks をつなぐ」「Teams のチャットをつなぐ」「Google Chat のチャットをつなぐ」「Jira をつなぐ」「Teams をつなぐ」「Google Chat のスペースをつなぐ」「共有メールボックスをつなぐ」「LINE 公式アカウントをつなぐ」)。トピック索引が取り込み続けるのはこの経路だけ
 3. ほかの自分のアカウント(Slack・LINE など)をリストにするなら、ゲートウェイでそのサービスがつながっているか(`list_credentials`)を先に確かめ、つないだアカウントのアドレスを `identity` にして `POST /data-sources` を呼ぶ。結果の `identity.kind`:
    - `created`: 自分の連絡先を新しく作った / `bound`: チームが先に作っていた仮の連絡先(まだ本人が登録していない連絡先)が自分に結ばれた / `attached`・`already`: 自分の連絡先に付いた
    - `merge_candidate`: そのアドレスは別の仮の連絡先(`ghostContactId`)に付いている。同じ人なら、ユーザーに確かめてから `POST /contacts/{自分の contactId}/merge` で `from` に仮の連絡先を渡してまとめる
-4. **共有リスト**(Jira のプロジェクト、Teams のチャネル、Google Chat のスペース、これから Slack のチャネル)は、スペースに 1 つ。そのスペースを読める人なら誰でもつなげ、メンバーはソースから自動で写る(Jira はプロジェクトを閲覧できる人のうち、自分の Jira をゲートウェイにつないでトピック索引を有効にした人。Teams はチャネルのメンバーのうち、Google Chat はスペースのメンバーのうち、このゲートウェイにサインインしたことのある人)。共有メールボックス・LINE 公式アカウントのメンバーは管理者が足す。メンバーになったリストで自分のアカウントを登録するなら `POST /lists/{list_id}/identity`
+4. **共有リスト**(Jira のプロジェクト、Teams のチャネル、Google Chat のスペース、これから Slack のチャネル)は、スペースに 1 つ。そのスペースを読める人なら誰でもつなげ、メンバーはソースから自動で写る(Jira はプロジェクトを閲覧できる人のうち、自分の Jira をゲートウェイにつないでトピック索引を有効にした人。Teams はチャネルのメンバーのうち、Google Chat はスペースのメンバーのうち、このゲートウェイにサインインしたことのある人)。共有メールボックス・LINE 公式アカウントは、読める人がそれぞれ自分でつなぐとメンバーになる。メンバーになったリストで自分のアカウントを登録するなら `POST /lists/{list_id}/identity`
 5. タスクで追うなら、タスクのサービスのリストをつなぐ(下の「To Do をつなぐ」「Google Tasks をつなぐ」)。メモ(`add_note`)は個人リストのトピックに書くので、メール(Outlook・Gmail)かタスクのサービスをつないでから使える
 6. 終わったら、ユーザーに `<ゲートウェイ>/features/murmur`(ホームの「参加中のリストを見る」)を案内する。自分がメンバーのリストと取り込みの状態、まだつないでいないものを、ユーザーが自分で確かめられる。「どのリストに入っている?」と聞かれたときも、`GET /connections` で答えたうえでこの画面を案内してよい
 
@@ -167,6 +167,17 @@ Google Chat はスペースを 1 つの**共有リスト**にする(Google Works
 3. `connected` で `created: true` なら、新しく作った。**箱を使っているチームの人にも、それぞれつなぐよう伝える**(つないだ人だけがメンバーになる。ユーザーに文面を確かめて、Teams やメールで伝える)。`created: false` なら、もうあるリストにメンバーとして入った
 4. 取り込むのはつないだあとに届くメールだけ(過去のメールは取らない)。受信トレイと送信済みを読む。箱から送ったメールは、箱の送信済みに入る設定なら取り込まれる。止めるときと `broken` は Jira と同じ(メンバーの誰も読めなくなると `broken`。読める人がつなぎ直すと戻る。つないだ人が読めなくなっても、読めるメンバーがいればその人の接続に切り替わって続く)
 5. 共有メールボックスのトピックには担当者がないので、担当は `claim` で決める(Teams と同じ)。箱のアドレス宛てのメールは、メンバー全員へのリスト宛てのアテンション(`attention.list`)になる。箱から送るときの `record_sent` の `from` は省いてよい(箱のアドレスになる)
+
+### LINE 公式アカウントをつなぐ(公式アカウントの共有リスト)
+
+LINE 公式アカウントは、アカウント 1 つを 1 つの**共有リスト**にする。LINE は過去の会話を API で返さないので、公式アカウントの Webhook は業務システム(ビルメンNEXT。ゲートウェイのサービス `bm-next`)が受けて全部を保存し、トピック索引はそれを 5 分ごとの見回りで読む(届いてから最大 5 分ほど遅れる)。読むのはゲートウェイの業務システムの接続(本人の API キー)で、同意は Outlook と同じもの。メンバーは、**自分でつないで、自分の接続で業務システムの LINE のメッセージを読めた人**だけ。1 時間ごとに確かめ直し、読めなくなった人はメンバーから外れる。業務システムの組織 1 つに公式アカウントは 1 つで、誰がつないでも同じリストになる。
+
+1. ゲートウェイに業務システムの接続(サービス `bm-next`)があるか(`list_credentials`)を確かめる。なければ、業務システムで本人の API キー(LINE のメッセージを読むスコープ `platform.line-message.read` を持つロール)を作り、ゲートウェイに登録してもらう
+2. `POST /connections/line`(本文は `{"credential_id"?}`)を呼び、`status` で分ける。`authorize`・`choose`・`no_credential` は Outlook と同じ。`forbidden` は、このデプロイで LINE の共有リストを管理者が許していない(デプロイの設定 `MURMUR_SHARED_SERVICES` に `line`。管理者に伝える)か、その接続で業務システムの LINE のメッセージを読めない(業務システムのロールとスコープを確かめてもらう)
+3. `connected` で `created: true` なら、新しく作った。**公式アカウントのやりとりを見る人にも、それぞれつなぐよう伝える**(つないだ人だけがメンバーになる)。`created: false` なら、もうあるリストにメンバーとして入った
+4. 取り込むのはつないだあとに業務システムに届いた・業務システムから送ったメッセージだけ。友だちとの 1 対 1 は相手ごとの会話で、話題ごとにトピックが分かれる(別の相手のメッセージが同じトピックに入ることはない)。相手のアドレスは LINE の userId(`U` で始まる 33 文字)で、名前は業務システムで引ける(`lineConversation` や `lineEvents` の `displayName`・`memberName`。ビルメンNEXT のスキル)。名寄せの候補として連絡先を作る(上の「名寄せ」)。画像・スタンプ・ファイルなどは本文が「[画像]」のような印になる
+5. 1 対 1 で届いたメッセージは、メンバー全員へのリスト宛てのアテンション(`attention.list`)になる。担当は `claim` で決める(共有メールボックスと同じ)。グループ・トークルームのメッセージは文脈として入るだけ(アテンションにならない)
+6. **公式アカウントの管理画面(LINE Official Account Manager)のチャットから返した分は、業務システムにもトピック索引にも入らない**(LINE の仕様)。トピック索引に残したい返事は、エージェントが業務システムから送る(下の「送信の記録」の「LINE で送った」)。管理画面で返したトピックは、担当を外すか片付ける。止めるときと `broken` は共有メールボックスと同じ
 
 ### 名寄せ(連絡先)
 
@@ -275,6 +286,7 @@ Google Chat はスペースを 1 つの**共有リスト**にする(Google Works
 | connect_google_chat | `POST /connections/google-chat` | `{"credential_id"?, "space"?}`(`space` は `choose_space` の `spaces[].id`) | `connect_outlook` と同じ + `choose_space`(`spaces`)。`forbidden` はデプロイで許していないか Google でサインインしていない。上の「Google Chat のスペースをつなぐ」 |
 | connect_teams | `POST /connections/teams` | `{"credential_id"?, "team"?, "channel"?}`(`team` は `choose_team` の `teams[].id`、`channel` は `choose_channel` の `channels[].id`) | `connect_outlook` と同じ + `choose_team`(`teams`)・`choose_channel`(`channels`)。`forbidden` はデプロイで許していないか Entra ID でない。上の「Teams をつなぐ」 |
 | connect_shared_mailbox | `POST /connections/shared-mailbox` | `{"mailbox", "credential_id"?}`(`mailbox` は共有メールボックスのアドレス) | `connect_outlook` と同じ。`forbidden` はデプロイで許していないか、その接続で箱を読めない。上の「共有メールボックスをつなぐ」 |
+| connect_line | `POST /connections/line` | `{"credential_id"?}`(業務システム `bm-next` の接続) | `connect_outlook` と同じ。`forbidden` はデプロイで許していないか、その接続で業務システムの LINE のメッセージを読めない。上の「LINE 公式アカウントをつなぐ」 |
 | list_connections | `GET /connections` | | 自分がつないだものと、メンバーになっている共有リスト(`kind`: `outlook` / `shared-mailbox` / `gmail` / `todo` / `google-tasks` / `jira` / `teams` / `teams-chat` / `google-chat` / `google-chat-dm`、共有メールボックスは `mailbox`(箱のアドレス)、To Do と Google Tasks は `list`(リストの名前)、Jira は `site`・`project`、Teams は `team`・`channel`、Google Chat のスペースは `space`、共有リストは `shared: true`・`created_by`)と取り込みの状態(`status`: `setup` / `ok` / `broken`(`reason`) / `disconnected`)、`last_sync_at` |
 | disconnect | `POST /connections/{data_source}/disconnect` | | 取り込みを止める。共有リストは作った人と管理者だけ。トピックとリストは残る |
 | create_data_source | `POST /data-sources` | `{"channel", "name", "identity", "gateway_credential_id", "description"?, "group"?}`。個人リスト(メンバーは自分だけ)を作る | `get_list` と同じ + `identity`(上の「初めてつないだとき」) |
@@ -324,6 +336,7 @@ Google Chat はスペースを 1 つの**共有リスト**にする(Google Works
 - **Jira のコメント**: `sent_ref` にコメント ID、`anchors.thread_key` に課題キー、`reply_to_thread_id` に課題のトピック
 - **Teams のチャットで送った**: `data_source` に本人の Teams のチャットのリスト、`sent_ref` に投稿の API が返したメッセージの `id`、`anchors.conversation_id` にチャットの ID、グループのチャットなら `anchors.conversation_group: true`。`to` は 1 対 1 なら相手、グループならメンションした人の Teams のアドレス(`<テナント ID>/<オブジェクト ID>`)。会話を付けないと、相手の返事がそのトピックに入らないことがある
 - **Google Chat で送った**: `data_source` に送ったリスト(スペースの共有リストか、本人の Google Chat のチャットのリスト)、`sent_ref` に投稿の API が返したメッセージの `name`(`spaces/.../messages/...`)。スレッドに返信したら `anchors.thread_ts` にスレッドの `name`(`spaces/.../threads/...`)。DM・グループで送ったら `anchors.conversation_id` にスペースの `name`、グループのチャットなら `anchors.conversation_group: true`。`to` は DM なら相手、スペース・グループならメンションした人の Google のアカウントの ID(`users/<ID>` の `<ID>`)。メンションしていなければ `to_contact_ids` にスペースで返事をもらいたい人の連絡先を入れる
+- **LINE で送った**: 送るのは業務システム(ビルメンNEXT のスキル)の mutation `sendLineMessage(to, text, retryKey)`。`to` は相手の LINE の userId(グループなら groupId)、`retryKey` は送り直しで二重にならないよう UUID を 1 つ決めて、送り直すときも同じものを使う。返った `result` が `SUCCESS` なら、すぐ記録する: `data_source` に LINE 公式アカウントのリスト、`to` に相手の userId(グループなら groupId)、`sent_ref` に返った `messageId`、`anchors.conversation_id` に相手の userId(グループなら groupId と `anchors.conversation_group: true`)、返事なら `reply_to_thread_id`。`from` は省く(公式アカウントになる)。あとで見回りが業務システムの送信を取り込んでも、同じ `messageId` なので 1 つにまとまる
 - **To Do / Google Tasks のタスクを作った**: `data_source` にタスクのリスト、`sent_ref` にタスクの `id`(To Do は「変わらない ID」。microsoft-graph スキルの To Do の手順どおり `Prefer: IdType="ImmutableId"` を付けて作ったときに返る、`AAkALgAAAAAA` で始まる短い ID。`AAMk` で始まる長い ID を渡すと、同じタスクが 2 つのトピックに分かれる)、`subject` にタスクの名前、`source_thread_id` に元のトピック。`to` は要らない。タスクの ID がそのトピックの区切りになり、あとから届く写し(件名・期限・完了)も同じトピックに入る
 
 ## よくある流れ
