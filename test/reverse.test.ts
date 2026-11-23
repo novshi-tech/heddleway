@@ -166,6 +166,14 @@ describe("pairing", () => {
     expect(res.headers.get("location")).toBe(`/login?next=${encodeURIComponent("/pair?code=ABCD-EFGH")}`);
   });
 
+  it("lets one address wait for only a few pairings at a time", async () => {
+    const local = await newKey();
+    const from = (ip: string) => SELF.fetch(`${BASE}/reverse/pair`, { method: "POST", headers: { "content-type": "application/json", "cf-connecting-ip": ip }, body: JSON.stringify({ name: "many", public_key: local.publicJwk }) });
+    for (let i = 0; i < 5; i++) expect((await from("198.51.100.7")).status).toBe(201);
+    expect((await from("198.51.100.7")).status).toBe(429);
+    expect((await from("198.51.100.8")).status).toBe(201);
+  });
+
   it("can be denied", async () => {
     const started = await startPairing(await newKey(), "boid");
     const denied = await ownerPost("/pair", { code: started.code, name: "boid", decision: "deny" }, user());
@@ -189,20 +197,31 @@ describe("pairing", () => {
     expect((await ownerPost("/pair", { code: started.code, name: "my-board", decision: "approve" }, owner)).status).toBe(303);
   });
 
-  it("replaces the owner's service of the same name, keeping its ID and what it may call back", async () => {
+  it("replaces the owner's service of the same name when the owner ticks it, keeping its ID", async () => {
     const owner = user();
     const added = await vaultFor(env, owner).add(await upstream("board"), { "x-api-key": "k", authorization: "t" });
     if ("error" in added) throw new Error(added.error);
     const old = await pair(owner, "legacy", undefined, ["board"]);
     const conn = await connect(old.local, old.id);
 
-    // Pairing again with a new key: the page says it replaces, and keeps the choice checked.
+    // Pairing again with a new key: the page says it replaces, shows both keys, and starts
+    // with nothing chosen.
     const fresh = await newKey();
     const started = await startPairing(fresh, "legacy");
     const page = await (await SELF.fetch(`${BASE}/pair?code=${started.code}`, { headers: { cookie: await cookie(owner) } })).text();
     expect(page).toContain("置き換えます");
-    expect(page).toMatch(/value="board" checked/);
-    const form = new URLSearchParams({ code: started.code, name: "legacy", decision: "approve", callback: "board" });
+    expect(page).toContain(`name="replace" value="${old.id}"`);
+    expect(page).not.toMatch(/value="board" checked/);
+    expect(page).toContain(started.thumbprint);
+
+    // Without the tick, nothing changes.
+    const unticked = new URLSearchParams({ code: started.code, name: "legacy", decision: "approve", callback: "board" });
+    const refused = await SELF.fetch(`${BASE}/pair`, { method: "POST", headers: { cookie: await cookie(owner), origin: ORIGIN }, body: unticked, redirect: "manual" });
+    expect(refused.status).toBe(409);
+    expect(conn.closed()).toBeNull();
+    expect((await call(owner, old.id, "legacy", "/x")).status).toBe(200);
+
+    const form = new URLSearchParams({ code: started.code, name: "legacy", decision: "approve", callback: "board", replace: old.id });
     const approved = await SELF.fetch(`${BASE}/pair`, { method: "POST", headers: { cookie: await cookie(owner), origin: ORIGIN }, body: form, redirect: "manual" });
     expect(approved.headers.get("location")).toBe(`/?paired=${old.id}`);
     expect((await poll(started.pairing_id)).body.service_id).toBe(old.id);

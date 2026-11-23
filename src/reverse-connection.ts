@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { registryFor } from "./registry";
 import { handleCall } from "./reverse";
 
 // The live side of a reverse connection (docs/adr/0003): one object per local service holds
@@ -50,6 +51,9 @@ export interface ConnectGrant {
   serviceId: string;
   name: string;
   mode: ReverseMode;
+  // The key the Worker checked, by thumbprint. The object checks it again against the
+  // registration as it is now, so that a key replaced meanwhile cannot slip in.
+  thumbprint: string;
   proof:
     // The one-time challenge the service signed, and when it expires (ms), so that a
     // signature cannot open a second connection.
@@ -68,7 +72,17 @@ interface Attachment {
   connection: string;
   connectedAt: number;
   serviceId: string;
+  thumbprint: string;
 }
+
+// A resume token as stored: when it expires, and for which key's registration.
+interface StoredResume {
+  exp: number;
+  thumbprint: string;
+}
+
+// The most calls back one connection may have in flight.
+const MAX_CALLS_IN_FLIGHT = 8;
 
 interface Pending {
   connection: string;
@@ -116,6 +130,7 @@ function headerList(value: unknown): HeaderList | null {
 
 export class ReverseConnection extends DurableObject<Env> {
   private pending = new Map<string, Pending>();
+  private callsInFlight = new Map<string, number>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -137,17 +152,23 @@ export class ReverseConnection extends DurableObject<Env> {
       const key = `used:${grant.proof.challenge}`;
       if ((await this.ctx.storage.get(key)) !== undefined) return refuse("the challenge was already used; request a new one");
       // In strict mode, the key itself opens one connection only.
-      if (grant.mode === "strict" && (await this.ctx.storage.get("keySpent"))) {
+      if (grant.mode === "strict" && (await this.ctx.storage.get("keySpent")) === grant.thumbprint) {
         return refuse("in strict mode the key opens one connection only; come back with a resume token, or pair again");
       }
       await this.ctx.storage.put(key, grant.proof.challengeExpiresAt);
-      if (grant.mode === "strict") await this.ctx.storage.put("keySpent", true);
     } else {
       const key = `resume:${await hashToken(grant.proof.token)}`;
-      const exp = await this.ctx.storage.get<number>(key);
-      if (exp === undefined || exp < now) return refuse("the resume token is unknown or expired; pair again");
-      await this.ctx.storage.delete(key);
+      const stored = await this.ctx.storage.get<StoredResume>(key);
+      if (!stored || stored.exp < now || stored.thumbprint !== grant.thumbprint) return refuse("the resume token is unknown or expired; pair again");
+      // Using one token ends all that were handed out before it: a leaked older token cannot
+      // take the connection over.
+      await this.ctx.storage.delete([...(await this.ctx.storage.list({ prefix: "resume:" })).keys()]);
     }
+    // The registration as it is now: removed or re-paired with another key since the Worker
+    // checked, and the connection is refused.
+    const current = await registryFor(this.env).getReverse(grant.serviceId);
+    if (!current || current.thumbprint !== grant.thumbprint) return refuse("the registration changed; pair again");
+    if (grant.mode === "strict" && grant.proof.kind === "key") await this.ctx.storage.put("keySpent", grant.thumbprint);
     await this.ctx.storage.put("mode", grant.mode);
 
     // One connection per service for now (ADR 0003, open question 2): the newest wins, so a
@@ -164,7 +185,7 @@ export class ReverseConnection extends DurableObject<Env> {
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     this.ctx.acceptWebSocket(server);
-    const attachment: Attachment = { connection: crypto.randomUUID(), connectedAt: now, serviceId: grant.serviceId };
+    const attachment: Attachment = { connection: crypto.randomUUID(), connectedAt: now, serviceId: grant.serviceId, thumbprint: grant.thumbprint };
     server.serializeAttachment(attachment);
     const status = (await this.ctx.storage.get<ConnectionStatus>("status")) ?? { connected: false };
     await this.ctx.storage.put<ConnectionStatus>("status", { ...status, connected: true, connectedAt: now, disconnectedAt: undefined });
@@ -178,7 +199,7 @@ export class ReverseConnection extends DurableObject<Env> {
       }),
     );
     if (grant.mode === "strict") {
-      await this.sendResume(server, grant.serviceId, now);
+      await this.sendResume(server, grant.serviceId, grant.thumbprint, now);
       await this.ctx.storage.setAlarm(now + RESUME_ROTATE_MS);
     }
     console.log(JSON.stringify({ type: "reverse_connected", service: grant.serviceId, mode: grant.mode, proof: grant.proof.kind }));
@@ -188,18 +209,18 @@ export class ReverseConnection extends DurableObject<Env> {
   // Replaces the resume token while connected (strict mode). The previous one stays valid until
   // it expires, in case the new one is lost with the connection.
   async alarm(): Promise<void> {
-    const socket = this.ctx.getWebSockets().at(-1);
-    const serviceId = socket && this.attachment(socket)?.serviceId;
-    if (!socket || !serviceId || (await this.ctx.storage.get("mode")) !== "strict") return;
+    const socket = this.newest();
+    const attachment = socket && this.attachment(socket);
+    if (!socket || !attachment || (await this.ctx.storage.get("mode")) !== "strict") return;
     const now = Date.now();
     await this.purge(now);
-    await this.sendResume(socket, serviceId, now);
+    await this.sendResume(socket, attachment.serviceId, attachment.thumbprint, now);
     await this.ctx.storage.setAlarm(now + RESUME_ROTATE_MS);
   }
 
-  private async sendResume(socket: WebSocket, serviceId: string, now: number): Promise<void> {
+  private async sendResume(socket: WebSocket, serviceId: string, thumbprint: string, now: number): Promise<void> {
     const token = `${serviceId}.${randomValue()}`;
-    await this.ctx.storage.put(`resume:${await hashToken(token)}`, now + RESUME_TTL_MS);
+    await this.ctx.storage.put<StoredResume>(`resume:${await hashToken(token)}`, { exp: now + RESUME_TTL_MS, thumbprint });
     try {
       socket.send(JSON.stringify({ type: "resume", token, expires_in: RESUME_TTL_MS / 1000 }));
     } catch {
@@ -209,15 +230,28 @@ export class ReverseConnection extends DurableObject<Env> {
 
   private async purge(now: number): Promise<void> {
     const dead: string[] = [];
-    for (const prefix of ["used:", "resume:"]) {
-      for (const [key, exp] of await this.ctx.storage.list<number>({ prefix })) if (exp < now) dead.push(key);
-    }
+    for (const [key, exp] of await this.ctx.storage.list<number>({ prefix: "used:" })) if (exp < now) dead.push(key);
+    for (const [key, r] of await this.ctx.storage.list<StoredResume>({ prefix: "resume:" })) if (r.exp < now) dead.push(key);
     if (dead.length > 0) await this.ctx.storage.delete(dead);
   }
 
-  async relay(request: RelayRequest): Promise<RelayResult> {
+  // The newest open socket; with `thumbprint`, only one opened with that key.
+  private newest(thumbprint?: string): WebSocket | undefined {
+    let best: { socket: WebSocket; at: number } | undefined;
+    for (const socket of this.ctx.getWebSockets()) {
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      const a = this.attachment(socket);
+      if (!a || (thumbprint !== undefined && a.thumbprint !== thumbprint)) continue;
+      if (!best || a.connectedAt >= best.at) best = { socket, at: a.connectedAt };
+    }
+    return best?.socket;
+  }
+
+  // `thumbprint` is the registration's key as the Worker read it: a socket opened with
+  // another key gets nothing.
+  async relay(request: RelayRequest, thumbprint: string): Promise<RelayResult> {
     if (request.body && request.body.byteLength > MAX_BODY_BYTES) return { error: "too_large" };
-    const socket = this.ctx.getWebSockets().at(-1);
+    const socket = this.newest(thumbprint);
     const connection = socket && this.attachment(socket)?.connection;
     if (!socket || !connection) return { error: "offline" };
     const id = crypto.randomUUID();
@@ -247,7 +281,24 @@ export class ReverseConnection extends DurableObject<Env> {
 
   async status(): Promise<ConnectionStatus> {
     const stored = (await this.ctx.storage.get<ConnectionStatus>("status")) ?? { connected: false };
-    return { ...stored, connected: this.ctx.getWebSockets().length > 0 };
+    return { ...stored, connected: this.newest() !== undefined };
+  }
+
+  // The registration was paired again with the key `thumbprint`: sockets and resume tokens of
+  // the old key go, and the new key may open its first connection.
+  async reset(thumbprint: string): Promise<void> {
+    for (const socket of this.ctx.getWebSockets()) {
+      if (this.attachment(socket)?.thumbprint === thumbprint) continue;
+      this.failPending(this.attachment(socket)?.connection);
+      try {
+        socket.close(CLOSE_REVOKED, "the registration was paired again with another key");
+      } catch {
+        // Already closing.
+      }
+    }
+    const stale = [...(await this.ctx.storage.list<StoredResume>({ prefix: "resume:" }))].filter(([, r]) => r.thumbprint !== thumbprint).map(([k]) => k);
+    if (stale.length > 0) await this.ctx.storage.delete(stale);
+    if ((await this.ctx.storage.get("keySpent")) !== thumbprint) await this.ctx.storage.delete("keySpent");
   }
 
   // The registration was deleted: drop the socket and everything stored.
@@ -295,15 +346,26 @@ export class ReverseConnection extends DurableObject<Env> {
 
     // A call back to the gateway as the owner (src/reverse.ts handleCall).
     if (frame.type === "call") {
-      const serviceId = this.attachment(socket)?.serviceId;
-      if (!serviceId) return this.protocolError(socket, "unknown connection");
+      const attachment = this.attachment(socket);
+      if (!attachment) return this.protocolError(socket, "unknown connection");
+      const { serviceId, thumbprint } = attachment;
+      const busy = (this.callsInFlight.get(attachment.connection) ?? 0) >= MAX_CALLS_IN_FLIGHT;
       const ctx = { waitUntil: (p: Promise<unknown>) => this.ctx.waitUntil(p), passThroughOnException() {}, props: {} } as unknown as ExecutionContext;
       let result: Record<string, unknown>;
-      try {
-        result = await handleCall(this.env, ctx, serviceId, frame);
-      } catch (error) {
-        console.error(JSON.stringify({ type: "reverse_call_failed", reverse: serviceId, error: String(error) }));
-        result = { type: "call_result", id: frame.id, status: 502, headers: [["content-type", "application/json"]], body: btoa('{"error":"the gateway could not complete the call"}') };
+      if (busy) {
+        result = { type: "call_result", id: frame.id, status: 429, headers: [["content-type", "application/json"]], body: btoa(`{"error":"at most ${MAX_CALLS_IN_FLIGHT} calls may be in flight on one connection"}`) };
+      } else {
+        this.callsInFlight.set(attachment.connection, (this.callsInFlight.get(attachment.connection) ?? 0) + 1);
+        try {
+          result = await handleCall(this.env, ctx, serviceId, thumbprint, frame);
+        } catch (error) {
+          console.error(JSON.stringify({ type: "reverse_call_failed", reverse: serviceId, error: String(error) }));
+          result = { type: "call_result", id: frame.id, status: 502, headers: [["content-type", "application/json"]], body: btoa('{"error":"the gateway could not complete the call"}') };
+        } finally {
+          const n = (this.callsInFlight.get(attachment.connection) ?? 1) - 1;
+          if (n > 0) this.callsInFlight.set(attachment.connection, n);
+          else this.callsInFlight.delete(attachment.connection);
+        }
       }
       try {
         socket.send(JSON.stringify(result));
@@ -324,7 +386,7 @@ export class ReverseConnection extends DurableObject<Env> {
     } catch {
       // Already closed.
     }
-    if (this.ctx.getWebSockets().filter((s) => s !== socket).length === 0) {
+    if (this.ctx.getWebSockets().filter((s) => s !== socket && s.readyState === WebSocket.OPEN).length === 0) {
       const status = await this.ctx.storage.get<ConnectionStatus>("status");
       if (status) await this.ctx.storage.put<ConnectionStatus>("status", { ...status, connected: false, disconnectedAt: Date.now() });
     }

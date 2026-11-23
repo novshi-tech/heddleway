@@ -10,6 +10,9 @@
 // With --callback-port, the client also listens on 127.0.0.1:<PORT> and passes requests to
 // /api/<service>/... back to the gateway over the connection, as the owner (ADR 0003 decision 5):
 // the "relay port" a sandbox gets instead of a token. The owner chooses the services at the gateway.
+// The port is the owner's reach to those services, so it takes its own bearer token (printed at
+// start, or set with HEDDLEWAY_CALLBACK_TOKEN), answers only to Host 127.0.0.1/localhost, and
+// refuses browser requests (any Origin header): a web page cannot use it through the browser.
 //
 // The key file holds the private key (standard mode: ADR 0003 decision 4). It is written 0600;
 // keep it away from agents. `connect` reconnects by itself after sleep, network changes and
@@ -17,7 +20,7 @@
 // the resume tokens stay in memory, nothing is written to disk, and after a restart or a drop
 // longer than the token's life (15 minutes) the owner pairs again.
 import { readFileSync, writeFileSync, existsSync, chmodSync } from "node:fs";
-import { webcrypto as crypto } from "node:crypto";
+import { webcrypto as crypto, timingSafeEqual } from "node:crypto";
 import http from "node:http";
 
 const [command, ...args] = process.argv.slice(2);
@@ -128,8 +131,18 @@ async function connect(inMemory) {
 
   const callbackPort = option("callback-port");
   if (callbackPort) {
+    const callbackToken = process.env.HEDDLEWAY_CALLBACK_TOKEN || b64url(crypto.getRandomValues(new Uint8Array(32)));
+    const hosts = new Set([`127.0.0.1:${callbackPort}`, `localhost:${callbackPort}`]);
+    const expected = Buffer.from(`Bearer ${callbackToken}`);
+    const authorized = (value) => {
+      const given = Buffer.from(value ?? "");
+      return given.length === expected.length && timingSafeEqual(given, expected);
+    };
     http
       .createServer(async (req, res) => {
+        // DNS rebinding and pages in a browser: only local callers that hold the token.
+        if (!hosts.has(req.headers.host ?? "") || req.headers.origin !== undefined) return res.writeHead(403).end('{"error":"forbidden"}');
+        if (!authorized(req.headers.authorization)) return res.writeHead(401).end('{"error":"send Authorization: Bearer <relay port token>"}');
         const m = req.url.match(/^\/api\/([a-z0-9][a-z0-9-]*)(\/.*)?$/);
         if (!m) return res.writeHead(404).end('{"error":"call /api/<service>/..."}');
         if (!current) return res.writeHead(503).end('{"error":"not connected to the gateway"}');
@@ -137,7 +150,7 @@ async function connect(inMemory) {
         for await (const c of req) chunks.push(c);
         const body = Buffer.concat(chunks);
         const id = crypto.randomUUID();
-        const headers = Object.entries(req.headers).filter(([n]) => !["host", "connection", "content-length"].includes(n)).map(([n, v]) => [n, String(v)]);
+        const headers = Object.entries(req.headers).filter(([n]) => !["host", "connection", "content-length", "authorization", "cookie", "origin"].includes(n)).map(([n, v]) => [n, String(v)]);
         const result = await new Promise((resolve) => {
           waiting.set(id, resolve);
           current.send(JSON.stringify({ type: "call", id, method: req.method, service: m[1], path: m[2] ?? "/", headers, body: body.length ? body.toString("base64") : null }));
@@ -146,7 +159,10 @@ async function connect(inMemory) {
         res.writeHead(result.status, Object.fromEntries((result.headers ?? []).filter(([n]) => !["content-length", "content-encoding", "transfer-encoding"].includes(n))));
         res.end(result.body ? Buffer.from(result.body, "base64") : undefined);
       })
-      .listen(Number(callbackPort), "127.0.0.1", () => console.log(`calls back to the gateway at http://127.0.0.1:${callbackPort}/api/<service>/...`));
+      .listen(Number(callbackPort), "127.0.0.1", () => {
+        console.log(`calls back to the gateway at http://127.0.0.1:${callbackPort}/api/<service>/...`);
+        if (!process.env.HEDDLEWAY_CALLBACK_TOKEN) console.log(`with the header  Authorization: Bearer ${callbackToken}`);
+      });
   }
 
   for (;;) {

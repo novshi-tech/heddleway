@@ -18,7 +18,7 @@ import {
   type Pairing,
   type ReverseService,
 } from "../reverse";
-import type { ConnectionStatus } from "../reverse-connection";
+import { connectionFor, type ConnectionStatus } from "../reverse-connection";
 import { admin } from "./admin";
 import { masthead } from "./connections";
 import { Html, html } from "./html";
@@ -109,8 +109,9 @@ async function ownedByName(env: Env, owner: string, name: string): Promise<Rever
 
 async function confirmPage(env: Env, user: Session, code: string, pairing: Pairing, name: string, error?: string, status = 200, chosen?: string[]): Promise<Response> {
   const existing = await ownedByName(env, user.sub, name);
-  // Pairing again keeps what the owner chose before, unless they are choosing now.
-  const fieldset = await callbackFieldset(env, user.sub, chosen ?? existing?.callback ?? []);
+  // Replacing starts with nothing chosen, like a new pairing: the code may come from someone
+  // else, and the owner picks again what the new key may call.
+  const fieldset = await callbackFieldset(env, user.sub, chosen ?? []);
   return page(
     "手元のサービスをペアリング",
     html`${masthead(env, user)}
@@ -125,7 +126,9 @@ ${pairing.mode === "strict" && html`<p class="hint">厳しめのモードです�
 <label>サービスの名前(Claude からは <code>/api/&lt;名前&gt;/...</code> で呼びます)<input type="text" name="name" value="${name}" pattern="[a-z0-9][a-z0-9\\-]*" maxlength="40" required></label>
 <p>つなぐと、${organizationName(env)} のゲートウェイを通して、あなた(だけ)が Claude からこのサービスの API を呼べるようになります。${fieldset ? "このサービスからは、下でチェックしたサービスだけを、あなたとして呼べます。" : "このサービスから、あなたの接続(ほかのサービス)を使うことはできません。"}</p>
 ${fieldset}
-${existing && html`<p class="hint">あなたの手元のサービス「${existing.name}」(${at.format(existing.createdAt)}にペアリング)を、このサービスで置き換えます。古い鍵は使えなくなり、いまの接続は切れます。Claude から呼ぶときの接続の ID は変わりません。</p>`}
+${existing && html`<fieldset><p>あなたの手元のサービス「${existing.name}」(${at.format(existing.createdAt)}にペアリング)が、もうあります。つなぐと、このサービスで置き換えます。古い鍵は使えなくなり、いまの接続は切れます。Claude から呼ぶときの接続の ID は変わりません。</p>
+<p class="hint">いまの鍵の指紋: <code>${existing.thumbprint}</code><br>新しい鍵の指紋: <code>${pairing.thumbprint}</code></p>
+<label class="choice"><input type="checkbox" name="replace" value="${existing.id}"> 自分で手元のサービスを入れ直したので、「${existing.name}」を置き換える</label></fieldset>`}
 <p class="hint">自分で起動したサービスのコードだけを承認してください。覚えのないコードなら、断ってください。</p>
 <div class="actions"><button name="decision" value="approve">つなぐ</button><button class="quiet" name="decision" value="deny">断る</button></div>
 </form>`,
@@ -180,12 +183,12 @@ export async function pairSubmit(request: Request, env: Env): Promise<Response> 
   if (await nameInUse(env, name)) return confirmPage(env, user, code, pairing, name, `「${name}」はこのゲートウェイのサービスの名前です。別の名前にしてください。`, 409, wanted);
   const callable = new Set(callbackAllowed(env) ? (await callableServices(env, user.sub)).map((c) => c.service) : []);
   const callback = [...new Set(wanted)].filter((w) => callable.has(w)).sort();
-  // The owner's service of the same name is replaced and keeps its ID, so that what holds
-  // `reverse:<ID>` keeps working. Its old connection is cut first, so the old key cannot slip in.
+  // Replacing the owner's service of the same name takes an explicit tick.
   const existing = await ownedByName(env, user.sub, name);
-  if (existing) await removeService(env, existing.id);
-  const service: ReverseService = {
-    id: existing?.id ?? crypto.randomUUID(),
+  const replaces = String(form.get("replace") ?? "") || undefined;
+  if (existing && replaces !== existing.id) return confirmPage(env, user, code, pairing, name, `「${name}」を置き換えるなら、置き換えるのチェックを入れてください。別のサービスなら、別の名前にしてください。`, 409, wanted);
+  const decision: ReverseService = {
+    id: crypto.randomUUID(),
     name,
     owner: user.sub,
     ownerName: user.name,
@@ -196,10 +199,14 @@ export async function pairSubmit(request: Request, env: Env): Promise<Response> 
     mode: pairing.mode ?? "standard",
     createdAt: Date.now(),
   };
-  const result = await registry.decidePairing(codeHash, service, POLL_TTL_MS);
-  if (result === "name_taken") return confirmPage(env, user, code, pairing, name, `「${name}」という手元のサービスがもうあります。もう一度試してください。`, 409, wanted);
-  if (result === "expired") return codeForm(env, user, code, "コードが切れました。手元のサービスでもう一度ペアリングを始めてください。", 404);
-  console.log(JSON.stringify({ type: "reverse_paired", user: user.sub, service: service.id, name, ...(existing ? { replaced: true } : {}) }));
+  const result = await registry.decidePairing(codeHash, decision, POLL_TTL_MS, replaces);
+  if (result.status === "name_taken") return confirmPage(env, user, code, pairing, name, `「${name}」という手元のサービスがもうあります。もう一度試してください。`, 409, wanted);
+  if (result.status !== "ok" || !result.service) return codeForm(env, user, code, "コードが切れました。手元のサービスでもう一度ペアリングを始めてください。", 404);
+  const service = result.service;
+  // The old key's connection and resume tokens go; the registration already names the new key,
+  // so the old one is refused even before this.
+  if (result.replaced) await connectionFor(env, service.id).reset(service.thumbprint);
+  console.log(JSON.stringify({ type: "reverse_paired", user: user.sub, service: service.id, name, ...(result.replaced ? { replaced: true } : {}) }));
   return redirect(`/?paired=${service.id}`);
 }
 

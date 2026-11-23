@@ -39,6 +39,8 @@ export const PAIRING_TTL_MS = 5 * 60 * 1000;
 const POLL_TTL_MS = 5 * 60 * 1000;
 const POLL_INTERVAL_SECONDS = 3;
 const MAX_PENDING_PAIRINGS = 100;
+// Pending pairings from one address: one script should not fill the whole queue.
+const MAX_PENDING_PER_SOURCE = 5;
 const CHALLENGE_TTL_SECONDS = 60;
 // The service's signed assertion must be fresh.
 const ASSERTION_MAX_AGE_SECONDS = 120;
@@ -85,6 +87,8 @@ export interface Pairing {
   expiresAt: number;
   status: "pending" | "approved" | "denied";
   serviceId?: string;
+  // A hash of the address the pairing came from, for the per-address cap.
+  source?: string;
 }
 
 export type PairingDecision = ReverseService | "deny";
@@ -215,7 +219,9 @@ export async function startPairing(request: Request, env: Env): Promise<Response
     expiresAt: now + PAIRING_TTL_MS,
     status: "pending",
   };
-  if (!(await registryFor(env).createPairing(pairing, MAX_PENDING_PAIRINGS))) {
+  const ip = request.headers.get("cf-connecting-ip");
+  if (ip) pairing.source = await sha256(`source:${ip}`);
+  if (!(await registryFor(env).createPairing(pairing, MAX_PENDING_PAIRINGS, MAX_PENDING_PER_SOURCE))) {
     return json({ error: "too many pairings are waiting; try again in a few minutes" }, 429);
   }
   const base = publicUrl(env);
@@ -310,7 +316,7 @@ export async function reverseConnect(request: Request, env: Env): Promise<Respon
 }
 
 function handOver(env: Env, service: ReverseService, proof: ConnectGrant["proof"]): Promise<Response> {
-  const grant: ConnectGrant = { serviceId: service.id, name: service.name, mode: service.mode ?? "standard", proof };
+  const grant: ConnectGrant = { serviceId: service.id, name: service.name, mode: service.mode ?? "standard", thumbprint: service.thumbprint, proof };
   const headers = new Headers({ upgrade: "websocket", [GRANT_HEADER]: JSON.stringify(grant) });
   return connectionFor(env, service.id).fetch("https://reverse.internal/connect", { headers });
 }
@@ -336,7 +342,7 @@ export async function relayToLocal(
   }
   const headers: HeaderList = [...forwardHeaders(request.headers, {})];
   const path = `${upstreamPath || "/"}${new URL(request.url).search}`;
-  const result = await connectionFor(env, service.id).relay({ method: request.method, path, headers, body });
+  const result = await connectionFor(env, service.id).relay({ method: request.method, path, headers, body }, service.thumbprint);
 
   console.log(
     JSON.stringify({
@@ -425,7 +431,7 @@ const CALL_TOKEN_TTL_SECONDS = 60;
 // `{"type": "call", id, method, service, path, headers, body}` in, the proxy's answer out.
 // The registration is read on every call, so removing it or narrowing the services takes effect
 // at once. The answer is a `call_result` frame; refusals are ordinary 4xx answers.
-export async function handleCall(env: Env, ctx: ExecutionContext, serviceId: string, frame: Record<string, unknown>): Promise<Record<string, unknown>> {
+export async function handleCall(env: Env, ctx: ExecutionContext, serviceId: string, thumbprint: string, frame: Record<string, unknown>): Promise<Record<string, unknown>> {
   const id = typeof frame.id === "string" ? frame.id : "";
   const answer = (status: number, error: string) => ({ type: "call_result", id, status, headers: [["content-type", "application/json"]], body: toBase64(new TextEncoder().encode(JSON.stringify({ error })).buffer as ArrayBuffer) });
   const service = typeof frame.service === "string" ? frame.service : "";
@@ -436,7 +442,8 @@ export async function handleCall(env: Env, ctx: ExecutionContext, serviceId: str
   if (!path.startsWith("/")) return answer(400, "path must start with /");
 
   const local = await registryFor(env).getReverse(serviceId);
-  if (!local) return answer(403, "the registration was removed");
+  // A connection opened with a key that was replaced since may not call as the owner.
+  if (!local || local.thumbprint !== thumbprint) return answer(403, "the registration was removed or paired again with another key");
   const refuse = (reason: string, message: string) => {
     console.warn(JSON.stringify({ type: "reverse_call_refused", reverse: serviceId, user: local.owner, service, method, reason }));
     return answer(403, message);
