@@ -117,6 +117,14 @@ export class Registry extends DurableObject<Env> {
     return (await this.ctx.storage.get<ReverseService>(`reverse:${id}`)) ?? null;
   }
 
+  async setReverseCallback(id: string, owner: string, callback: string[]): Promise<ReverseService | null> {
+    const service = await this.getReverse(id);
+    if (!service || service.owner !== owner) return null;
+    const next = { ...service, callback };
+    await this.ctx.storage.put(`reverse:${id}`, next);
+    return next;
+  }
+
   async removeReverse(id: string): Promise<boolean> {
     return this.ctx.storage.delete(`reverse:${id}`);
   }

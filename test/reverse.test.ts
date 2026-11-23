@@ -6,6 +6,8 @@ import { describe, expect, it } from "vitest";
 import { publicUrl } from "../src/config";
 import { buildServer } from "../src/mcp";
 import { signToken } from "../src/tokens";
+import { vaultFor } from "../src/vault";
+import { upstream } from "./helpers";
 
 // Reverse connections (docs/adr/0003, docs/reverse-protocol.md): a local service pairs with
 // its owner's approval, connects with its key, and the gateway relays its owner's calls to it.
@@ -54,10 +56,12 @@ async function poll(pairingId: string) {
 }
 
 // Pairs a new local service owned by `owner`; returns its ID.
-async function pair(owner: string, name = "boid", local?: Local): Promise<{ id: string; local: Local }> {
+async function pair(owner: string, name = "boid", local?: Local, callback: string[] = []): Promise<{ id: string; local: Local }> {
   local ??= await newKey();
   const started = await startPairing(local, name);
-  const approved = await ownerPost("/pair", { code: started.code, name, decision: "approve" }, owner);
+  const form = new URLSearchParams({ code: started.code, name, decision: "approve" });
+  for (const c of callback) form.append("callback", c);
+  const approved = await SELF.fetch(`${BASE}/pair`, { method: "POST", headers: { cookie: await cookie(owner), origin: ORIGIN }, body: form, redirect: "manual" });
   expect(approved.status).toBe(303);
   const polled = await poll(started.pairing_id);
   expect(polled.body.status).toBe("approved");
@@ -362,6 +366,69 @@ describe("MCP tools", () => {
     expect(theirs.services).not.toContain("legacy");
     const refused = await other.callTool({ name: "issue_token", arguments: { credential_ids: [`reverse:${id}`] } });
     expect(refused.isError).toBe(true);
+    await hangUp(conn);
+  });
+});
+
+describe("calling back", () => {
+  async function withBoard(owner: string) {
+    const added = await vaultFor(env, owner).add(await upstream("board"), { "x-api-key": "owner-key", authorization: "owner-token" });
+    if ("error" in added) throw new Error(added.error);
+  }
+
+  // Sends a call frame and waits for its result.
+  async function callBack(conn: Awaited<ReturnType<typeof connect>>, frame: Frame) {
+    const id = crypto.randomUUID();
+    conn.ws.send(JSON.stringify({ type: "call", id, ...frame }));
+    await until(() => conn.frames.some((f) => f.type === "call_result" && f.id === id), 4000);
+    const result = conn.frames.find((f) => f.id === id)!;
+    const body = result.body ? new TextDecoder().decode(Uint8Array.from(atob(result.body as string), (c) => c.charCodeAt(0))) : "";
+    return { status: result.status as number, body };
+  }
+
+  it("reaches the services the owner chose, with the owner's credential", async () => {
+    const owner = user();
+    await withBoard(owner);
+    const { id, local } = await pair(owner, "boid", undefined, ["board"]);
+    const conn = await connect(local, id);
+    const result = await callBack(conn, { method: "POST", service: "board", path: "/v1/projects?x=1", headers: [["content-type", "application/json"]], body: btoa("{}") });
+    expect(result.status).toBe(200);
+    const seen = JSON.parse(result.body);
+    expect(seen.url).toBe("https://api.the-board.jp/v1/projects?x=1");
+    expect(seen.headers["x-api-key"]).toBe("owner-key");
+    expect(seen.body).toBe("{}");
+    await hangUp(conn);
+  });
+
+  it("is off until the owner chooses a service, and follows changes at once", async () => {
+    const owner = user();
+    await withBoard(owner);
+    const { id, local } = await pair(owner, "boid");
+    const conn = await connect(local, id);
+    expect((await callBack(conn, { method: "GET", service: "board", path: "/v1/projects" })).status).toBe(403);
+
+    const settings = await SELF.fetch(`${BASE}/local-services/${id}`, { headers: { cookie: await cookie(owner) } });
+    expect(await settings.text()).toContain('value="board"');
+    expect((await ownerPost(`/local-services/${id}`, { callback: "board" }, owner)).status).toBe(303);
+    expect((await callBack(conn, { method: "GET", service: "board", path: "/v1/projects" })).status).toBe(200);
+    // Another user cannot change it.
+    expect((await ownerPost(`/local-services/${id}`, { callback: "board" }, user())).headers.get("location")).toBe("/");
+
+    const form = new URLSearchParams();
+    await SELF.fetch(`${BASE}/local-services/${id}`, { method: "POST", headers: { cookie: await cookie(owner), origin: ORIGIN }, body: form, redirect: "manual" });
+    expect((await callBack(conn, { method: "GET", service: "board", path: "/v1/projects" })).status).toBe(403);
+    await hangUp(conn);
+  });
+
+  it("offers only services the owner reaches, and keeps calls inside the chosen service", async () => {
+    const owner = user();
+    // "serper" is not connected by the owner: choosing it is ignored.
+    await withBoard(owner);
+    const { id, local } = await pair(owner, "boid", undefined, ["board", "serper"]);
+    const conn = await connect(local, id);
+    expect((await callBack(conn, { method: "GET", service: "serper", path: "/search" })).status).toBe(403);
+    expect((await callBack(conn, { method: "GET", service: "board", path: "/../serper/search" })).status).toBe(400);
+    expect((await callBack(conn, { method: "GET", service: "board", path: "no-slash" })).status).toBe(400);
     await hangUp(conn);
   });
 });

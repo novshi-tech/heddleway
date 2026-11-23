@@ -2,7 +2,8 @@ import { calculateJwkThumbprint, decodeJwt, importJWK, jwtVerify, type JWK } fro
 import { publicUrl } from "./config";
 import { randomToken } from "./crypto";
 import { features } from "./features";
-import { denied, DROP_RESPONSE_HEADERS, forwardHeaders } from "./proxy";
+import { IDENTITY_CREDENTIAL } from "./identity";
+import { denied, DROP_RESPONSE_HEADERS, forwardHeaders, handleProxy } from "./proxy";
 import { registryFor } from "./registry";
 import {
   connectionFor,
@@ -12,9 +13,12 @@ import {
   type ConnectGrant,
   type ConnectionStatus,
   type HeaderList,
+  fromBase64,
+  toBase64,
 } from "./reverse-connection";
 import { getDirectory } from "./services";
 import { signToken, verifyToken } from "./tokens";
+import { vaultFor } from "./vault";
 
 // Reverse connections (docs/adr/0003): a service on someone's PC or in a customer's cluster
 // opens a WebSocket to the gateway, and the gateway relays calls to it. Each one belongs to
@@ -61,6 +65,8 @@ export interface ReverseService {
   thumbprint: string;
   // What the service said about itself when it asked to pair.
   pairingDescription?: string;
+  // Services the owner lets it call back as them (ADR 0003 decision 5); none at first.
+  callback?: string[];
   createdAt: number;
 }
 
@@ -100,6 +106,29 @@ export function reverseEnabled(env: Env): boolean {
 export function pairingAllowed(env: Env): boolean {
   const flag = (env as unknown as Record<string, unknown>).REVERSE_PAIRING;
   return reverseEnabled(env) && !(typeof flag === "string" && flag.trim().toLowerCase() === "off");
+}
+
+// REVERSE_CALLBACK "off" forbids every call back, whatever owners chose (decision 3).
+export function callbackAllowed(env: Env): boolean {
+  const flag = (env as unknown as Record<string, unknown>).REVERSE_CALLBACK;
+  return reverseEnabled(env) && !(typeof flag === "string" && flag.trim().toLowerCase() === "off");
+}
+
+// The services an owner can let a local service call back: those the owner reaches through
+// the gateway with one credential (their connections, identity services, features), never
+// another local service.
+export async function callableServices(env: Env, owner: string): Promise<{ service: string; displayName: string; credential: string }[]> {
+  const directory = await getDirectory(env);
+  const out = new Map<string, { service: string; displayName: string; credential: string }>();
+  for (const c of await vaultFor(env, owner).list()) {
+    if (c.needsReconnect || out.has(c.service) || !directory.available(c.service)) continue;
+    out.set(c.service, { service: c.service, displayName: directory.services[c.service].display_name ?? c.service, credential: c.id });
+  }
+  for (const [name, config] of Object.entries(directory.services)) {
+    if (config.auth.type === "identity") out.set(name, { service: name, displayName: config.display_name ?? name, credential: IDENTITY_CREDENTIAL });
+  }
+  for (const f of features(env)) out.set(f.name, { service: f.name, displayName: f.displayName, credential: IDENTITY_CREDENTIAL });
+  return [...out.values()].sort((a, b) => a.displayName.localeCompare(b.displayName, "ja"));
 }
 
 async function sha256(value: string): Promise<string> {
@@ -357,6 +386,82 @@ export async function removeService(env: Env, serviceId: string): Promise<boolea
   const removed = await registryFor(env).removeReverse(serviceId);
   await connectionFor(env, serviceId).revoke();
   return removed;
+}
+
+export async function setCallback(env: Env, owner: string, serviceId: string, chosen: string[]): Promise<ReverseService | null> {
+  const service = await getOwned(env, owner, serviceId);
+  if (!service) return null;
+  const callable = new Set((await callableServices(env, owner)).map((c) => c.service));
+  const callback = [...new Set(chosen)].filter((s) => callable.has(s)).sort();
+  return registryFor(env).setReverseCallback(serviceId, owner, callback);
+}
+
+// The token a call back carries only has to live while the proxy (and a feature's port) checks it.
+const CALL_TOKEN_TTL_SECONDS = 60;
+
+// A local service calling the gateway as its owner over its connection (ADR 0003 decision 5):
+// `{"type": "call", id, method, service, path, headers, body}` in, the proxy's answer out.
+// The registration is read on every call, so removing it or narrowing the services takes effect
+// at once. The answer is a `call_result` frame; refusals are ordinary 4xx answers.
+export async function handleCall(env: Env, ctx: ExecutionContext, serviceId: string, frame: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const id = typeof frame.id === "string" ? frame.id : "";
+  const answer = (status: number, error: string) => ({ type: "call_result", id, status, headers: [["content-type", "application/json"]], body: toBase64(new TextEncoder().encode(JSON.stringify({ error })).buffer as ArrayBuffer) });
+  const service = typeof frame.service === "string" ? frame.service : "";
+  const method = typeof frame.method === "string" ? frame.method.toUpperCase() : "";
+  const path = typeof frame.path === "string" ? frame.path : "";
+  if (!id) return answer(400, "a call needs an id");
+  if (!["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"].includes(method)) return answer(400, `unsupported method: ${method}`);
+  if (!path.startsWith("/")) return answer(400, "path must start with /");
+
+  const local = await registryFor(env).getReverse(serviceId);
+  if (!local) return answer(403, "the registration was removed");
+  const refuse = (reason: string, message: string) => {
+    console.warn(JSON.stringify({ type: "reverse_call_refused", reverse: serviceId, user: local.owner, service, method, reason }));
+    return answer(403, message);
+  };
+  if (!callbackAllowed(env)) return refuse("deployment", "calls back to the gateway are turned off at this gateway");
+  if (!(local.callback ?? []).includes(service)) return refuse("not_chosen", `the owner has not let this local service call ${service || "that service"}; they choose the services at the gateway's home page`);
+  const target = (await callableServices(env, local.owner)).find((c) => c.service === service);
+  if (!target) return refuse("not_connected", `the owner has no usable connection to ${service}`);
+
+  const base = publicUrl(env);
+  const prefix = `/api/${service}`;
+  let url: URL;
+  try {
+    url = new URL(`${base}${prefix}${path}`);
+  } catch {
+    return answer(400, `invalid path: ${path}`);
+  }
+  if (url.origin !== new URL(base).origin || (url.pathname !== prefix && !url.pathname.startsWith(`${prefix}/`))) return answer(400, `path leaves the service: ${path}`);
+
+  const headers = new Headers();
+  const list = Array.isArray(frame.headers) ? frame.headers : [];
+  for (const pair of list) {
+    if (Array.isArray(pair) && typeof pair[0] === "string" && typeof pair[1] === "string") {
+      try {
+        headers.append(pair[0], pair[1]);
+      } catch {
+        // An invalid header is dropped.
+      }
+    }
+  }
+  if (!headers.has("user-agent")) headers.set("user-agent", "heddleway-reverse");
+  let body: ArrayBuffer | undefined;
+  if (typeof frame.body === "string" && method !== "GET" && method !== "HEAD") {
+    try {
+      body = fromBase64(frame.body);
+    } catch {
+      return answer(400, "body must be base64");
+    }
+    if (body.byteLength > MAX_BODY_BYTES) return answer(413, `the body is larger than ${MAX_BODY_BYTES} bytes`);
+  }
+  const { token } = await signToken(env.SIGNING_KEY, base, "api", local.owner, { creds: { [service]: target.credential }, reverse: serviceId }, CALL_TOKEN_TTL_SECONDS);
+  headers.set("authorization", `Bearer ${token}`);
+
+  const response = await handleProxy(new Request(url, { method, headers, body }), env, ctx, "reverse");
+  const out = await response.arrayBuffer();
+  if (out.byteLength > MAX_BODY_BYTES) return answer(502, `the answer is larger than ${MAX_BODY_BYTES} bytes, the most a reverse connection relays`);
+  return { type: "call_result", id, status: response.status, headers: [...response.headers], body: out.byteLength > 0 ? toBase64(out) : null };
 }
 
 export { POLL_TTL_MS };

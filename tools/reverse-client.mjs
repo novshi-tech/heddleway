@@ -4,13 +4,18 @@
 // relays the owner's calls to the service. Node 22 or later, no dependencies.
 //
 //   node tools/reverse-client.mjs pair <gateway URL> --name <name> --key <key file> [--description <text>]
-//   node tools/reverse-client.mjs connect --key <key file> --target <http://127.0.0.1:PORT> [--describe <file>]
+//   node tools/reverse-client.mjs connect --key <key file> --target <http://127.0.0.1:PORT> [--describe <file>] [--callback-port <PORT>]
+//
+// With --callback-port, the client also listens on 127.0.0.1:<PORT> and passes requests to
+// /api/<service>/... back to the gateway over the connection, as the owner (ADR 0003 decision 5):
+// the "relay port" a sandbox gets instead of a token. The owner chooses the services at the gateway.
 //
 // The key file holds the private key (standard mode: ADR 0003 decision 4). It is written 0600;
 // keep it away from agents. `connect` reconnects by itself after sleep, network changes and
 // gateway deploys.
 import { readFileSync, writeFileSync, existsSync, chmodSync } from "node:fs";
 import { webcrypto as crypto } from "node:crypto";
+import http from "node:http";
 
 const [command, ...args] = process.argv.slice(2);
 
@@ -108,6 +113,31 @@ async function connect() {
   const describe = option("describe");
   const description = describe ? readFileSync(describe, "utf8") : undefined;
   let delay = 1000;
+  let current = null;
+  const waiting = new Map();
+
+  const callbackPort = option("callback-port");
+  if (callbackPort) {
+    http
+      .createServer(async (req, res) => {
+        const m = req.url.match(/^\/api\/([a-z0-9][a-z0-9-]*)(\/.*)?$/);
+        if (!m) return res.writeHead(404).end('{"error":"call /api/<service>/..."}');
+        if (!current) return res.writeHead(503).end('{"error":"not connected to the gateway"}');
+        const chunks = [];
+        for await (const c of req) chunks.push(c);
+        const body = Buffer.concat(chunks);
+        const id = crypto.randomUUID();
+        const headers = Object.entries(req.headers).filter(([n]) => !["host", "connection", "content-length"].includes(n)).map(([n, v]) => [n, String(v)]);
+        const result = await new Promise((resolve) => {
+          waiting.set(id, resolve);
+          current.send(JSON.stringify({ type: "call", id, method: req.method, service: m[1], path: m[2] ?? "/", headers, body: body.length ? body.toString("base64") : null }));
+          setTimeout(() => waiting.delete(id) && resolve({ status: 504, headers: [], body: null }), 60_000);
+        });
+        res.writeHead(result.status, Object.fromEntries((result.headers ?? []).filter(([n]) => !["content-length", "content-encoding", "transfer-encoding"].includes(n))));
+        res.end(result.body ? Buffer.from(result.body, "base64") : undefined);
+      })
+      .listen(Number(callbackPort), "127.0.0.1", () => console.log(`calls back to the gateway at http://127.0.0.1:${callbackPort}/api/<service>/...`));
+  }
 
   for (;;) {
     const opened = await new Promise(async (resolve) => {
@@ -126,6 +156,7 @@ async function connect() {
         let ping;
         ws.onopen = () => {
           open = true;
+          current = ws;
           console.log(`connected as "${saved.name}"`);
           ws.send(JSON.stringify({ type: "hello", version: "reverse-client", ...(description ? { description } : {}) }));
           ping = setInterval(() => ws.send("ping"), 30_000);
@@ -134,10 +165,12 @@ async function connect() {
           if (event.data === "pong") return;
           const frame = JSON.parse(event.data);
           if (frame.type === "request") ws.send(JSON.stringify({ type: "response", id: frame.id, ...(await relay(target, frame)) }));
+          else if (frame.type === "call_result") waiting.get(frame.id)?.(frame), waiting.delete(frame.id);
           else if (frame.type === "error") console.error(`gateway: ${frame.message}`);
         };
         ws.onclose = (event) => {
           clearInterval(ping);
+          if (current === ws) current = null;
           console.log(`disconnected (${event.code} ${event.reason})`);
           // Removed at the gateway: pairing again is the only way back.
           if (event.code === 4003) fail("the registration was removed; pair again");

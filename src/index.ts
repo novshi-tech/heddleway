@@ -24,7 +24,7 @@ import { confirmDeleteApp, deleteApp, listAppsPage, previewApp, saveApp } from "
 import { confirmDeletePlugin, deletePlugin, listPluginsPage, uploadPlugin } from "./web/admin-plugins";
 import { consentPage, consentSubmit, disableFeature, userPage } from "./web/features";
 import { confirmRevoke, revoke } from "./web/grants";
-import { adminPage as adminLocalServices, confirmRemove as confirmRemoveLocal, pairPage, pairSubmit, remove as removeLocal } from "./web/reverse";
+import { adminPage as adminLocalServices, confirmRemove as confirmRemoveLocal, pairPage, pairSubmit, remove as removeLocal, settingsPage, settingsSubmit } from "./web/reverse";
 import { login, LOGIN_CALLBACK_PATH, loginCallback, logout } from "./web/session";
 import { downloadPlugin, setup, SETUP_PATH } from "./web/setup";
 
@@ -96,6 +96,8 @@ const ROUTES: Route[] = [
   ["POST", OWNER_PAIR_PATH, pairSubmit],
   ["GET", /^\/local-services\/([0-9a-f-]+)\/delete$/, (request, env, [id]) => confirmRemoveLocal(request, env, id)],
   ["POST", /^\/local-services\/([0-9a-f-]+)\/delete$/, (request, env, [id]) => removeLocal(request, env, id)],
+  ["GET", /^\/local-services\/([0-9a-f-]+)$/, (request, env, [id]) => settingsPage(request, env, id)],
+  ["POST", /^\/local-services\/([0-9a-f-]+)$/, (request, env, [id]) => settingsSubmit(request, env, id)],
   ["GET", "/admin/local-services", adminLocalServices],
   ["GET", /^\/features\/([a-z0-9][a-z0-9-]*)$/, (request, env, [name], ctx) => userPage(request, env, name, ctx)],
   ["GET", /^\/features\/([a-z0-9][a-z0-9-]*)\/consent$/, (request, env, [name]) => consentPage(request, env, name)],

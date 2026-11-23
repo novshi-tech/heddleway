@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { handleCall } from "./reverse";
 
 // The live side of a reverse connection (docs/adr/0003): one object per local service holds
 // the WebSocket that the service opened to the gateway, and relays requests over it. The
@@ -55,6 +56,7 @@ export interface ConnectGrant {
 interface Attachment {
   connection: string;
   connectedAt: number;
+  serviceId: string;
 }
 
 interface Pending {
@@ -131,7 +133,7 @@ export class ReverseConnection extends DurableObject<Env> {
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     this.ctx.acceptWebSocket(server);
-    const attachment: Attachment = { connection: crypto.randomUUID(), connectedAt: now };
+    const attachment: Attachment = { connection: crypto.randomUUID(), connectedAt: now, serviceId: grant.serviceId };
     server.serializeAttachment(attachment);
     const status = (await this.ctx.storage.get<ConnectionStatus>("status")) ?? { connected: false };
     await this.ctx.storage.put<ConnectionStatus>("status", { ...status, connected: true, connectedAt: now, disconnectedAt: undefined });
@@ -223,6 +225,26 @@ export class ReverseConnection extends DurableObject<Env> {
       const version = typeof frame.version === "string" ? frame.version.slice(0, MAX_VERSION) : undefined;
       const status = (await this.ctx.storage.get<ConnectionStatus>("status")) ?? { connected: true };
       await this.ctx.storage.put<ConnectionStatus>("status", { ...status, description, version });
+      return;
+    }
+
+    // A call back to the gateway as the owner (src/reverse.ts handleCall).
+    if (frame.type === "call") {
+      const serviceId = this.attachment(socket)?.serviceId;
+      if (!serviceId) return this.protocolError(socket, "unknown connection");
+      const ctx = { waitUntil: (p: Promise<unknown>) => this.ctx.waitUntil(p), passThroughOnException() {}, props: {} } as unknown as ExecutionContext;
+      let result: Record<string, unknown>;
+      try {
+        result = await handleCall(this.env, ctx, serviceId, frame);
+      } catch (error) {
+        console.error(JSON.stringify({ type: "reverse_call_failed", reverse: serviceId, error: String(error) }));
+        result = { type: "call_result", id: frame.id, status: 502, headers: [["content-type", "application/json"]], body: btoa('{"error":"the gateway could not complete the call"}') };
+      }
+      try {
+        socket.send(JSON.stringify(result));
+      } catch {
+        // The connection closed meanwhile.
+      }
       return;
     }
 
