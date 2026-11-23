@@ -44,8 +44,8 @@ async function newKey(): Promise<Local> {
   return { privateKey, publicJwk: { ...(await exportJWK(publicKey)) } };
 }
 
-async function startPairing(local: Local, name: string, description?: string) {
-  const res = await postJson("/reverse/pair", { name, public_key: local.publicJwk, ...(description ? { description } : {}) });
+async function startPairing(local: Local, name: string, description?: string, mode?: string) {
+  const res = await postJson("/reverse/pair", { name, public_key: local.publicJwk, ...(description ? { description } : {}), ...(mode ? { mode } : {}) });
   expect(res.status).toBe(201);
   return (await res.json()) as { code: string; pairing_id: string; verification_uri_complete: string; thumbprint: string };
 }
@@ -56,9 +56,9 @@ async function poll(pairingId: string) {
 }
 
 // Pairs a new local service owned by `owner`; returns its ID.
-async function pair(owner: string, name = "boid", local?: Local, callback: string[] = []): Promise<{ id: string; local: Local }> {
+async function pair(owner: string, name = "boid", local?: Local, callback: string[] = [], mode?: string): Promise<{ id: string; local: Local }> {
   local ??= await newKey();
-  const started = await startPairing(local, name);
+  const started = await startPairing(local, name, undefined, mode);
   const form = new URLSearchParams({ code: started.code, name, decision: "approve" });
   for (const c of callback) form.append("callback", c);
   const approved = await SELF.fetch(`${BASE}/pair`, { method: "POST", headers: { cookie: await cookie(owner), origin: ORIGIN }, body: form, redirect: "manual" });
@@ -79,15 +79,15 @@ async function assertion(local: Local, serviceId: string, overrides: { nonce?: s
     .sign(local.privateKey);
 }
 
-function upgrade(jwt: string) {
-  return SELF.fetch(`${BASE}/reverse/connect`, { headers: { upgrade: "websocket", authorization: `Bearer ${jwt}` } });
+function upgrade(jwt: string, scheme = "Bearer") {
+  return SELF.fetch(`${BASE}/reverse/connect`, { headers: { upgrade: "websocket", authorization: `${scheme} ${jwt}` } });
 }
 
 type Frame = Record<string, unknown>;
 
 // A local service that answers relayed requests with `handler`.
-async function connect(local: Local, serviceId: string, handler: (req: Frame) => Frame | null = echo) {
-  const res = await upgrade(await assertion(local, serviceId));
+async function connect(local: Local, serviceId: string, handler: (req: Frame) => Frame | null = echo, resume?: string) {
+  const res = resume ? await upgrade(resume, "Resume") : await upgrade(await assertion(local, serviceId));
   expect(res.status).toBe(101);
   const ws = res.webSocket!;
   const frames: Frame[] = [];
@@ -430,5 +430,40 @@ describe("calling back", () => {
     expect((await callBack(conn, { method: "GET", service: "board", path: "/../serper/search" })).status).toBe(400);
     expect((await callBack(conn, { method: "GET", service: "board", path: "no-slash" })).status).toBe(400);
     await hangUp(conn);
+  });
+});
+
+describe("strict mode", () => {
+  it("opens one connection with the key, then only with the resume tokens it hands out", async () => {
+    const owner = user();
+    const { id, local } = await pair(owner, "aks", undefined, [], "strict");
+    const first = await connect(local, id);
+    await until(() => first.frames.some((f) => f.type === "resume"));
+    const token = first.frames.find((f) => f.type === "resume")!.token as string;
+    expect(token.startsWith(`${id}.`)).toBe(true);
+    await hangUp(first);
+
+    // The key is spent; the resume token brings the service back, once.
+    expect((await upgrade(await assertion(local, id))).status).toBe(401);
+    const second = await connect(local, id, echo, token);
+    expect((await call(owner, id, "aks", "/status")).status).toBe(200);
+    await until(() => second.frames.some((f) => f.type === "resume"));
+    await hangUp(second);
+    expect((await upgrade(token, "Resume")).status).toBe(401);
+    expect((await upgrade(`${id}.made-up`, "Resume")).status).toBe(401);
+  });
+
+  it("is not available to services paired in standard mode", async () => {
+    const { id, local } = await pair(user());
+    const conn = await connect(local, id);
+    expect(conn.frames.some((f) => f.type === "resume")).toBe(false);
+    await hangUp(conn);
+    expect((await upgrade(`${id}.anything`, "Resume")).status).toBe(401);
+    // The key keeps working.
+    await hangUp(await connect(local, id));
+  });
+
+  it("refuses an unknown mode", async () => {
+    expect((await postJson("/reverse/pair", { name: "x", public_key: (await newKey()).publicJwk, mode: "lax" })).status).toBe(400);
   });
 });

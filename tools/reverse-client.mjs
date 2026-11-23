@@ -4,6 +4,7 @@
 // relays the owner's calls to the service. Node 22 or later, no dependencies.
 //
 //   node tools/reverse-client.mjs pair <gateway URL> --name <name> --key <key file> [--description <text>]
+//   node tools/reverse-client.mjs strict <gateway URL> --name <name> --target <http://127.0.0.1:PORT> [--describe <file>] [--callback-port <PORT>]
 //   node tools/reverse-client.mjs connect --key <key file> --target <http://127.0.0.1:PORT> [--describe <file>] [--callback-port <PORT>]
 //
 // With --callback-port, the client also listens on 127.0.0.1:<PORT> and passes requests to
@@ -12,7 +13,9 @@
 //
 // The key file holds the private key (standard mode: ADR 0003 decision 4). It is written 0600;
 // keep it away from agents. `connect` reconnects by itself after sleep, network changes and
-// gateway deploys.
+// gateway deploys. `strict` pairs in strict mode and connects in the same process: the key and
+// the resume tokens stay in memory, nothing is written to disk, and after a restart or a drop
+// longer than the token's life (15 minutes) the owner pairs again.
 import { readFileSync, writeFileSync, existsSync, chmodSync } from "node:fs";
 import { webcrypto as crypto } from "node:crypto";
 import http from "node:http";
@@ -54,17 +57,17 @@ async function postJson(url, body) {
   return { status: res.status, body: await res.json().catch(() => ({})) };
 }
 
-async function pair() {
+async function pair(strict = false) {
   const gateway = (args[0] ?? "").replace(/\/+$/, "");
   const name = option("name");
   const keyFile = option("key");
-  if (!gateway.startsWith("http") || !name || !keyFile) fail("usage: pair <gateway URL> --name <name> --key <key file> [--description <text>]");
-  if (existsSync(keyFile)) fail(`${keyFile} exists; pick another file, or delete it to pair again`);
+  if (!gateway.startsWith("http") || !name || (!strict && !keyFile)) fail("usage: pair <gateway URL> --name <name> --key <key file> [--description <text>]");
+  if (!strict && existsSync(keyFile)) fail(`${keyFile} exists; pick another file, or delete it to pair again`);
 
   const pairKey = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
   const privateJwk = await crypto.subtle.exportKey("jwk", pairKey.privateKey);
   const publicJwk = { kty: "OKP", crv: "Ed25519", x: privateJwk.x };
-  const started = await postJson(`${gateway}/reverse/pair`, { name, public_key: publicJwk, description: option("description") });
+  const started = await postJson(`${gateway}/reverse/pair`, { name, public_key: publicJwk, description: option("description"), mode: strict ? "strict" : "standard" });
   if (started.status !== 201) fail(`pairing was refused (${started.status}): ${started.body.error ?? ""}`);
 
   console.log(`Open ${started.body.verification_uri_complete}`);
@@ -76,6 +79,11 @@ async function pair() {
     const polled = await postJson(`${gateway}/reverse/pair/status`, { pairing_id: started.body.pairing_id });
     if (polled.body.status === "pending") continue;
     if (polled.body.status !== "approved") fail(`pairing ${polled.body.status}`);
+    const saved = { gateway, service_id: polled.body.service_id, name: polled.body.name, private_jwk: privateJwk };
+    if (strict) {
+      console.log(`Paired as "${polled.body.name}" in strict mode; the key stays in memory.`);
+      return saved;
+    }
     writeFileSync(keyFile, JSON.stringify({ gateway, service_id: polled.body.service_id, name: polled.body.name, private_jwk: privateJwk }, null, 2), { mode: 0o600 });
     chmodSync(keyFile, 0o600);
     console.log(`Paired as "${polled.body.name}". Saved the key to ${keyFile}.`);
@@ -105,11 +113,13 @@ async function relay(target, frame) {
   }
 }
 
-async function connect() {
+async function connect(inMemory) {
   const keyFile = option("key");
   const target = option("target");
-  if (!keyFile || !target) fail("usage: connect --key <key file> --target <http://127.0.0.1:PORT> [--describe <file>]");
-  const saved = JSON.parse(readFileSync(keyFile, "utf8"));
+  if ((!inMemory && !keyFile) || !target) fail("usage: connect --key <key file> --target <http://127.0.0.1:PORT> [--describe <file>]");
+  const saved = inMemory ?? JSON.parse(readFileSync(keyFile, "utf8"));
+  // Strict mode: the latest resume token, and when it expires.
+  let resume = null;
   const describe = option("describe");
   const description = describe ? readFileSync(describe, "utf8") : undefined;
   let delay = 1000;
@@ -143,16 +153,23 @@ async function connect() {
     const opened = await new Promise(async (resolve) => {
       let open = false;
       try {
-        const { body } = await postJson(`${saved.gateway}/reverse/challenge`, {});
-        const now = Math.floor(Date.now() / 1000);
-        const assertion = await signJwt(saved.private_jwk, {
-          iss: saved.service_id,
-          aud: `${saved.gateway}/reverse/connect`,
-          nonce: body.challenge,
-          iat: now,
-          exp: now + 60,
-        });
-        const ws = new WebSocket(`${saved.gateway.replace(/^http/, "ws")}/reverse/connect`, { headers: { authorization: `Bearer ${assertion}` } });
+        let authorization;
+        if (inMemory && resume) {
+          if (resume.expiresAt < Date.now()) fail("the resume token expired; pair again");
+          authorization = `Resume ${resume.token}`;
+        } else {
+          const { body } = await postJson(`${saved.gateway}/reverse/challenge`, {});
+          const now = Math.floor(Date.now() / 1000);
+          const assertion = await signJwt(saved.private_jwk, {
+            iss: saved.service_id,
+            aud: `${saved.gateway}/reverse/connect`,
+            nonce: body.challenge,
+            iat: now,
+            exp: now + 60,
+          });
+          authorization = `Bearer ${assertion}`;
+        }
+        const ws = new WebSocket(`${saved.gateway.replace(/^http/, "ws")}/reverse/connect`, { headers: { authorization } });
         let ping;
         ws.onopen = () => {
           open = true;
@@ -165,6 +182,7 @@ async function connect() {
           if (event.data === "pong") return;
           const frame = JSON.parse(event.data);
           if (frame.type === "request") ws.send(JSON.stringify({ type: "response", id: frame.id, ...(await relay(target, frame)) }));
+          else if (frame.type === "resume") resume = { token: frame.token, expiresAt: Date.now() + frame.expires_in * 1000 };
           else if (frame.type === "call_result") waiting.get(frame.id)?.(frame), waiting.delete(frame.id);
           else if (frame.type === "error") console.error(`gateway: ${frame.message}`);
         };
@@ -176,7 +194,10 @@ async function connect() {
           if (event.code === 4003) fail("the registration was removed; pair again");
           resolve(open);
         };
-        ws.onerror = () => {};
+        // A refused handshake may end with an error and no close event.
+        ws.onerror = () => {
+          if (!open) resolve(false);
+        };
       } catch (error) {
         console.error(`could not connect: ${error.message}`);
         resolve(false);
@@ -189,4 +210,5 @@ async function connect() {
 
 if (command === "pair") await pair();
 else if (command === "connect") await connect();
+else if (command === "strict") await connect(await pair(true));
 else fail("usage: reverse-client.mjs pair|connect ... (see the top of the file)");

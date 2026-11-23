@@ -43,15 +43,26 @@ export interface ConnectionStatus {
   version?: string;
 }
 
+export type ReverseMode = "standard" | "strict";
+
 // What the Worker tells this object when it hands over an upgrade it already verified.
 export interface ConnectGrant {
   serviceId: string;
   name: string;
-  // The one-time challenge the service signed, and when it expires (ms), so that a
-  // signature cannot open a second connection.
-  challenge: string;
-  challengeExpiresAt: number;
+  mode: ReverseMode;
+  proof:
+    // The one-time challenge the service signed, and when it expires (ms), so that a
+    // signature cannot open a second connection.
+    | { kind: "key"; challenge: string; challengeExpiresAt: number }
+    // A resume token this object handed out on an earlier connection (strict mode).
+    | { kind: "resume"; token: string };
 }
+
+// Strict mode (ADR 0003 decision 4): the key opens one connection only, and the service
+// comes back with resume tokens it keeps in memory. A token lives this long and is replaced
+// this often while connected, so a short drop or a deploy is survived, a long sleep is not.
+export const RESUME_TTL_MS = 15 * 60 * 1000;
+export const RESUME_ROTATE_MS = 5 * 60 * 1000;
 
 interface Attachment {
   connection: string;
@@ -66,6 +77,15 @@ interface Pending {
 }
 
 export const GRANT_HEADER = "x-heddleway-reverse-grant";
+
+function randomValue(): string {
+  return btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function hashToken(token: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)));
+  return [...digest].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 
 export function toBase64(buffer: ArrayBuffer): string {
@@ -109,15 +129,26 @@ export class ReverseConnection extends DurableObject<Env> {
     const grant = JSON.parse(request.headers.get(GRANT_HEADER) ?? "null") as ConnectGrant | null;
     if (!grant) return Response.json({ error: "missing grant" }, { status: 400 });
 
-    // A signed challenge opens one connection only.
     const now = Date.now();
-    const used = await this.ctx.storage.list<number>({ prefix: "used:" });
-    const expired = [...used].filter(([, exp]) => exp < now).map(([key]) => key);
-    if (expired.length > 0) await this.ctx.storage.delete(expired);
-    if (used.has(`used:${grant.challenge}`) && !expired.includes(`used:${grant.challenge}`)) {
-      return Response.json({ error: "the challenge was already used; request a new one" }, { status: 401 });
+    await this.purge(now);
+    const refuse = (message: string) => Response.json({ error: message }, { status: 401 });
+    if (grant.proof.kind === "key") {
+      // A signed challenge opens one connection only.
+      const key = `used:${grant.proof.challenge}`;
+      if ((await this.ctx.storage.get(key)) !== undefined) return refuse("the challenge was already used; request a new one");
+      // In strict mode, the key itself opens one connection only.
+      if (grant.mode === "strict" && (await this.ctx.storage.get("keySpent"))) {
+        return refuse("in strict mode the key opens one connection only; come back with a resume token, or pair again");
+      }
+      await this.ctx.storage.put(key, grant.proof.challengeExpiresAt);
+      if (grant.mode === "strict") await this.ctx.storage.put("keySpent", true);
+    } else {
+      const key = `resume:${await hashToken(grant.proof.token)}`;
+      const exp = await this.ctx.storage.get<number>(key);
+      if (exp === undefined || exp < now) return refuse("the resume token is unknown or expired; pair again");
+      await this.ctx.storage.delete(key);
     }
-    await this.ctx.storage.put(`used:${grant.challenge}`, grant.challengeExpiresAt);
+    await this.ctx.storage.put("mode", grant.mode);
 
     // One connection per service for now (ADR 0003, open question 2): the newest wins, so a
     // restarted service does not wait for the old socket to time out.
@@ -146,8 +177,42 @@ export class ReverseConnection extends DurableObject<Env> {
         timeout_ms: RELAY_TIMEOUT_MS,
       }),
     );
-    console.log(JSON.stringify({ type: "reverse_connected", service: grant.serviceId }));
+    if (grant.mode === "strict") {
+      await this.sendResume(server, grant.serviceId, now);
+      await this.ctx.storage.setAlarm(now + RESUME_ROTATE_MS);
+    }
+    console.log(JSON.stringify({ type: "reverse_connected", service: grant.serviceId, mode: grant.mode, proof: grant.proof.kind }));
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  // Replaces the resume token while connected (strict mode). The previous one stays valid until
+  // it expires, in case the new one is lost with the connection.
+  async alarm(): Promise<void> {
+    const socket = this.ctx.getWebSockets().at(-1);
+    const serviceId = socket && this.attachment(socket)?.serviceId;
+    if (!socket || !serviceId || (await this.ctx.storage.get("mode")) !== "strict") return;
+    const now = Date.now();
+    await this.purge(now);
+    await this.sendResume(socket, serviceId, now);
+    await this.ctx.storage.setAlarm(now + RESUME_ROTATE_MS);
+  }
+
+  private async sendResume(socket: WebSocket, serviceId: string, now: number): Promise<void> {
+    const token = `${serviceId}.${randomValue()}`;
+    await this.ctx.storage.put(`resume:${await hashToken(token)}`, now + RESUME_TTL_MS);
+    try {
+      socket.send(JSON.stringify({ type: "resume", token, expires_in: RESUME_TTL_MS / 1000 }));
+    } catch {
+      // Closed meanwhile.
+    }
+  }
+
+  private async purge(now: number): Promise<void> {
+    const dead: string[] = [];
+    for (const prefix of ["used:", "resume:"]) {
+      for (const [key, exp] of await this.ctx.storage.list<number>({ prefix })) if (exp < now) dead.push(key);
+    }
+    if (dead.length > 0) await this.ctx.storage.delete(dead);
   }
 
   async relay(request: RelayRequest): Promise<RelayResult> {

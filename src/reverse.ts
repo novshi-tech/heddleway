@@ -13,6 +13,7 @@ import {
   type ConnectGrant,
   type ConnectionStatus,
   type HeaderList,
+  type ReverseMode,
   fromBase64,
   toBase64,
 } from "./reverse-connection";
@@ -67,6 +68,8 @@ export interface ReverseService {
   pairingDescription?: string;
   // Services the owner lets it call back as them (ADR 0003 decision 5); none at first.
   callback?: string[];
+  // How it proves itself when it reconnects (decision 4); "standard" when absent.
+  mode?: ReverseMode;
   createdAt: number;
 }
 
@@ -77,6 +80,7 @@ export interface Pairing {
   publicKey: Ed25519PublicJwk;
   thumbprint: string;
   description?: string;
+  mode: ReverseMode;
   createdAt: number;
   expiresAt: number;
   status: "pending" | "approved" | "denied";
@@ -193,6 +197,8 @@ export async function startPairing(request: Request, env: Env): Promise<Response
   const publicKey = parsePublicKey(body.public_key);
   if (!publicKey) return json({ error: "public_key must be an Ed25519 public JWK ({kty: OKP, crv: Ed25519, x}) without the private part" }, 400);
   const description = typeof body.description === "string" ? body.description.trim().slice(0, MAX_PAIRING_DESCRIPTION) : undefined;
+  if (body.mode !== undefined && body.mode !== "standard" && body.mode !== "strict") return json({ error: 'mode must be "standard" or "strict"' }, 400);
+  const mode: ReverseMode = body.mode === "strict" ? "strict" : "standard";
 
   const code = newCode();
   const pairingId = randomToken();
@@ -204,6 +210,7 @@ export async function startPairing(request: Request, env: Env): Promise<Response
     publicKey,
     thumbprint: await calculateJwkThumbprint(publicKey as JWK),
     ...(description ? { description } : {}),
+    mode,
     createdAt: now,
     expiresAt: now + PAIRING_TTL_MS,
     status: "pending",
@@ -234,7 +241,7 @@ export async function pairingStatus(request: Request, env: Env): Promise<Respons
   if (!pairingId) return json({ error: "pairing_id is required" }, 400);
   const result = await registryFor(env).pollPairing(await sha256(`poll:${pairingId}`));
   if (result.status !== "approved") return json({ status: result.status }, result.status === "expired" ? 404 : 200);
-  return json({ status: "approved", service_id: result.service.id, name: result.service.name, connect_url: connectUrl(env) });
+  return json({ status: "approved", service_id: result.service.id, name: result.service.name, mode: result.service.mode ?? "standard", connect_url: connectUrl(env) });
 }
 
 function connectUrl(env: Env): string {
@@ -254,12 +261,23 @@ export async function challenge(_request: Request, env: Env): Promise<Response> 
 export async function reverseConnect(request: Request, env: Env): Promise<Response> {
   if (!reverseEnabled(env)) return json({ error: "this gateway does not accept reverse connections" }, 404);
   if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return json({ error: "expected a WebSocket upgrade" }, 426);
-  const assertion = request.headers.get("authorization")?.match(/^Bearer\s+(\S+)$/i)?.[1];
-  if (!assertion) return json({ error: "missing assertion: send Authorization: Bearer <JWT signed with the service's key>" }, 401);
+  const authorization = request.headers.get("authorization") ?? "";
   const refuse = (reason: string) => {
     console.warn(JSON.stringify({ type: "reverse_refused", reason }));
     return json({ error: "the assertion was not accepted" }, 401);
   };
+
+  // Strict mode: a resume token from the last connection, `<service ID>.<random>`.
+  const resume = authorization.match(/^Resume\s+(\S+)$/i)?.[1];
+  if (resume) {
+    const serviceId = resume.split(".")[0];
+    const service = serviceId ? await registryFor(env).getReverse(serviceId) : null;
+    if (!service || service.mode !== "strict") return refuse("resume_unknown_service");
+    return handOver(env, service, { kind: "resume", token: resume });
+  }
+
+  const assertion = authorization.match(/^Bearer\s+(\S+)$/i)?.[1];
+  if (!assertion) return json({ error: "missing assertion: send Authorization: Bearer <JWT signed with the service's key>, or Resume <token> in strict mode" }, 401);
 
   let issuer: string | undefined;
   try {
@@ -288,7 +306,11 @@ export async function reverseConnect(request: Request, env: Env): Promise<Respon
   const issued = await verifyToken<{ jti?: string; exp?: number }>(env.SIGNING_KEY, publicUrl(env), "rchallenge", nonce);
   if (!issued?.jti || typeof issued.exp !== "number") return refuse("bad_challenge");
 
-  const grant: ConnectGrant = { serviceId: service.id, name: service.name, challenge: issued.jti, challengeExpiresAt: issued.exp * 1000 };
+  return handOver(env, service, { kind: "key", challenge: issued.jti, challengeExpiresAt: issued.exp * 1000 });
+}
+
+function handOver(env: Env, service: ReverseService, proof: ConnectGrant["proof"]): Promise<Response> {
+  const grant: ConnectGrant = { serviceId: service.id, name: service.name, mode: service.mode ?? "standard", proof };
   const headers = new Headers({ upgrade: "websocket", [GRANT_HEADER]: JSON.stringify(grant) });
   return connectionFor(env, service.id).fetch("https://reverse.internal/connect", { headers });
 }

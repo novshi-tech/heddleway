@@ -39,6 +39,7 @@ function statusText(status: ConnectionStatus): Html {
 
 function subline(service: ReverseService, status: ConnectionStatus, withOwner: boolean): string {
   const parts = [`${at.format(service.createdAt)}にペアリング`];
+  if (service.mode === "strict") parts.push("厳しめのモード");
   if (status.connectedAt) parts.push(`最後につないだのは${at.format(status.connectedAt)}`);
   if (status.version) parts.push(`版 ${status.version}`);
   if (withOwner) parts.unshift(`所有者: ${service.ownerName}(${service.owner})`);
@@ -112,6 +113,7 @@ ${error && html`<p class="error" role="alert">${error}</p>`}
 <input type="hidden" name="code" value="${code}">
 ${pairing.description && html`<p class="hint">サービスからの説明(サービスが書いたものです):</p><p>${pairing.description}</p>`}
 <p class="hint">鍵の指紋: <code>${pairing.thumbprint}</code>。サービスが表示した指紋と同じか確かめてください。</p>
+${pairing.mode === "strict" && html`<p class="hint">厳しめのモードです。サービスはディスクに鍵を置かず、再起動したり長く切れたりしたあとは、ペアリングし直します。</p>`}
 <label>サービスの名前(Claude からは <code>/api/&lt;名前&gt;/...</code> で呼びます)<input type="text" name="name" value="${name}" pattern="[a-z0-9][a-z0-9\\-]*" maxlength="40" required></label>
 <p>つなぐと、${organizationName(env)} のゲートウェイを通して、あなた(だけ)が Claude からこのサービスの API を呼べるようになります。${fieldset ? "このサービスからは、下でチェックしたサービスだけを、あなたとして呼べます。" : "このサービスから、あなたの接続(ほかのサービス)を使うことはできません。"}</p>
 ${fieldset}
@@ -178,6 +180,7 @@ export async function pairSubmit(request: Request, env: Env): Promise<Response> 
     thumbprint: pairing.thumbprint,
     ...(pairing.description ? { pairingDescription: pairing.description } : {}),
     callback,
+    mode: pairing.mode ?? "standard",
     createdAt: Date.now(),
   };
   const result = await registry.decidePairing(codeHash, service, POLL_TTL_MS);
