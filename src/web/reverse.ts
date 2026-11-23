@@ -1,6 +1,8 @@
 import { organizationName } from "../config";
 import { registryFor } from "../registry";
 import {
+  callableServices,
+  callbackAllowed,
   getOwned,
   hashCode,
   listOwned,
@@ -10,6 +12,7 @@ import {
   POLL_TTL_MS,
   removeService,
   reverseEnabled,
+  setCallback,
   validName,
   type OwnedService,
   type Pairing,
@@ -18,7 +21,7 @@ import {
 import type { ConnectionStatus } from "../reverse-connection";
 import { admin } from "./admin";
 import { masthead } from "./connections";
-import { html, type Html } from "./html";
+import { Html, html } from "./html";
 import { page } from "./layout";
 import { isAdmin, redirect, sameOrigin, session, type Session } from "./session";
 
@@ -42,12 +45,32 @@ function subline(service: ReverseService, status: ConnectionStatus, withOwner: b
   return parts.join(" · ");
 }
 
-function serviceRow({ service, status }: OwnedService, withOwner = false): Html {
+function callbackText(env: Env, service: ReverseService): string {
+  if (!callbackAllowed(env)) return "";
+  const chosen = service.callback ?? [];
+  return chosen.length > 0 ? `呼び返せるサービス: ${chosen.join("、")}` : "呼び返しなし";
+}
+
+function serviceRow(env: Env, { service, status }: OwnedService, withOwner = false): Html {
+  const callback = callbackText(env, service);
   return html`<li id="r-${service.id}">
-<div class="row-main"><p class="row-title">${service.name}</p><p class="row-sub">${subline(service, status, withOwner)}</p></div>
-<div class="row-actions">${statusText(status)}<a class="button quiet" href="/local-services/${service.id}/delete">削除</a></div>
+<div class="row-main"><p class="row-title">${service.name}</p><p class="row-sub">${subline(service, status, withOwner)}</p>${callback && html`<p class="row-sub">${callback}</p>`}</div>
+<div class="row-actions">${statusText(status)}${!withOwner && callbackAllowed(env) && html`<a class="button quiet" href="/local-services/${service.id}">呼び返しの設定</a>`}<a class="button quiet" href="/local-services/${service.id}/delete">削除</a></div>
 </li>`;
 }
+
+// Checkboxes for the services a local service may call back as its owner; none checked at first.
+async function callbackFieldset(env: Env, owner: string, chosen: string[]): Promise<Html | false> {
+  if (!callbackAllowed(env)) return false;
+  const callable = await callableServices(env, owner);
+  return html`<fieldset><legend>このサービスから呼び返せるサービス</legend>
+<p class="hint">チェックしたサービスだけ、このサービスがあなたとして呼べます。鍵はサービスのプロセスが持ち、エージェントには見せないようにしてください。要らなければ、何もチェックしません。</p>
+${callable.length > 0
+  ? callable.map((c) => html`<label class="choice"><input type="checkbox" name="callback" value="${c.service}"${chosen.includes(c.service) ? new Html(" checked") : ""}> ${c.displayName} <code>${c.service}</code></label>`)
+  : html`<p class="hint">選べるサービスがありません(つないだサービスがまだありません)。</p>`}
+</fieldset>`;
+}
+
 
 // The home page's section; nothing when the deployment has no reverse connections.
 export async function reverseSection(env: Env, user: Session): Promise<Html | false> {
@@ -56,7 +79,7 @@ export async function reverseSection(env: Env, user: Session): Promise<Html | fa
   if (owned.length === 0 && !pairingAllowed(env)) return false;
   return html`<h2>手元のサービス</h2>
 <p>あなたの PC や、あなたが置いたコンテナで動くサービスです。サービスのほうからゲートウェイにつなぎに来るので、手元に入口を開けずに、Claude からその API を呼べます。呼べるのはあなただけです。</p>
-${owned.length > 0 ? html`<ul class="list">${owned.map((o) => serviceRow(o))}</ul>` : html`<p class="empty">ペアリングした手元のサービスはありません。</p>`}
+${owned.length > 0 ? html`<ul class="list">${owned.map((o) => serviceRow(env, o))}</ul>` : html`<p class="empty">ペアリングした手元のサービスはありません。</p>`}
 ${pairingAllowed(env) && html`<p><a class="button quiet" href="${OWNER_PAIR_PATH}">ペアリングのコードを入力</a></p>`}`;
 }
 
@@ -77,7 +100,8 @@ ${error && html`<p class="error" role="alert">${error}</p>`}
   );
 }
 
-function confirmPage(env: Env, user: Session, code: string, pairing: Pairing, name: string, error?: string, status = 200): Response {
+async function confirmPage(env: Env, user: Session, code: string, pairing: Pairing, name: string, error?: string, status = 200, chosen: string[] = []): Promise<Response> {
+  const fieldset = await callbackFieldset(env, user.sub, chosen);
   return page(
     "手元のサービスをペアリング",
     html`${masthead(env, user)}
@@ -89,7 +113,8 @@ ${error && html`<p class="error" role="alert">${error}</p>`}
 ${pairing.description && html`<p class="hint">サービスからの説明(サービスが書いたものです):</p><p>${pairing.description}</p>`}
 <p class="hint">鍵の指紋: <code>${pairing.thumbprint}</code>。サービスが表示した指紋と同じか確かめてください。</p>
 <label>サービスの名前(Claude からは <code>/api/&lt;名前&gt;/...</code> で呼びます)<input type="text" name="name" value="${name}" pattern="[a-z0-9][a-z0-9\\-]*" maxlength="40" required></label>
-<p>つなぐと、${organizationName(env)} のゲートウェイを通して、あなた(だけ)が Claude からこのサービスの API を呼べるようになります。このサービスから、あなたの接続(ほかのサービス)を使うことはできません。</p>
+<p>つなぐと、${organizationName(env)} のゲートウェイを通して、あなた(だけ)が Claude からこのサービスの API を呼べるようになります。${fieldset ? "このサービスからは、下でチェックしたサービスだけを、あなたとして呼べます。" : "このサービスから、あなたの接続(ほかのサービス)を使うことはできません。"}</p>
+${fieldset}
 <p class="hint">自分で起動したサービスのコードだけを承認してください。覚えのないコードなら、断ってください。</p>
 <div class="actions"><button name="decision" value="approve">つなぐ</button><button class="quiet" name="decision" value="deny">断る</button></div>
 </form>`,
@@ -139,8 +164,11 @@ export async function pairSubmit(request: Request, env: Env): Promise<Response> 
     return redirect("/?pairing_denied=1");
   }
   const name = String(form.get("name") ?? "").trim();
-  if (!validName(name)) return confirmPage(env, user, code, pairing, name, "名前は英小文字・数字・ハイフンで、40 文字までにしてください。", 400);
-  if (await nameInUse(env, name)) return confirmPage(env, user, code, pairing, name, `「${name}」はこのゲートウェイのサービスの名前です。別の名前にしてください。`, 409);
+  const wanted = form.getAll("callback").map(String);
+  if (!validName(name)) return confirmPage(env, user, code, pairing, name, "名前は英小文字・数字・ハイフンで、40 文字までにしてください。", 400, wanted);
+  if (await nameInUse(env, name)) return confirmPage(env, user, code, pairing, name, `「${name}」はこのゲートウェイのサービスの名前です。別の名前にしてください。`, 409, wanted);
+  const callable = new Set(callbackAllowed(env) ? (await callableServices(env, user.sub)).map((c) => c.service) : []);
+  const callback = [...new Set(wanted)].filter((w) => callable.has(w)).sort();
   const service: ReverseService = {
     id: crypto.randomUUID(),
     name,
@@ -149,13 +177,46 @@ export async function pairSubmit(request: Request, env: Env): Promise<Response> 
     publicKey: pairing.publicKey,
     thumbprint: pairing.thumbprint,
     ...(pairing.description ? { pairingDescription: pairing.description } : {}),
+    callback,
     createdAt: Date.now(),
   };
   const result = await registry.decidePairing(codeHash, service, POLL_TTL_MS);
-  if (result === "name_taken") return confirmPage(env, user, code, pairing, name, `「${name}」という手元のサービスがもうあります。別の名前にするか、古いほうを削除してください。`, 409);
+  if (result === "name_taken") return confirmPage(env, user, code, pairing, name, `「${name}」という手元のサービスがもうあります。別の名前にするか、古いほうを削除してください。`, 409, wanted);
   if (result === "expired") return codeForm(env, user, code, "コードが切れました。手元のサービスでもう一度ペアリングを始めてください。", 404);
   console.log(JSON.stringify({ type: "reverse_paired", user: user.sub, service: service.id, name }));
   return redirect(`/?paired=${service.id}`);
+}
+
+// GET /local-services/<id>: the owner chooses what the service may call back.
+export async function settingsPage(request: Request, env: Env, id: string): Promise<Response> {
+  const user = await session(request, env);
+  if (!user) return redirect("/login");
+  const service = await getOwned(env, user.sub, id);
+  if (!service) return redirect("/");
+  const fieldset = await callbackFieldset(env, user.sub, service.callback ?? []);
+  const saved = new URL(request.url).searchParams.has("saved");
+  return page(
+    `${service.name} の呼び返し`,
+    html`${masthead(env, user)}
+${saved && html`<p class="notice" role="status">保存しました。</p>`}
+<a class="back" href="/">‹ つないだサービスに戻る</a>
+<h1>「${service.name}」から呼び返せるサービス</h1>
+${fieldset
+  ? html`<form method="post" action="/local-services/${service.id}" class="card">${fieldset}<div class="actions"><button>保存する</button></div></form>`
+  : html`<p class="empty">このゲートウェイでは、管理者が呼び返しを止めています。</p>`}`,
+  );
+}
+
+export async function settingsSubmit(request: Request, env: Env, id: string): Promise<Response> {
+  if (!sameOrigin(request, env)) return new Response("forbidden", { status: 403 });
+  const user = await session(request, env);
+  if (!user) return redirect("/login");
+  if (!callbackAllowed(env)) return redirect(`/local-services/${id}`);
+  const form = await request.formData();
+  const saved = await setCallback(env, user.sub, id, form.getAll("callback").map(String));
+  if (!saved) return redirect("/");
+  console.log(JSON.stringify({ type: "reverse_callback_set", user: user.sub, service: id, callback: saved.callback }));
+  return redirect(`/local-services/${id}?saved=1`);
 }
 
 async function findForRemoval(env: Env, user: Session, id: string): Promise<ReverseService | null> {
@@ -210,8 +271,9 @@ ${removed && html`<p class="notice" role="status">手元のサービスを削除
 ${!reverseEnabled(env)
   ? html`<p class="empty">このデプロイには逆向きの接続の Durable Object(<code>REVERSE</code>)がありません。</p>`
   : owned.length > 0
-    ? html`<ul class="list">${owned.map((o) => serviceRow(o, true))}</ul>`
+    ? html`<ul class="list">${owned.map((o) => serviceRow(env, o, true))}</ul>`
     : html`<p class="empty">ペアリングされた手元のサービスはありません。</p>`}
-<p class="hint">${pairingAllowed(env) ? "ペアリングは許可しています。止めるときは、デプロイの設定の vars に REVERSE_PAIRING: \"off\" を足します。" : "ペアリングは止めています(REVERSE_PAIRING)。ペアリング済みのサービスは使えます。"}</p>`,
+<p class="hint">${pairingAllowed(env) ? "ペアリングは許可しています。止めるときは、デプロイの設定の vars に REVERSE_PAIRING: \"off\" を足します。" : "ペアリングは止めています(REVERSE_PAIRING)。ペアリング済みのサービスは使えます。"}</p>
+<p class="hint">${callbackAllowed(env) ? "呼び返し(手元のサービスが所有者としてゲートウェイを呼ぶこと)は、所有者がサービスごとに選べます。止めるときは REVERSE_CALLBACK: \"off\" を足します。" : "呼び返しは止めています(REVERSE_CALLBACK)。"}</p>`,
   );
 }

@@ -54,6 +54,7 @@
     }
     // Optional: "REVERSE_PAIRING": "off" stops users from pairing local services over reverse
     // connections (docs/adr/0003, the REVERSE Durable Object); services already paired keep working.
+    // "REVERSE_CALLBACK": "off" stops local services from calling the gateway back as their owners.
   }
   // Secrets (wrangler secret put): OIDC_CLIENT_SECRET, SIGNING_KEY, ENCRYPTION_KEY, and
   // OAUTH_<CLIENT>_CLIENT_ID / _CLIENT_SECRET for each OAuth client you use: FREEE (freee),

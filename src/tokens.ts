@@ -60,6 +60,8 @@ export interface GatewayClaims extends JWTPayload {
   creds: Record<string, string>;
   // Set for a token issued to an app (docs/adr/0008): the proxy lets through only its ports.
   app?: string;
+  // Set for a call a local service made back over its reverse connection (docs/adr/0003 decision 5).
+  reverse?: string;
 }
 
 export function bearer(request: Request): string | null {
