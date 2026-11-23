@@ -44,8 +44,8 @@ async function newKey(): Promise<Local> {
   return { privateKey, publicJwk: { ...(await exportJWK(publicKey)) } };
 }
 
-async function startPairing(local: Local, name: string, description?: string) {
-  const res = await postJson("/reverse/pair", { name, public_key: local.publicJwk, ...(description ? { description } : {}) });
+async function startPairing(local: Local, name: string, description?: string, mode?: string) {
+  const res = await postJson("/reverse/pair", { name, public_key: local.publicJwk, ...(description ? { description } : {}), ...(mode ? { mode } : {}) });
   expect(res.status).toBe(201);
   return (await res.json()) as { code: string; pairing_id: string; verification_uri_complete: string; thumbprint: string };
 }
@@ -56,9 +56,9 @@ async function poll(pairingId: string) {
 }
 
 // Pairs a new local service owned by `owner`; returns its ID.
-async function pair(owner: string, name = "boid", local?: Local, callback: string[] = []): Promise<{ id: string; local: Local }> {
+async function pair(owner: string, name = "boid", local?: Local, callback: string[] = [], mode?: string): Promise<{ id: string; local: Local }> {
   local ??= await newKey();
-  const started = await startPairing(local, name);
+  const started = await startPairing(local, name, undefined, mode);
   const form = new URLSearchParams({ code: started.code, name, decision: "approve" });
   for (const c of callback) form.append("callback", c);
   const approved = await SELF.fetch(`${BASE}/pair`, { method: "POST", headers: { cookie: await cookie(owner), origin: ORIGIN }, body: form, redirect: "manual" });
@@ -79,15 +79,15 @@ async function assertion(local: Local, serviceId: string, overrides: { nonce?: s
     .sign(local.privateKey);
 }
 
-function upgrade(jwt: string) {
-  return SELF.fetch(`${BASE}/reverse/connect`, { headers: { upgrade: "websocket", authorization: `Bearer ${jwt}` } });
+function upgrade(jwt: string, scheme = "Bearer") {
+  return SELF.fetch(`${BASE}/reverse/connect`, { headers: { upgrade: "websocket", authorization: `${scheme} ${jwt}` } });
 }
 
 type Frame = Record<string, unknown>;
 
 // A local service that answers relayed requests with `handler`.
-async function connect(local: Local, serviceId: string, handler: (req: Frame) => Frame | null = echo) {
-  const res = await upgrade(await assertion(local, serviceId));
+async function connect(local: Local, serviceId: string, handler: (req: Frame) => Frame | null = echo, resume?: string) {
+  const res = resume ? await upgrade(resume, "Resume") : await upgrade(await assertion(local, serviceId));
   expect(res.status).toBe(101);
   const ws = res.webSocket!;
   const frames: Frame[] = [];
@@ -166,6 +166,14 @@ describe("pairing", () => {
     expect(res.headers.get("location")).toBe(`/login?next=${encodeURIComponent("/pair?code=ABCD-EFGH")}`);
   });
 
+  it("lets one address wait for only a few pairings at a time", async () => {
+    const local = await newKey();
+    const from = (ip: string) => SELF.fetch(`${BASE}/reverse/pair`, { method: "POST", headers: { "content-type": "application/json", "cf-connecting-ip": ip }, body: JSON.stringify({ name: "many", public_key: local.publicJwk }) });
+    for (let i = 0; i < 5; i++) expect((await from("198.51.100.7")).status).toBe(201);
+    expect((await from("198.51.100.7")).status).toBe(429);
+    expect((await from("198.51.100.8")).status).toBe(201);
+  });
+
   it("can be denied", async () => {
     const started = await startPairing(await newKey(), "boid");
     const denied = await ownerPost("/pair", { code: started.code, name: "boid", decision: "deny" }, user());
@@ -189,12 +197,46 @@ describe("pairing", () => {
     expect((await ownerPost("/pair", { code: started.code, name: "my-board", decision: "approve" }, owner)).status).toBe(303);
   });
 
-  it("keeps names unique among one owner's services, but not across owners", async () => {
+  it("replaces the owner's service of the same name when the owner ticks it, keeping its ID", async () => {
     const owner = user();
-    await pair(owner, "legacy");
-    const started = await startPairing(await newKey(), "legacy");
-    expect((await ownerPost("/pair", { code: started.code, name: "legacy", decision: "approve" }, owner)).status).toBe(409);
-    await pair(user(), "legacy");
+    const added = await vaultFor(env, owner).add(await upstream("board"), { "x-api-key": "k", authorization: "t" });
+    if ("error" in added) throw new Error(added.error);
+    const old = await pair(owner, "legacy", undefined, ["board"]);
+    const conn = await connect(old.local, old.id);
+
+    // Pairing again with a new key: the page says it replaces, shows both keys, and starts
+    // with nothing chosen.
+    const fresh = await newKey();
+    const started = await startPairing(fresh, "legacy");
+    const page = await (await SELF.fetch(`${BASE}/pair?code=${started.code}`, { headers: { cookie: await cookie(owner) } })).text();
+    expect(page).toContain("置き換えます");
+    expect(page).toContain(`name="replace" value="${old.id}"`);
+    expect(page).not.toMatch(/value="board" checked/);
+    expect(page).toContain(started.thumbprint);
+
+    // Without the tick, nothing changes.
+    const unticked = new URLSearchParams({ code: started.code, name: "legacy", decision: "approve", callback: "board" });
+    const refused = await SELF.fetch(`${BASE}/pair`, { method: "POST", headers: { cookie: await cookie(owner), origin: ORIGIN }, body: unticked, redirect: "manual" });
+    expect(refused.status).toBe(409);
+    expect(conn.closed()).toBeNull();
+    expect((await call(owner, old.id, "legacy", "/x")).status).toBe(200);
+
+    const form = new URLSearchParams({ code: started.code, name: "legacy", decision: "approve", callback: "board", replace: old.id });
+    const approved = await SELF.fetch(`${BASE}/pair`, { method: "POST", headers: { cookie: await cookie(owner), origin: ORIGIN }, body: form, redirect: "manual" });
+    expect(approved.headers.get("location")).toBe(`/?paired=${old.id}`);
+    expect((await poll(started.pairing_id)).body.service_id).toBe(old.id);
+
+    // The old connection is cut and the old key no longer opens one; the new key does.
+    await until(() => conn.closed() !== null);
+    expect(conn.closed()!.code).toBe(4003);
+    expect((await upgrade(await assertion(old.local, old.id))).status).toBe(401);
+    const next = await connect(fresh, old.id);
+    expect((await call(owner, old.id, "legacy", "/x")).status).toBe(200);
+    await hangUp(next);
+
+    // Another owner's service of the same name is theirs alone.
+    const theirs = await pair(user(), "legacy");
+    expect(theirs.id).not.toBe(old.id);
   });
 });
 
@@ -430,5 +472,40 @@ describe("calling back", () => {
     expect((await callBack(conn, { method: "GET", service: "board", path: "/../serper/search" })).status).toBe(400);
     expect((await callBack(conn, { method: "GET", service: "board", path: "no-slash" })).status).toBe(400);
     await hangUp(conn);
+  });
+});
+
+describe("strict mode", () => {
+  it("opens one connection with the key, then only with the resume tokens it hands out", async () => {
+    const owner = user();
+    const { id, local } = await pair(owner, "aks", undefined, [], "strict");
+    const first = await connect(local, id);
+    await until(() => first.frames.some((f) => f.type === "resume"));
+    const token = first.frames.find((f) => f.type === "resume")!.token as string;
+    expect(token.startsWith(`${id}.`)).toBe(true);
+    await hangUp(first);
+
+    // The key is spent; the resume token brings the service back, once.
+    expect((await upgrade(await assertion(local, id))).status).toBe(401);
+    const second = await connect(local, id, echo, token);
+    expect((await call(owner, id, "aks", "/status")).status).toBe(200);
+    await until(() => second.frames.some((f) => f.type === "resume"));
+    await hangUp(second);
+    expect((await upgrade(token, "Resume")).status).toBe(401);
+    expect((await upgrade(`${id}.made-up`, "Resume")).status).toBe(401);
+  });
+
+  it("is not available to services paired in standard mode", async () => {
+    const { id, local } = await pair(user());
+    const conn = await connect(local, id);
+    expect(conn.frames.some((f) => f.type === "resume")).toBe(false);
+    await hangUp(conn);
+    expect((await upgrade(`${id}.anything`, "Resume")).status).toBe(401);
+    // The key keeps working.
+    await hangUp(await connect(local, id));
+  });
+
+  it("refuses an unknown mode", async () => {
+    expect((await postJson("/reverse/pair", { name: "x", public_key: (await newKey()).publicJwk, mode: "lax" })).status).toBe(400);
   });
 });

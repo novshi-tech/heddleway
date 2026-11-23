@@ -141,10 +141,12 @@ export class Registry extends DurableObject<Env> {
     return live;
   }
 
-  // false when too many pairings are pending: the endpoint is open to anyone.
-  async createPairing(pairing: Pairing, maxPending: number): Promise<boolean> {
-    const live = await this.sweepPairings(Date.now());
-    if (live.filter((p) => p.status === "pending").length >= maxPending) return false;
+  // false when too many pairings are pending, in all or from the pairing's address: the
+  // endpoint is open to anyone.
+  async createPairing(pairing: Pairing, maxPending: number, maxPerSource: number): Promise<boolean> {
+    const pending = (await this.sweepPairings(Date.now())).filter((p) => p.status === "pending");
+    if (pending.length >= maxPending) return false;
+    if (pairing.source && pending.filter((p) => p.source === pairing.source).length >= maxPerSource) return false;
     await this.ctx.storage.put({ [`pairing:${pairing.codeHash}`]: pairing, [`pairpoll:${pairing.pollHash}`]: pairing.codeHash });
     return true;
   }
@@ -155,22 +157,26 @@ export class Registry extends DurableObject<Env> {
     return p && p.status === "pending" && p.expiresAt >= Date.now() ? p : null;
   }
 
-  // Approving stores the registration; the name must be free among the owner's services.
-  async decidePairing(codeHash: string, decision: PairingDecision, pollTtlMs: number): Promise<"ok" | "expired" | "name_taken"> {
+  // Approving stores the registration. The name must be free among the owner's services, unless
+  // the owner confirmed replacing the service of that name (`replaces`, its ID): the new
+  // registration then takes over that ID in the same write, so that nothing is lost if this
+  // fails, and what holds `reverse:<ID>` keeps working.
+  async decidePairing(codeHash: string, decision: PairingDecision, pollTtlMs: number, replaces?: string): Promise<{ status: "ok"; service?: ReverseService; replaced?: ReverseService } | { status: "expired" | "name_taken" }> {
     const p = await this.getPairing(codeHash);
-    if (!p) return "expired";
+    if (!p) return { status: "expired" };
     const expiresAt = Date.now() + pollTtlMs;
     if (decision === "deny") {
       await this.ctx.storage.put<Pairing>(`pairing:${codeHash}`, { ...p, status: "denied", expiresAt });
-      return "ok";
+      return { status: "ok" };
     }
-    const taken = (await this.listReverse()).some((s) => s.owner === decision.owner && s.name === decision.name);
-    if (taken) return "name_taken";
+    const existing = (await this.listReverse()).find((s) => s.owner === decision.owner && s.name === decision.name);
+    if (existing && existing.id !== replaces) return { status: "name_taken" };
+    const service: ReverseService = { ...decision, id: existing?.id ?? decision.id };
     await this.ctx.storage.put({
-      [`reverse:${decision.id}`]: decision,
-      [`pairing:${codeHash}`]: { ...p, status: "approved", serviceId: decision.id, expiresAt } satisfies Pairing,
+      [`reverse:${service.id}`]: service,
+      [`pairing:${codeHash}`]: { ...p, status: "approved", serviceId: service.id, expiresAt } satisfies Pairing,
     });
-    return "ok";
+    return { status: "ok", service, ...(existing ? { replaced: existing } : {}) };
   }
 
   // What the local service learns when it polls; a decided pairing is told once, then forgotten.
