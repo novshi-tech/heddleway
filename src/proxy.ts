@@ -2,6 +2,7 @@ import { appAllows, getApp } from "./apps";
 import { publicUrl, type ServiceConfig } from "./config";
 import { feature, withPath } from "./features";
 import { IDENTITY_CREDENTIAL, signIdentity } from "./identity";
+import { relayToLocal, serviceIdOfReverseCredential } from "./reverse";
 import { getUpstream } from "./services";
 import { bearer, verifyToken, type GatewayClaims } from "./tokens";
 import { vaultFor } from "./vault";
@@ -26,13 +27,13 @@ const DROP_REQUEST_HEADERS = new Set([
   "x-real-ip",
 ]);
 
-const DROP_RESPONSE_HEADERS = new Set(["set-cookie", "connection", "keep-alive", "transfer-encoding", "trailer", "upgrade"]);
+export const DROP_RESPONSE_HEADERS = new Set(["set-cookie", "connection", "keep-alive", "transfer-encoding", "trailer", "upgrade"]);
 
 export function denied(status: number, message: string): Response {
   return Response.json({ error: message }, { status });
 }
 
-function forwardHeaders(incoming: Headers, injected: Record<string, string>): Headers {
+export function forwardHeaders(incoming: Headers, injected: Record<string, string>): Headers {
   const headers = new Headers();
   for (const [name, value] of incoming) {
     if (DROP_REQUEST_HEADERS.has(name) || name.startsWith("cf-") || name.startsWith("x-forwarded-")) continue;
@@ -68,6 +69,13 @@ export async function handleProxy(request: Request, env: Env, ctx: ExecutionCont
     if (!appAllows(entry.definition, service, request.method, upstreamPath)) {
       return refuse("outside_ports", 403, `not allowed for the app "${claims.app}": ${request.method} ${service} ${upstreamPath || "/"}`);
     }
+  }
+
+  // A local service on a reverse connection (src/reverse.ts, docs/adr/0003): the credential
+  // names it, and only its owner reaches it.
+  const reverse = claims.creds?.[service];
+  if (reverse !== undefined && serviceIdOfReverseCredential(reverse) !== null) {
+    return relayToLocal(request, env, { user: claims.sub, credential: reverse, service, via, ...(claims.app !== undefined ? { app: claims.app } : {}) }, upstreamPath);
   }
 
   // A feature of this Worker (src/features.ts) takes its name over a configured service. The

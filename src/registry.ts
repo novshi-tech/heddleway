@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import type { AppEntry } from "./apps";
 import type { ServiceConfig } from "./config";
 import { decryptJson, encryptJson, importAesKey } from "./crypto";
+import type { Pairing, PairingDecision, PairingPoll, ReverseService } from "./reverse";
 import type { OAuthClient } from "./upstream-oauth";
 
 export interface RegistryEntry {
@@ -103,6 +104,77 @@ export class Registry extends DurableObject<Env> {
 
   async removeApp(name: string): Promise<boolean> {
     return this.ctx.storage.delete(`app:${name}`);
+  }
+
+  // Reverse connections (src/reverse.ts, docs/adr/0003): the registrations under "reverse:",
+  // pending pairings under "pairing:<hash of the code>", and the pairing's poll ID under
+  // "pairpoll:<hash>". One object for the deployment, so approving a code is atomic.
+  async listReverse(): Promise<ReverseService[]> {
+    return [...(await this.ctx.storage.list<ReverseService>({ prefix: "reverse:" })).values()].sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  async getReverse(id: string): Promise<ReverseService | null> {
+    return (await this.ctx.storage.get<ReverseService>(`reverse:${id}`)) ?? null;
+  }
+
+  async removeReverse(id: string): Promise<boolean> {
+    return this.ctx.storage.delete(`reverse:${id}`);
+  }
+
+  private async sweepPairings(now: number): Promise<Pairing[]> {
+    const all = await this.ctx.storage.list<Pairing>({ prefix: "pairing:" });
+    const live: Pairing[] = [];
+    const dead: string[] = [];
+    for (const [key, p] of all) {
+      if (p.expiresAt < now) dead.push(key, `pairpoll:${p.pollHash}`);
+      else live.push(p);
+    }
+    if (dead.length > 0) await this.ctx.storage.delete(dead);
+    return live;
+  }
+
+  // false when too many pairings are pending: the endpoint is open to anyone.
+  async createPairing(pairing: Pairing, maxPending: number): Promise<boolean> {
+    const live = await this.sweepPairings(Date.now());
+    if (live.filter((p) => p.status === "pending").length >= maxPending) return false;
+    await this.ctx.storage.put({ [`pairing:${pairing.codeHash}`]: pairing, [`pairpoll:${pairing.pollHash}`]: pairing.codeHash });
+    return true;
+  }
+
+  // A pending pairing that has not expired.
+  async getPairing(codeHash: string): Promise<Pairing | null> {
+    const p = await this.ctx.storage.get<Pairing>(`pairing:${codeHash}`);
+    return p && p.status === "pending" && p.expiresAt >= Date.now() ? p : null;
+  }
+
+  // Approving stores the registration; the name must be free among the owner's services.
+  async decidePairing(codeHash: string, decision: PairingDecision, pollTtlMs: number): Promise<"ok" | "expired" | "name_taken"> {
+    const p = await this.getPairing(codeHash);
+    if (!p) return "expired";
+    const expiresAt = Date.now() + pollTtlMs;
+    if (decision === "deny") {
+      await this.ctx.storage.put<Pairing>(`pairing:${codeHash}`, { ...p, status: "denied", expiresAt });
+      return "ok";
+    }
+    const taken = (await this.listReverse()).some((s) => s.owner === decision.owner && s.name === decision.name);
+    if (taken) return "name_taken";
+    await this.ctx.storage.put({
+      [`reverse:${decision.id}`]: decision,
+      [`pairing:${codeHash}`]: { ...p, status: "approved", serviceId: decision.id, expiresAt } satisfies Pairing,
+    });
+    return "ok";
+  }
+
+  // What the local service learns when it polls; a decided pairing is told once, then forgotten.
+  async pollPairing(pollHash: string): Promise<PairingPoll> {
+    const codeHash = await this.ctx.storage.get<string>(`pairpoll:${pollHash}`);
+    const p = codeHash ? await this.ctx.storage.get<Pairing>(`pairing:${codeHash}`) : undefined;
+    if (!codeHash || !p || p.expiresAt < Date.now()) return { status: "expired" };
+    if (p.status === "pending") return { status: "pending" };
+    await this.ctx.storage.delete([`pairing:${codeHash}`, `pairpoll:${pollHash}`]);
+    if (p.status === "denied") return { status: "denied" };
+    const service = p.serviceId ? await this.getReverse(p.serviceId) : null;
+    return service ? { status: "approved", service } : { status: "expired" };
   }
 
   async remove(name: string): Promise<boolean> {
