@@ -167,6 +167,9 @@ export const ConnectSharedMailboxBody = z.object({
 
 /** Jira をつなぐ（0034）。site はサイトの cloudId（choose_site で返したもの）、jql は範囲（省けば担当・起票・ウォッチ） */
 /** Teams のチャネルを共有リストとしてつなぐ（0036・0037）。team・channel を省くと一覧（choose_team・choose_channel）を返す */
+/** POST /api/connections/line（0049）。LINE 公式アカウントの共有リスト。credential_id はゲートウェイの受け口（業務システム）の接続 */
+export const ConnectLineBody = z.object({ credential_id: z.string().min(1).optional() });
+
 /** POST /api/connections/teams-chat（0044）。本人の Teams のチャット全体。credential_id はゲートウェイの Graph の接続 */
 export const ConnectTeamsChatBody = z.object({ credential_id: z.string().min(1).optional() });
 

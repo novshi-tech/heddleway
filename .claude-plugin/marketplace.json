@@ -14,7 +14,7 @@
         "url": "novshi-tech/heddleway",
         "path": "plugins/heddleway"
       },
-      "version": "0.30.0",
+      "version": "0.31.0",
       "description": "API ゲートウェイの共通手順(認証情報の確認、MCP のツールでの呼び出し、トークンの発行、REST の呼び出し)と、git(clone・push)・board・gBizINFO・Serper・X と トピック索引(Outlook・Gmail・Teams・Google Chat・To Do・Google Tasks などのやりとりをトピックにまとめ、担当とアテンションを追う Heddleway の機能)のスキル。ほかの heddleway-* プラグインの前提。コネクタ(Heddleway)はデプロイごとに別途追加する。"
     },
     {

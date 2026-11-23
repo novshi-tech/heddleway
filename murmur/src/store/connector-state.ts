@@ -24,7 +24,8 @@ export interface PendingAuthorization {
     | { kind: 'google-chat'; space?: string }
     | { kind: 'google-chat-dm' }
     | { kind: 'todo'; listId?: string }
-    | { kind: 'google-tasks'; listId?: string };
+    | { kind: 'google-tasks'; listId?: string }
+    | { kind: 'line' };
 }
 
 export interface ConnectorStateStore {

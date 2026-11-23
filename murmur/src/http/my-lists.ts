@@ -35,6 +35,7 @@ export const KIND_LABEL: Record<ListKind, string> = {
   'google-chat-dm': 'Google Chat のチャット',
   todo: 'To Do のタスク',
   'google-tasks': 'Google Tasks のタスク',
+  line: 'LINE 公式アカウント',
 };
 
 /** 個人リストにできるもの（IdP ごと）と、エージェントへの頼み方 */
@@ -79,6 +80,12 @@ const SHARED_GUIDE: { service: string; idp?: 'entra' | 'google'; title: string; 
     title: '共有メールボックス',
     text: '箱を読める人(Exchange でフルアクセスのある人)が、それぞれ自分でつなぐとメンバーになります。',
     ask: 'トピック索引に共有メールボックス 〇〇@… をつないで',
+  },
+  {
+    service: 'line',
+    title: 'LINE 公式アカウント',
+    text: '業務システムで公式アカウントのメッセージを読める人が、自分の業務システムの接続(API キー)をゲートウェイに登録してから、それぞれ自分でつなぐとメンバーになります。',
+    ask: 'トピック索引に LINE 公式アカウントをつないで',
   },
 ];
 

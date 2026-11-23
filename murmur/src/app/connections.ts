@@ -1,5 +1,6 @@
-import { addSharedReader, canDisconnect, connectGoogleChatDms, connectGoogleChatSpace, connectSharedMailbox, connectJiraProject, connectorOwner, connectTaskList, connectTeamsChannel, connectTeamsChats, deriveViewer, DomainError, googleAccountOf, teamsAddress, connectMailbox, replaceSharedCredential, syncSharedReaders, type ServiceDataSource } from '../domain';
+import { addSharedReader, canDisconnect, connectGoogleChatDms, connectLineAccount, lineReaderIdentity, connectGoogleChatSpace, connectSharedMailbox, connectJiraProject, connectorOwner, connectTaskList, connectTeamsChannel, connectTeamsChats, deriveViewer, DomainError, googleAccountOf, teamsAddress, connectMailbox, replaceSharedCredential, syncSharedReaders, type ServiceDataSource } from '../domain';
 import { GoogleChatError, type GoogleChatApi } from '../connectors/google-chat/api';
+import type { LineApi } from '../connectors/line/api';
 import { chatMembers, isThreaded } from '../connectors/google-chat/plan';
 import { readJiraReaders } from '../connectors/jira/readers';
 import type { TeamRef, TeamsApi } from '../connectors/teams/api';
@@ -29,6 +30,7 @@ import type { MurmurService } from './service';
 // Teams のチャット（0044）も同じ同意で、ゲートウェイの graph の接続から本人のチャット全体を個人リストにする。
 // Google Chat（0045）も同じ同意で、ゲートウェイの chat の接続からスペースを共有リストに、本人の DM・グループを個人リストにする。
 // 共有メールボックス（0042）も同じ同意で、ゲートウェイの graph の接続（委任の Mail.Read.Shared）で箱を読み、共有リストにする。
+// LINE 公式アカウント（0049）も同じ同意で、ゲートウェイの受け口（業務システム）の接続で原本を読み、共有リストにする。
 
 /** 認可の途中の state の寿命 */
 const PENDING_MINUTES = 15;
@@ -46,6 +48,7 @@ export interface ConnectionsDeps {
   gtasksFor(call: UpstreamCall): GtasksApi;
   gmailFor(call: UpstreamCall): GmailApi;
   googleChatFor(call: UpstreamCall): GoogleChatApi;
+  lineFor(call: UpstreamCall): LineApi;
   state: ConnectorStateStore;
   now: () => string;
   /** 共有リストを許すサービス（0037 の決定 4。管理者がデプロイの設定で決める） */
@@ -107,7 +110,7 @@ export interface ConnectGoogleTasksInput {
 export interface ConnectionView {
   data_source: string;
   name: string;
-  kind: 'outlook' | 'shared-mailbox' | 'gmail' | 'jira' | 'teams' | 'teams-chat' | 'google-chat' | 'google-chat-dm' | 'todo' | 'google-tasks';
+  kind: 'outlook' | 'shared-mailbox' | 'gmail' | 'jira' | 'teams' | 'teams-chat' | 'google-chat' | 'google-chat-dm' | 'todo' | 'google-tasks' | 'line';
   /** 共有メールボックス: 箱のアドレス */
   mailbox?: string;
   /** Jira: サイトとプロジェクト */
@@ -173,6 +176,11 @@ export class Connections {
     return this.connect(userId, credentialId ?? null, { kind: 'google-chat-dm' });
   }
 
+  /** LINE 公式アカウントを共有リストとしてつなぐ（0049。同意は同じもの。ゲートウェイの受け口（業務システム）の接続で読む） */
+  async connectLine(userId: string, credentialId?: string): Promise<ConnectResult> {
+    return this.connect(userId, credentialId ?? null, { kind: 'line' });
+  }
+
   /** To Do のタスクのリストを個人リストとしてつなぐ（0039。同意は Outlook と同じもの。ゲートウェイの graph の接続で読む） */
   async connectTodo(userId: string, input: ConnectTodoInput = {}): Promise<ConnectResult> {
     return this.connect(userId, input.credentialId ?? null, { kind: 'todo', listId: input.listId });
@@ -218,7 +226,7 @@ export class Connections {
 
     const request = pending.request ?? { kind: 'outlook' };
     const kind = this.kindOf(request);
-    const label = kind === 'jira' ? 'Jira' : kind === 'gtasks' ? 'Google Tasks' : kind === 'gmail' ? 'Gmail' : kind === 'google-chat' || kind === 'google-chat-dm' ? 'Google Chat' : 'Microsoft Graph';
+    const label = kind === 'jira' ? 'Jira' : kind === 'gtasks' ? 'Google Tasks' : kind === 'gmail' ? 'Gmail' : kind === 'google-chat' || kind === 'google-chat-dm' ? 'Google Chat' : kind === 'line' ? '業務システム（LINE 公式アカウントの受け口）' : 'Microsoft Graph';
     const done = await this.deps.gateway.consent.complete({ userId: pending.userId, code: input.code, secret: pending.verifier, kind });
     if (done === 'no_credential') return { ok: false, message: `ゲートウェイに ${label} の接続がありません。ゲートウェイでつないでから、もう一度頼んでください。` };
     if (done === 'wrong_user') {
@@ -234,6 +242,8 @@ export class Connections {
               ? `${result.data_source.name} をつなぎました。これから更新される課題を取り込みます（過去のコメントは取りません）。`
               : request.kind === 'todo' || request.kind === 'google-tasks'
                 ? `${result.data_source.name} をつなぎました。リストの開いているタスクと、これから変わるタスクを取り込みます。`
+                : request.kind === 'line'
+                  ? `${result.data_source.name} をつなぎました。これから届く・送るメッセージを取り込みます（つなぐ前のメッセージは取りません）。`
                 : request.kind === 'teams-chat' || request.kind === 'google-chat' || request.kind === 'google-chat-dm'
                   ? `${result.data_source.name} をつなぎました。これから届くチャットのメッセージを取り込みます（過去のメッセージは取りません）。`
                   : `${result.data_source.name} をつなぎました。これから届くメールを取り込みます（過去のメールは取りません）。`,
@@ -259,6 +269,7 @@ export class Connections {
       case 'gmail':
       case 'google-chat':
       case 'google-chat-dm':
+      case 'line':
         return request.kind;
       case 'google-tasks':
         return 'gtasks';
@@ -288,6 +299,7 @@ export class Connections {
     if (request.kind === 'google-tasks') return this.connectGoogleTasksWith(userId, chosen.id, request);
     if (request.kind === 'gmail') return this.connectGmailWith(userId, chosen.id);
     if (request.kind === 'shared-mailbox') return this.connectSharedMailboxWith(userId, chosen.id, request.mailbox);
+    if (request.kind === 'line') return this.connectLineWith(userId, chosen.id);
 
     const me = await this.deps.graphFor(await this.deps.gateway.upstream(userId, chosen.id, 'graph')).me();
     const { result: plan } = await this.deps.service.changeMaster(userId, 'Outlook をつなぐ', (d, ctx) =>
@@ -429,6 +441,57 @@ export class Connections {
       folders: keep ? keep.folders : {},
       mailbox: {},
       connectedAt: keep ? keep.connectedAt : this.deps.now(),
+      lastSyncAt: current?.lastSyncAt ?? null,
+      lastRetryAt: null,
+    });
+    await this.deps.queue.send({ kind: 'setup', dataSourceId: ds.id });
+    return { status: 'connected', data_source: { id: ds.id, name: ds.name }, created: plan.kind === 'created' };
+  }
+
+  /**
+   * LINE 公式アカウント（0049）。受け口の組織に 1 つの共有リスト。つなぐ人の接続で受け口のメッセージが読めることを確かめ、
+   * 読めた人を読者に足す（受け口には読める人の一覧がない。0042 と同じ）
+   */
+  private async connectLineWith(userId: string, credentialId: string): Promise<ConnectResult> {
+    if (!this.deps.sharedServices.includes('line')) {
+      throw new DomainError('forbidden', 'このデプロイでは LINE 公式アカウントの共有リストを許していない（管理者がデプロイの設定 MURMUR_SHARED_SERVICES に line を足す）');
+    }
+    const api = this.deps.lineFor(await this.deps.gateway.upstream(userId, credentialId, 'line'));
+    let organization;
+    try {
+      organization = await api.probe();
+    } catch (err) {
+      if (err instanceof GatewayAuthError) {
+        throw new DomainError('forbidden', `この接続では業務システムの LINE のメッセージを読めない（業務システムでメッセージを読む権限があるか、API キーが有効かを確かめる。${err.message}）`);
+      }
+      throw err;
+    }
+    const identity = lineReaderIdentity(organization.id, userId);
+    const { result: plan } = await this.deps.service.changeMaster(userId, 'LINE 公式アカウントをつなぐ', (d, ctx) =>
+      connectLineAccount(d, ctx, { userId, gatewayCredentialId: credentialId, organizationId: organization.id, organizationName: organization.name }),
+    );
+    const ds = plan.dataSource;
+    const current = await this.deps.state.source(ds.id);
+    if (plan.kind === 'exists') {
+      await this.deps.service.changeMaster(userId, 'LINE 公式アカウントの読者に入る', (d, ctx) => addSharedReader(d, ctx, ds.id, userId, identity));
+      if (current && current.status === 'ok') return { status: 'connected', data_source: { id: ds.id, name: ds.name }, created: false };
+      await this.deps.service.changeMaster(userId, 'LINE 公式アカウントをつなぎ直す', (d, ctx) =>
+        replaceSharedCredential(d, ctx, ds.id, { userId, gatewayCredentialId: credentialId, identity: identity.value }),
+      );
+    }
+    const now = this.deps.now();
+    // 止まっていたもの（broken）は位置とつないだ時刻を残す（止まっていた間の分も取る）。外したあとは、その時点から取る
+    const keep = current && current.status !== 'disconnected' ? current : null;
+    await this.deps.state.putSource({
+      kind: 'line',
+      dataSourceId: ds.id,
+      userId,
+      gatewayCredentialId: credentialId,
+      status: 'setup',
+      reason: null,
+      folders: {},
+      line: { after: keep?.line?.after ?? null, setupAt: now },
+      connectedAt: keep ? keep.connectedAt : now,
       lastSyncAt: current?.lastSyncAt ?? null,
       lastRetryAt: null,
     });

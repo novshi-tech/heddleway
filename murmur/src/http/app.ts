@@ -17,6 +17,7 @@ import {
   ClaimBody,
   ConnectGmailBody,
   ConnectSharedMailboxBody,
+  ConnectLineBody,
   ConnectGoogleTasksBody, ConnectJiraBody, ConnectOutlookBody, ConnectTeamsBody,
   ConnectTeamsChatBody,
   ConnectGoogleChatBody,
@@ -281,6 +282,11 @@ export function createApp(opts: HttpOptions) {
   api.post('/connections/shared-mailbox', async (c) => {
     const b = ConnectSharedMailboxBody.parse(await json(c));
     return c.json(await (await connectors(c)).connections.connectSharedMailbox(c.var.userId, { credentialId: b.credential_id, mailbox: b.mailbox }));
+  });
+
+  api.post('/connections/line', async (c) => {
+    const b = ConnectLineBody.parse(await json(c));
+    return c.json(await (await connectors(c)).connections.connectLine(c.var.userId, b.credential_id));
   });
 
   api.post('/connections/teams', async (c) => {
