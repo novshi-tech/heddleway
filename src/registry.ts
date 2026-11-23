@@ -155,7 +155,8 @@ export class Registry extends DurableObject<Env> {
     return p && p.status === "pending" && p.expiresAt >= Date.now() ? p : null;
   }
 
-  // Approving stores the registration; the name must be free among the owner's services.
+  // Approving stores the registration. The name must be free among the owner's services, except
+  // that a registration with the same ID replaces the owner's service of that name (pairing again).
   async decidePairing(codeHash: string, decision: PairingDecision, pollTtlMs: number): Promise<"ok" | "expired" | "name_taken"> {
     const p = await this.getPairing(codeHash);
     if (!p) return "expired";
@@ -164,7 +165,7 @@ export class Registry extends DurableObject<Env> {
       await this.ctx.storage.put<Pairing>(`pairing:${codeHash}`, { ...p, status: "denied", expiresAt });
       return "ok";
     }
-    const taken = (await this.listReverse()).some((s) => s.owner === decision.owner && s.name === decision.name);
+    const taken = (await this.listReverse()).some((s) => s.owner === decision.owner && s.name === decision.name && s.id !== decision.id);
     if (taken) return "name_taken";
     await this.ctx.storage.put({
       [`reverse:${decision.id}`]: decision,

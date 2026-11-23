@@ -189,12 +189,35 @@ describe("pairing", () => {
     expect((await ownerPost("/pair", { code: started.code, name: "my-board", decision: "approve" }, owner)).status).toBe(303);
   });
 
-  it("keeps names unique among one owner's services, but not across owners", async () => {
+  it("replaces the owner's service of the same name, keeping its ID and what it may call back", async () => {
     const owner = user();
-    await pair(owner, "legacy");
-    const started = await startPairing(await newKey(), "legacy");
-    expect((await ownerPost("/pair", { code: started.code, name: "legacy", decision: "approve" }, owner)).status).toBe(409);
-    await pair(user(), "legacy");
+    const added = await vaultFor(env, owner).add(await upstream("board"), { "x-api-key": "k", authorization: "t" });
+    if ("error" in added) throw new Error(added.error);
+    const old = await pair(owner, "legacy", undefined, ["board"]);
+    const conn = await connect(old.local, old.id);
+
+    // Pairing again with a new key: the page says it replaces, and keeps the choice checked.
+    const fresh = await newKey();
+    const started = await startPairing(fresh, "legacy");
+    const page = await (await SELF.fetch(`${BASE}/pair?code=${started.code}`, { headers: { cookie: await cookie(owner) } })).text();
+    expect(page).toContain("置き換えます");
+    expect(page).toMatch(/value="board" checked/);
+    const form = new URLSearchParams({ code: started.code, name: "legacy", decision: "approve", callback: "board" });
+    const approved = await SELF.fetch(`${BASE}/pair`, { method: "POST", headers: { cookie: await cookie(owner), origin: ORIGIN }, body: form, redirect: "manual" });
+    expect(approved.headers.get("location")).toBe(`/?paired=${old.id}`);
+    expect((await poll(started.pairing_id)).body.service_id).toBe(old.id);
+
+    // The old connection is cut and the old key no longer opens one; the new key does.
+    await until(() => conn.closed() !== null);
+    expect(conn.closed()!.code).toBe(4003);
+    expect((await upgrade(await assertion(old.local, old.id))).status).toBe(401);
+    const next = await connect(fresh, old.id);
+    expect((await call(owner, old.id, "legacy", "/x")).status).toBe(200);
+    await hangUp(next);
+
+    // Another owner's service of the same name is theirs alone.
+    const theirs = await pair(user(), "legacy");
+    expect(theirs.id).not.toBe(old.id);
   });
 });
 
