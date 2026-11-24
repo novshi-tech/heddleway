@@ -116,6 +116,8 @@ export const MergeContactBody = z.object({ from: z.string().min(1), reason: z.st
 
 export const DismissBody = z.object({ reason: z.string().min(1) });
 export const ReopenBody = z.object({ reason: z.string().optional() }).default({});
+/** 件名を変える（0050 の決定 4） */
+export const RetitleBody = z.object({ title: z.string().min(1).max(200), reason: z.string().optional() });
 
 export const MoveSignalBody = z
   .object({

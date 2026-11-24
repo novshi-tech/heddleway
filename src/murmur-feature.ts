@@ -18,7 +18,8 @@ import { registerFeatures, type Feature } from "./features";
 // that hands Murmur anything from the environment: its own bindings and secrets, and the
 // gateway's port. Never the gateway's keys.
 //
-// Murmur is on when the deployment binds MURMUR_DB and sets ANTHROPIC_API_KEY. Its webhooks
+// Murmur is on when the deployment binds MURMUR_DB and either sets ANTHROPIC_API_KEY or sets
+// MURMUR_THREADING=source (threading by the sources' own threads, no AI; Murmur's 0050). Its webhooks
 // (Graph, Jira) also need MURMUR_WEBHOOK_SECRET.
 
 interface MurmurEnv {
@@ -26,6 +27,9 @@ interface MurmurEnv {
   MURMUR_QUEUE?: Queue<SyncJob>;
   ANTHROPIC_API_KEY?: string;
   MURMUR_CLAUDE_MODEL?: string;
+  // "source": thread by the sources' own threads without AI, so no Anthropic key is needed (Murmur's 0050).
+  // Lists that cannot be threaded that way (Teams chats, Google Chat DMs and unthreaded spaces, LINE) are refused. Unset: AI.
+  MURMUR_THREADING?: string;
   MURMUR_RECENT_THREAD_LIMIT?: string;
   MURMUR_WEBHOOK_SECRET?: string;
   MURMUR_TIMELINE_TOKEN?: string;
@@ -56,7 +60,8 @@ export function parsePollMinutes(value: string | undefined): number | undefined 
 
 export function murmurFeature(env: Env): Feature | null {
   const m = env as unknown as MurmurEnv;
-  if (!m.MURMUR_DB || !m.ANTHROPIC_API_KEY) return null;
+  const threading = m.MURMUR_THREADING?.trim() === "source" ? "source" : "ai";
+  if (!m.MURMUR_DB || (threading === "ai" && !m.ANTHROPIC_API_KEY)) return null;
   const port = featurePort(env, {
     feature: NAME,
     kinds: {
@@ -77,7 +82,8 @@ export function murmurFeature(env: Env): Feature | null {
   });
   const config: MurmurConfig = {
     db: m.MURMUR_DB,
-    anthropicApiKey: m.ANTHROPIC_API_KEY,
+    threading,
+    anthropicApiKey: threading === "ai" ? m.ANTHROPIC_API_KEY : undefined,
     claudeModel: m.MURMUR_CLAUDE_MODEL || DEFAULT_MODEL,
     recentThreadLimit: m.MURMUR_RECENT_THREAD_LIMIT ? Number(m.MURMUR_RECENT_THREAD_LIMIT) : undefined,
     webhookSecret: m.MURMUR_WEBHOOK_SECRET,

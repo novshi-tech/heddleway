@@ -375,7 +375,7 @@ describe('H5 Gmail の message の正規化', () => {
       to: [{ channel: 'email', value: 'bob@gws.example' }, { channel: 'email', value: 'dave@example.com' }, { channel: 'email', value: 'eve@example.com' }],
       subject: '見積のお願い',
       body: 'お願いします',
-      anchors: { messageId: '<c1@example.com>', inReplyTo: '<b0@gws.example>' },
+      anchors: { messageId: '<c1@example.com>', inReplyTo: '<b0@gws.example>', sourceThread: 't_g4' },
       sourceRef: 'email:<c1@example.com>',
       occurredAt: '2026-11-10T01:00:00.000Z',
     });
@@ -397,7 +397,10 @@ describe('H5 Gmail の message の正規化', () => {
       internetMessageHeaders: [{ name: 'In-Reply-To', value: '<b0@gws.example>' }],
     }));
     if (o.kind !== 'signal') throw new Error('outlook skipped');
-    expect({ ...g, occurredAt: undefined }).toEqual({ ...o.signal, occurredAt: undefined });
+    // ソースのスレッド（0050）はサービスごとの値なので比べない
+    const { sourceThread, ...anchors } = g.anchors ?? {};
+    expect(sourceThread).toBe('t_g6');
+    expect({ ...g, anchors, occurredAt: undefined }).toEqual({ ...o.signal, occurredAt: undefined });
   });
 
   it('引用の履歴を落とす（plain も html も）。Gmail 流の見出しで切る', () => {

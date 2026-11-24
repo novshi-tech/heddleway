@@ -45,9 +45,11 @@ import {
   listThreads,
   moveSignal,
   planIngest,
+  needsAiThreading,
   planMasterEdit,
   prepareInbound,
   reopenThread,
+  retitleThread,
   signalEvent,
   unlinkThreads,
   type CoreContext,
@@ -87,7 +89,8 @@ export interface ServiceDeps {
   repo: Repo;
   clock: Clock;
   newId: (prefix: string) => string;
-  decider: Decider;
+  /** 区切りの AI 判断。AI を使わないデプロイ（policy.threading が source。0050）ではない */
+  decider?: Decider;
   connectors: Connectors;
   policy: IngestPolicy;
 }
@@ -95,7 +98,9 @@ export interface ServiceDeps {
 export type IngestResult =
   | { status: 'duplicate'; signalId: string }
   | { status: 'merged'; signalId: string; threadId: string | null }
-  | ({ status: 'threaded'; signalId: string } & IngestOutcome);
+  | ({ status: 'threaded'; signalId: string } & IngestOutcome)
+  /** AI を使わないデプロイで、ソースのスレッドで区切れないリストのシグナル（0050 の決定 3）。取り込まない */
+  | { status: 'unsupported'; dataSourceId: string };
 
 /** 状態の写しの結果。no_thread はまだ課題のスレッドがない（写さない） */
 export type MirrorResult =
@@ -224,6 +229,11 @@ export class MurmurService {
   // ---- Ingest ----
 
   async ingest(inbound: InboundSignal): Promise<IngestResult> {
+    // AI を使わないデプロイでは、ソースのスレッドで区切れないリストは取り込まない（0050 の決定 3。つなぐ操作も断る）
+    if (this.deps.policy.threading === 'source') {
+      const ds = (await this.directory()).dataSource(inbound.dataSourceId);
+      if (ds?.kind === 'service' && needsAiThreading(ds)) return { status: 'unsupported', dataSourceId: inbound.dataSourceId };
+    }
     // 重複と記録との統合は、索引の数行で決まる（0046 の決定 1 の段 1）。どちらでもなければ、区切りの作業範囲で読み直して決める
     // 確かめるだけなので ID を使わない（採番を進めると、後の判断の ID がずれる）
     const ctx0 = { ...this.context(await this.directory()), newId: (prefix: string) => `${prefix}_probe` };
@@ -244,6 +254,7 @@ export class MurmurService {
       let decided;
       if (plan.kind === 'decided') decided = plan;
       else {
+        if (!this.deps.decider) throw new Error('区切りの AI 判断が要るが、このデプロイは AI を使わない（0050）');
         const { raw, by } = await this.deps.decider.decide(plan.request);
         decided = finalizeIngest(ctx, plan.request, raw, by);
       }
@@ -556,6 +567,13 @@ export class MurmurService {
   async reopenThread(userId: string, input: { threadId: string; reason?: string }) {
     const { viewer } = await this.viewer(userId);
     await this.run((p, ctx) => ({ events: reopenThread(p, viewer, ctx.dir, input), result: undefined }), () => this.threadScope({ threadIds: [input.threadId] }));
+    return this.getThread(userId, input.threadId);
+  }
+
+  /** 件名を変える（0050 の決定 4） */
+  async retitleThread(userId: string, input: { threadId: string; title: string; reason?: string }) {
+    const { viewer } = await this.viewer(userId);
+    await this.run((p, ctx) => ({ events: retitleThread(p, viewer, ctx.dir, input), result: undefined }), () => this.threadScope({ threadIds: [input.threadId] }));
     return this.getThread(userId, input.threadId);
   }
 

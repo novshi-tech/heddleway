@@ -29,7 +29,7 @@ export function normalizeMessage(dataSourceId: string, msg: GraphMessage): Norma
       to,
       ...(msg.subject ? { subject: msg.subject } : {}),
       body,
-      anchors: { messageId, ...(inReplyTo ? { inReplyTo } : {}) },
+      anchors: { messageId, ...(inReplyTo ? { inReplyTo } : {}), ...(msg.conversationId ? { sourceThread: msg.conversationId } : {}) },
       sourceRef: `email:${messageId}`,
       ...(occurredAt ? { occurredAt } : {}),
     },

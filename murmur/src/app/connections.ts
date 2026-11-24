@@ -1,4 +1,4 @@
-import { addSharedReader, canDisconnect, connectGoogleChatDms, connectLineAccount, lineReaderIdentity, connectGoogleChatSpace, connectSharedMailbox, connectJiraProject, connectorOwner, connectTaskList, connectTeamsChannel, connectTeamsChats, deriveViewer, DomainError, googleAccountOf, teamsAddress, connectMailbox, replaceSharedCredential, syncSharedReaders, type ServiceDataSource } from '../domain';
+import { addSharedReader, canDisconnect, connectGoogleChatDms, connectLineAccount, lineReaderIdentity, connectGoogleChatSpace, connectSharedMailbox, connectJiraProject, connectorOwner, connectTaskList, connectTeamsChannel, connectTeamsChats, deriveViewer, DomainError, googleAccountOf, teamsAddress, connectMailbox, replaceSharedCredential, syncSharedReaders, type ServiceDataSource, type ThreadingMode } from '../domain';
 import { GoogleChatError, type GoogleChatApi } from '../connectors/google-chat/api';
 import type { LineApi } from '../connectors/line/api';
 import { chatMembers, isThreaded } from '../connectors/google-chat/plan';
@@ -53,6 +53,15 @@ export interface ConnectionsDeps {
   now: () => string;
   /** 共有リストを許すサービス（0037 の決定 4。管理者がデプロイの設定で決める） */
   sharedServices: readonly string[];
+  /** 区切りの方式（0050）。source のデプロイでは、ソースのスレッドで区切れないリストをつながない（決定 3）。省略は ai */
+  threading?: ThreadingMode;
+}
+
+/** AI を使わないデプロイでつながないリストの種類（0050 の決定 3。スレッドを使わない Google Chat のスペースは、スペースを読んでから断る） */
+const NEEDS_AI: ReadonlySet<string> = new Set(['teams-chat', 'google-chat-dm', 'line']);
+
+function requiresAi(what: string): DomainError {
+  return new DomainError('conflict', `requires_ai: このデプロイは AI を使わない区切り（ソースのスレッド）で動いているので、${what}はつなげない（スレッドで区切れないため。0050）`);
 }
 
 export type ConnectResult =
@@ -192,6 +201,9 @@ export class Connections {
   }
 
   private async connect(userId: string, credentialId: string | null, request: NonNullable<PendingAuthorization['request']>): Promise<ConnectResult> {
+    if (this.deps.threading === 'source' && NEEDS_AI.has(request.kind)) {
+      throw requiresAi(request.kind === 'line' ? 'LINE 公式アカウント' : request.kind === 'teams-chat' ? 'Teams のチャット' : 'Google Chat の DM・グループのチャット');
+    }
     const dir = await this.deps.service.directory();
     if (!dir.seed.users.some((u) => u.id === userId)) throw new DomainError('forbidden', `user ${userId} はまだサインインしていない`);
     try {
@@ -644,6 +656,7 @@ export class Connections {
     if (!request.space) return { status: 'choose_space', spaces: spaces.map((s) => ({ id: s.name, name: s.displayName || s.name })) };
     const space = spaces.find((s) => s.name === request.space);
     if (!space) throw new DomainError('not_found', `space ${request.space} にこの人は入っていない`);
+    if (this.deps.threading === 'source' && !isThreaded(space)) throw requiresAi('スレッドを使わない Google Chat のスペース');
 
     const { result: plan } = await this.deps.service.changeMaster(userId, 'Google Chat のスペースをつなぐ', (d, ctx) =>
       connectGoogleChatSpace(d, ctx, { userId, gatewayCredentialId: credentialId, space: space.name, spaceName: space.displayName || space.name, threaded: isThreaded(space), account }),

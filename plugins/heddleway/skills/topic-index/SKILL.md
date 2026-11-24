@@ -58,7 +58,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/gw_request.py POST murmur /sent --json '{"da
 初めてつないだユーザーは名無しで、自分の連絡先もリストもない(`GET /me` が `contact: null`・`lists: []`)。次の順に案内する。
 
 1. 呼び方を聞いて `PATCH /me` で付ける
-2. 個人リストにするものは、組織のデプロイで決まる。Microsoft 365 の組織は Outlook(`POST /connections/outlook`)・To Do(`POST /connections/todo`)・Teams のチャット(`POST /connections/teams-chat`)、Google Workspace の組織は Gmail(`POST /connections/gmail`)・Google Tasks(`POST /connections/google-tasks`)・Google Chat のチャット(`POST /connections/google-chat-dm`)。コネクタの `list_credentials` を見て、あるサービス(`graph` か `gmail`・`tasks`・`chat`)のものだけを案内する。共有リストは、Jira のプロジェクトなら `POST /connections/jira`、Teams のチャネルなら `POST /connections/teams`、Google Chat のスペースなら `POST /connections/google-chat`、Microsoft 365 の共有メールボックスなら `POST /connections/shared-mailbox`、LINE 公式アカウントなら `POST /connections/line`(下の「Outlook をつなぐ」「Gmail をつなぐ」「To Do をつなぐ」「Google Tasks をつなぐ」「Teams のチャットをつなぐ」「Google Chat のチャットをつなぐ」「Jira をつなぐ」「Teams をつなぐ」「Google Chat のスペースをつなぐ」「共有メールボックスをつなぐ」「LINE 公式アカウントをつなぐ」)。トピック索引が取り込み続けるのはこの経路だけ
+2. 個人リストにするものは、組織のデプロイで決まる。Microsoft 365 の組織は Outlook(`POST /connections/outlook`)・To Do(`POST /connections/todo`)・Teams のチャット(`POST /connections/teams-chat`)、Google Workspace の組織は Gmail(`POST /connections/gmail`)・Google Tasks(`POST /connections/google-tasks`)・Google Chat のチャット(`POST /connections/google-chat-dm`)。コネクタの `list_credentials` を見て、あるサービス(`graph` か `gmail`・`tasks`・`chat`)のものだけを案内する。共有リストは、Jira のプロジェクトなら `POST /connections/jira`、Teams のチャネルなら `POST /connections/teams`、Google Chat のスペースなら `POST /connections/google-chat`、Microsoft 365 の共有メールボックスなら `POST /connections/shared-mailbox`、LINE 公式アカウントなら `POST /connections/line`(下の「Outlook をつなぐ」「Gmail をつなぐ」「To Do をつなぐ」「Google Tasks をつなぐ」「Teams のチャットをつなぐ」「Google Chat のチャットをつなぐ」「Jira をつなぐ」「Teams をつなぐ」「Google Chat のスペースをつなぐ」「共有メールボックスをつなぐ」「LINE 公式アカウントをつなぐ」)。トピック索引が取り込み続けるのはこの経路だけ。AI を使わずに動かしているデプロイ(デプロイの設定 `MURMUR_THREADING=source`)では、Teams のチャット・Google Chat のチャット(DM・グループ)・スレッドを使わない Google Chat のスペース・LINE 公式アカウントはつなげない(`conflict` で、メッセージに `requires_ai` が入る。メッセージをソースのスレッドで区切っているため)。そのときはつなげないことをユーザーに伝え、ほかの経路だけを案内する
 3. ほかの自分のアカウント(Slack・LINE など)をリストにするなら、ゲートウェイでそのサービスがつながっているか(`list_credentials`)を先に確かめ、つないだアカウントのアドレスを `identity` にして `POST /data-sources` を呼ぶ。結果の `identity.kind`:
    - `created`: 自分の連絡先を新しく作った / `bound`: チームが先に作っていた仮の連絡先(まだ本人が登録していない連絡先)が自分に結ばれた / `attached`・`already`: 自分の連絡先に付いた
    - `merge_candidate`: そのアドレスは別の仮の連絡先(`ghostContactId`)に付いている。同じ人なら、ユーザーに確かめてから `POST /contacts/{自分の contactId}/merge` で `from` に仮の連絡先を渡してまとめる
@@ -273,6 +273,7 @@ LINE 公式アカウントは、アカウント 1 つを 1 つの**共有リス�
 | unlink_threads | `POST /threads/{thread_id}/unlink` | `{"thread_id", "reason"?}` | `get_thread` と同じ |
 | dismiss_thread | `POST /threads/{thread_id}/dismiss` | `{"reason"}`(必須)。割当待ちなどから片付ける。To Do / Google Tasks のタスクは `invalid`(そのアプリで完了にする) | `get_thread` と同じ |
 | reopen_thread | `POST /threads/{thread_id}/reopen` | `{"reason"?}`。片付けたトピックを再開する。To Do / Google Tasks のタスクは `invalid`(そのアプリで再開する) | `get_thread` と同じ |
+| retitle_thread | `POST /threads/{thread_id}/title` | `{"title", "reason"?}`(`title` は 200 字まで)。トピックの件名を変える。共有リストのトピックはメンバー全員の表示が変わる。Jira・To Do・Google Tasks など、ソースから写した件名は `invalid`(そのアプリで変える) | `get_thread` と同じ |
 | move_signal | `POST /signals/{signal_id}/move` | `{"thread_id"}` か `{"new_thread_title"}` のどちらか、`"reason"`(必須)。メッセージを別のトピックか新しいトピックへ移す | 移した先のトピック(`get_thread` と同じ) |
 | record_sent | `POST /sent` | 下の「送信の記録」 | 送ったメッセージの入ったトピック(`get_thread` と同じ) |
 | rename_me | `PATCH /me` | `{"name"}` | `me` と同じ |
@@ -348,5 +349,6 @@ LINE 公式アカウントは、アカウント 1 つを 1 つの**共有リス�
 5. 「この件に返信して」「協力会社に依頼して」: `GET /threads/{id}` で経過を読む → 文面と宛先・返事の期限をユーザーに確認 → 送信のスキルで送る → **すぐ `POST /sent`**(返信なら `reply_to_thread_id` と `acknowledge: true`、別の相手への依頼なら `source_thread_id` に元のトピック)
 6. 「あの To Do / Google Tasks のタスク、どうなった?」: `GET /threads/{タスクのトピックの id}`。`derivedBall` が結んだ先の様子(`my_turn`: 結んだ先に自分の担当かアテンションが残っている / `waiting`: 結んだ先が全部返事待ち)、`timeline` に結んだ先の受信も並ぶ
 7. 「もう対応不要」: 割当待ちなら `POST /threads/{id}/dismiss`(片付ける)、To Do / Google Tasks のタスクならそのアプリで完了にする(ユーザーに確かめてから)。また動いたら、片付けたものは `reopen` で再開、タスクはそのアプリで再開する
-8. 「振り分けが違う」: `POST /signals/{signal_id}/move`(メッセージを既存のトピックか新しいトピックへ移す)。違うトピックと結んだら `unlink`
-9. 「これ課題にして」: 起票の内容(要約・説明・担当者)をユーザーに確認 → jira スキルで起票 → **すぐ `POST /sent`**(`sent_ref` と `anchors.thread_key` に課題キー、`source_thread_id` に元のトピック)。ステータスや担当者を変えたいときは jira スキルで Jira を直接変える
+8. 件名が読みにくい(メッセージの本文の先頭のまま。件名のない Teams のチャネルや Google Chat のスペースの投稿に多い): 本文を読んで短い件名を考え、`POST /threads/{id}/title` で直す。一覧を見せるときに見つけたら、まとめて直してよいかユーザーに一言確かめてから直す
+9. 「振り分けが違う」: `POST /signals/{signal_id}/move`(メッセージを既存のトピックか新しいトピックへ移す)。違うトピックと結んだら `unlink`
+10. 「これ課題にして」: 起票の内容(要約・説明・担当者)をユーザーに確認 → jira スキルで起票 → **すぐ `POST /sent`**(`sent_ref` と `anchors.thread_key` に課題キー、`source_thread_id` に元のトピック)。ステータスや担当者を変えたいときは jira スキルで Jira を直接変える

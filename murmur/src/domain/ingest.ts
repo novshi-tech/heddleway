@@ -90,9 +90,16 @@ export interface IngestPolicy {
   candidateWindowDays: number;
   /** 窓の中でも、新しい順にこの本数までしか読まない（0046 の決定 4） */
   candidateWindowLimit: number;
+  /**
+   * 区切りの方式（0050）。ai は今までどおり（アンカー → 返事待ち → AI が候補から選ぶ）。source は AI を使わず、
+   * ソースのスレッド（アンカーと sourceThread）だけで決め、件名は既定の件名にする。省略は ai
+   */
+  threading?: ThreadingMode;
 }
 
-export const DEFAULT_POLICY: IngestPolicy = { recentThreadLimit: 5, candidateWindowDays: 30, candidateWindowLimit: 50 };
+export type ThreadingMode = 'ai' | 'source';
+
+export const DEFAULT_POLICY: IngestPolicy = { recentThreadLimit: 5, candidateWindowDays: 30, candidateWindowLimit: 50, threading: 'ai' };
 
 // ---- 区切り（上から順に） ----
 
@@ -223,6 +230,36 @@ function lastActivity(dir: Directory, p: Projections, t: Thread): string {
   return a > b ? a : b;
 }
 
+/**
+ * AI を使わない区切り（0050 の決定 2）。今のアンカーで当たればそのスレッド、次にソースのスレッド（sourceThread）が同じシグナルのスレッド、
+ * どちらもなければ新しいスレッド。返事待ちと直近の候補は使わない（ソースが区切りの正）
+ */
+export function planSourceThreading(p: Projections, sig: SignalPayload): Threading {
+  const anchored = resolveAnchors(p, sig);
+  if (anchored) return anchored;
+  const st = sig.anchors.sourceThread;
+  if (st) {
+    const s = Object.values(p.signals)
+      .filter((x) => x.dataSourceId === sig.dataSourceId && x.threadId !== null && x.signalId !== sig.signalId && x.anchors.sourceThread === st)
+      .sort((x, y) => y.seq - x.seq)[0];
+    if (s) return { kind: 'existing', threadId: s.threadId!, by: 'anchor', reason: `ソースのスレッド ${st}` };
+    return { kind: 'new', by: 'anchor', reason: `ソースのスレッド ${st} の最初のシグナル` };
+  }
+  if (sig.anchors.threadTs) return { kind: 'new', by: 'anchor', reason: `スレッド thread_ts=${sig.anchors.threadTs} の最初のシグナル` };
+  return { kind: 'new', by: 'no_match', reason: 'ソースのスレッドがない（AI を使わない区切り）' };
+}
+
+/**
+ * ソースのスレッドで区切れないリストか（0050 の決定 3）。会話はあってもスレッドの木がないもの: Teams のチャット、
+ * Google Chat の DM・グループ、スレッドを使わない Google Chat のスペース、LINE 公式アカウント。AI を使わないデプロイではつながず、取り込まない
+ */
+export function needsAiThreading(ds: Pick<ServiceDataSource, 'connector'>): boolean {
+  const c = ds.connector;
+  if (!c) return false;
+  if (c.kind === 'teams-chat' || c.kind === 'google-chat-dm' || c.kind === 'line') return true;
+  return c.kind === 'google-chat' && !c.threaded;
+}
+
 export function planThreading(
   dir: Directory,
   p: Projections,
@@ -231,6 +268,7 @@ export function planThreading(
   ours: boolean,
   policy: IngestPolicy,
 ): Threading {
+  if (policy.threading === 'source') return planSourceThreading(p, sig);
   const anchored = resolveAnchors(p, sig);
   if (anchored) return anchored;
   const waiting = awaitingThread(dir, p, ds, sig, ours);
@@ -302,7 +340,8 @@ export function planIngest(
 ): IngestPlan {
   const ours = isOurs(ctx.dir, ds, sig.from, ctx.now);
   const threading = planThreading(ctx.dir, p, ds, sig, ours, policy);
-  if (threading.kind === 'existing' || (ours && threading.kind === 'new')) {
+  // AI を使わない区切りでは、新しいスレッドの件名も既定の件名にする（0050。後からエージェントが直せる、決定 4）
+  if (threading.kind === 'existing' || (threading.kind === 'new' && (ours || policy.threading === 'source'))) {
     const choice: ThreadChoice =
       threading.kind === 'existing'
         ? { kind: 'existing', threadId: threading.threadId }

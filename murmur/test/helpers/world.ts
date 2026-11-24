@@ -246,3 +246,9 @@ export function ingestPure(
     request: plan.kind === 'needs_decision' ? plan.request : undefined,
   };
 }
+
+/** 取り込みの結果のうち、シグナルを持つもの（AI を使わないデプロイの unsupported は持たない。0050） */
+export function threaded<T extends { status: string }>(r: T): Exclude<T, { status: 'unsupported' }> {
+  if (r.status === 'unsupported') throw new Error('unsupported');
+  return r as Exclude<T, { status: 'unsupported' }>;
+}

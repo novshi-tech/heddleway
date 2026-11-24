@@ -9,6 +9,7 @@ import {
   moveSignal,
   recordSent,
   reopenThread,
+  retitleThread,
   unlinkThreads,
 } from '../../src/domain';
 import { alice, answer, bob, dir, email, eve, EventLog, ingestPure, makeCtx, task, view } from '../helpers/world';
@@ -41,6 +42,29 @@ describe('片付けと開き直し', () => {
     expect(dismissThread(log.state(), alice, dir, { threadId, reason: '対応不要' })).toEqual([]);
     expect(reopenThread(log.state(), bob, dir, { threadId })).toHaveLength(1);
     expect(reopenThread(p, bob, dir, { threadId })).toEqual([]);
+  });
+});
+
+describe('件名を変える（0050 の決定 4）', () => {
+  it('H6 読者が件名を変えられる。共有リストではメンバー全員に同じ件名が見え、タイムラインに残る。同じ件名なら何もしない', () => {
+    const { log, threadId, privateThread } = world();
+    const ev = retitleThread(log.state(), alice, dir, { threadId, title: '  2F 天井の雨漏り  ', reason: '本文から' });
+    expect(ev).toEqual([{ type: 'ThreadRetitled', payload: { threadId, title: '2F 天井の雨漏り', actorUserId: 'u_alice', reason: '本文から' } }]);
+    log.push(ev, '2026-10-16T10:00:00.000Z');
+    expect(view(log.state(), threadId).title).toBe('2F 天井の雨漏り');
+    expect(getThreadView(dir, bob, log.state(), threadId)!.thread.title).toBe('2F 天井の雨漏り');
+    expect(getThreadView(dir, alice, log.state(), threadId)!.timeline.at(-1)).toMatchObject({ kind: 'retitled', title: '2F 天井の雨漏り', actorUserId: 'u_alice' });
+    expect(retitleThread(log.state(), bob, dir, { threadId, title: '2F 天井の雨漏り' })).toEqual([]);
+    expect(() => retitleThread(log.state(), alice, dir, { threadId, title: ' ' })).toThrow(/title/);
+    expect(() => retitleThread(log.state(), alice, dir, { threadId, title: 'x'.repeat(201) })).toThrow(/too long/);
+    expect(() => retitleThread(log.state(), bob, dir, { threadId: privateThread, title: 'x' })).toThrow(/not found/);
+  });
+
+  it('H2 状態を持つソースから写した件名は変えられない（ソースが正）', () => {
+    const log = new EventLog();
+    const ctx = makeCtx();
+    const t = task(log, ctx, 'PR のレビュー対応');
+    expect(() => retitleThread(log.state(), alice, dir, { threadId: t, title: '別の件名' })).toThrow(/at the source/);
   });
 });
 

@@ -100,6 +100,8 @@ function logEntry(dir: Directory, p: Projections, t: Thread, l: Thread['log'][nu
       return `${head('片付け', l.kind)}${esc(l.reason ?? '')}</li>`;
     case 'reopened':
       return `${head('開き直し', l.kind)}${esc(l.reason ?? '')}</li>`;
+    case 'retitled':
+      return `${head('件名を変えた', l.kind)}${esc(l.title ?? '')} ${esc(l.reason ?? '')}</li>`;
     case 'claimed':
       return `${head('担当', l.kind)}${l.userId ? `→ ${esc(n.user(l.userId))}` : '手放した'} ${esc(l.reason ?? '')}</li>`;
     case 'acknowledged':

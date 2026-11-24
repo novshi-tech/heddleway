@@ -1,6 +1,6 @@
 # 0050 AI を使わないデプロイでは、ソースのスレッドだけで区切る（区切れないリストはつながない）
 
-- 状態: 採用（2026-11-24、直樹）。実装はまだ
+- 状態: 採用（2026-11-24、直樹）。実装した（同じ日。実装の記録）
 - 関連: 0024（Outlook）、0036（Teams のチャネル）、0038（AI は区切りと件名だけ）、0041（Gmail）、0042（共有メールボックス）、0044（Teams のチャット）、0045（Google Chat）、0046（取り込みの作業範囲）、0049（LINE）、H6
 
 ## 背景
@@ -83,10 +83,20 @@ AI を使わないデプロイでは、件名は元の件名か本文の先頭�
 
 ## 未決
 
-1. 設定の形。`ANTHROPIC_API_KEY` の有無で決めるか、明示の設定（仮に `MURMUR_THREADING=source`）にするか。鍵の有無で決めるなら、今 `MURMUR_DB` だけを持つデプロイがあると、デプロイし直したときに本体が有効になる
-2. 鍵のあるデプロイを AI なしに切り替える（またはその逆の）ときの、つないであるリストの扱い。区切れないリストは見回りを止めるか、外すか
+1. ~~設定の形~~ → 明示の設定 `MURMUR_THREADING=source` にした（実装の記録）。鍵の有無で決めると、`MURMUR_DB` だけを持つデプロイがデプロイし直しで勝手に有効になるため
+2. ~~切り替えたときの、つないであるリストの扱い~~ → 区切れないリストのシグナルは取り込まない（`unsupported`。見回りの位置は進むので、AI に戻しても遡らない）。リストは外さない
 3. Outlook の送信済みにも `conversationId` が付くか、共有メールボックスの委任の読み取りでも取れるかを実物で確かめる（0024 の S0 と同じやり方で）
 4. `sourceThread` の索引は `signal_keys` の kind を 1 つ足すだけで済むか（0046 の作業範囲の読み方に足す）
+
+## 実装の記録（2026-11-24）
+
+- 設定: ゲートウェイの入口（`src/murmur-feature.ts`）の `MURMUR_THREADING`。`source` なら鍵なしで有効、それ以外は今までどおり `ANTHROPIC_API_KEY` が要る。組み立て（`src/feature.ts`）は `threading` を受け、source では Decider を作らない
+- ドメイン: `Anchors.sourceThread`、`IngestPolicy.threading`、`planSourceThreading`（決定 2）、`needsAiThreading`（決定 3）。source では `planIngest` が `needs_decision` を返さない。作業範囲（0046）は source では返事待ちと窓を読まない
+- 保存: `signal_keys` の kind に `sourceThread`（スキーマの変更なし。既存のシグナルには行がないが、AI を使うデプロイでは使わない）
+- コネクタ: Outlook・共有メールボックスの `$select` に `conversationId`、Gmail の `threadId` を `sourceThread` に
+- 接続: source では `teams-chat`・`google-chat-dm`・`line` と、スレッドを使わない Google Chat のスペースを `conflict`（メッセージに `requires_ai`）で断る。取り込みは `MurmurService.ingest` が `unsupported` を返す
+- 件名: `ThreadRetitled`・`retitleThread`・`POST /threads/:id/title`。状態を持つソースの写し（`sourceKey` のあるもの）は `invalid`。スキル heddleway 0.32.0
+- 未確認: 未決 3（実物の `conversationId`）
 
 ## 実装の見通し
 

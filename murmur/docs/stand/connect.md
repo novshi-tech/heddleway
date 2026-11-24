@@ -22,7 +22,7 @@ npm run secret -- <名前> put MURMUR_TIMELINE_TOKEN   # 管理画面（/murmur/
 npm run deploy -- <名前>
 ```
 
-`MURMUR_DB` と `ANTHROPIC_API_KEY` がそろうと有効になる。なければゲートウェイは Murmur なしで動く。設定を変えたら、設定のリポジトリにコミットしてプッシュする。CI はデプロイしない。
+`MURMUR_DB` と `ANTHROPIC_API_KEY` がそろうと有効になる。Anthropic の API キーを用意しないデプロイは、`ANTHROPIC_API_KEY` の代わりにデプロイの設定の vars に `MURMUR_THREADING: "source"` を書く（AI を使わず、ソースのスレッドだけで区切る。Teams のチャット・Google Chat の DM とグループ・スレッドを使わないスペース・LINE はつなげない。`docs/adr/0050`）。どちらもなければゲートウェイは Murmur なしで動く。設定を変えたら、設定のリポジトリにコミットしてプッシュする。CI はデプロイしない。
 
 利用者は、スタンドから Outlook・Gmail・To Do・Google Tasks・Teams・Google Chat や Jira をつなぐよう頼んだときに、ゲートウェイの画面「Murmur を有効にしますか?」に案内されて有効にする。無効にするのはゲートウェイのホームの「このゲートウェイの機能」から。自分がメンバーのリスト（取り込みの状態・件数・メンバー）と増やし方は、同じ行の「参加中のリストを見る」（`/features/murmur`。`docs/adr/0048`）で見られる。
 

@@ -7,7 +7,7 @@ import type { GmailMessage } from './message';
 
 // Gmail の message → InboundSignal（純関数。0041 の決定 2）。Outlook の normalizeMessage と同じ形の出力。
 // 向きはコアが決める。sourceRef は Message-ID（山括弧つき。Outlook の internetMessageId と同じ形）なので、
-// 記録した送信の sent_ref とも一致する（H5）。threadId・ラベル（取り込まないものを除く）・星・既読は使わない
+// 記録した送信の sent_ref とも一致する（H5）。threadId はソースのスレッド（AI を使わない区切りでだけ使う。0050）。ラベル（取り込まないものを除く）・星・既読は使わない
 
 /** 取り込まないラベル → スキップの理由 */
 const SKIPPED_LABELS: Record<string, string> = { DRAFT: 'draft', SPAM: 'spam', TRASH: 'trash', CHAT: 'chat' };
@@ -59,7 +59,7 @@ export function normalizeGmailMessage(dataSourceId: string, msg: GmailMessage, h
       to,
       ...(subject ? { subject } : {}),
       body,
-      anchors: { messageId, ...(inReplyTo ? { inReplyTo } : {}) },
+      anchors: { messageId, ...(inReplyTo ? { inReplyTo } : {}), ...(msg.threadId ? { sourceThread: msg.threadId } : {}) },
       sourceRef: `email:${messageId}`,
       ...(occurredAt ? { occurredAt } : {}),
     },
