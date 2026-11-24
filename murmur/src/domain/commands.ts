@@ -53,6 +53,25 @@ export function reopenThread(p: Projections, viewer: Viewer, dir: Directory, inp
   return [draft('ThreadReopened', { threadId: t.id, actorUserId: viewer.userId, reason: input.reason })];
 }
 
+// ---- 件名を変える（0050 の決定 4） ----
+
+/**
+ * スレッドの件名を変える。状態を持つソース（Jira・To Do・Google Tasks など）から写した件名はソースが正なので断る。
+ * 写しが 1 度も届いていないスレッド（sourceKey がない）は変えられる。前後の空白は落とし、同じ件名なら何もしない
+ */
+export function retitleThread(p: Projections, viewer: Viewer, dir: Directory, input: { threadId: string; title: string; reason?: string }): DraftEvent[] {
+  const t = visibleThreadOrThrow(p, viewer, input.threadId);
+  const ds = dir.dataSource(t.dataSourceId);
+  if (isStatefulSource(ds) && t.sourceKey != null) {
+    throw new DomainError('invalid', `thread ${t.id} mirrors its title from ${ds?.name ?? t.dataSourceId}; change it at the source`);
+  }
+  const title = input.title.trim();
+  if (!title) throw new DomainError('invalid', 'title is required');
+  if (title.length > 200) throw new DomainError('invalid', 'title is too long (200 characters at most)');
+  if (title === t.title) return [];
+  return [draft('ThreadRetitled', { threadId: t.id, title, actorUserId: viewer.userId, reason: input.reason })];
+}
+
 // ---- 直す操作: シグナルの移し替え ----
 
 export type MoveTarget = { kind: 'existing'; threadId: string } | { kind: 'new'; title: string };

@@ -208,6 +208,17 @@ describe('fold', () => {
     expect(view(log.state(), 't1').log.map((l) => [l.kind, l.userId])).toEqual([['signal', undefined], ['claimed', 'u_alice'], ['claimed', null]]);
   });
 
+  it('H1 ThreadRetitled: 件名が変わり、ログに残る。担当と名指しは変えない（0050 の決定 4）', () => {
+    const log = new EventLog();
+    log.push([observed('s1'), intoNew('s1', 't1')], T0);
+    const before = view(log.state(), 't1');
+    log.push([draft('ThreadRetitled', { threadId: 't1', title: '新しい件名', actorUserId: 'u_alice', reason: '本文から' })], T1);
+    const after = view(log.state(), 't1');
+    expect(after.title).toBe('新しい件名');
+    expect(after.log.at(-1)).toMatchObject({ kind: 'retitled', title: '新しい件名', actorUserId: 'u_alice', reason: '本文から' });
+    expect({ assignee: after.assignee, attention: after.attention }).toEqual({ assignee: before.assignee, attention: before.attention });
+  });
+
   it('H1 ThreadLinked は無向: 1 つのイベントが両端に同じ辺を載せ、unlink で両端から外れる。リンク先の状態は読まない', () => {
     const log = new EventLog();
     log.push([observed('s1'), intoNew('s1', 't1')], T0);

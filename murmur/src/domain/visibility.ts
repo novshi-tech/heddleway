@@ -267,6 +267,8 @@ export interface TimelineEntry {
   addresses?: AddressRef[];
   list?: boolean;
   untilSignalId?: string;
+  /** retitled: 新しい件名（0050 の決定 4） */
+  title?: string;
 }
 
 /** 結んだ先。両端を読めるものだけ返す（0033 の 3）。visible は互換のために残し、いつも true */
@@ -336,6 +338,7 @@ export function getThreadView(
       if (e.route !== undefined) entry.route = e.route;
       if (e.kind === 'note') entry.note = { noteId: e.noteId!, body: e.body!, author: e.author ?? { kind: 'user' } };
       if (e.fields !== undefined) entry.fields = e.fields;
+      if (e.kind === 'retitled' && e.title !== undefined) entry.title = e.title;
       if (e.kind === 'overdue' && e.replyExpectedBy !== undefined) entry.replyExpectedBy = e.replyExpectedBy;
       if (e.kind === 'acknowledged') {
         entry.addresses = e.addresses ?? [];

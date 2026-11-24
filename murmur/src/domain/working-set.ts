@@ -8,7 +8,7 @@ import { indexKey, type Projections, type SignalRecord, type Thread } from './pr
 // 索引・列はどれも投影（シグナルとスレッドの記録）だけから決まる。保存先はこれを行に写し、いつでも作り直せる
 
 /** シグナルの索引の種類（0046 の決定 2）。値ごとに、その値を持つ最新のシグナル（seq の大きいもの）を指す */
-export const SIGNAL_KEY_KINDS = ['sourceRef', 'messageId', 'threadKey', 'threadTs'] as const;
+export const SIGNAL_KEY_KINDS = ['sourceRef', 'messageId', 'threadKey', 'threadTs', 'sourceThread'] as const;
 export type SignalKeyKind = (typeof SIGNAL_KEY_KINDS)[number];
 
 export interface SignalKey {
@@ -22,6 +22,7 @@ export function signalKeysOf(s: SignalRecord): SignalKey[] {
   if (s.anchors.messageId) out.push({ kind: 'messageId', value: s.anchors.messageId });
   if (s.anchors.threadKey) out.push({ kind: 'threadKey', value: s.anchors.threadKey });
   if (s.anchors.threadTs) out.push({ kind: 'threadTs', value: s.anchors.threadTs });
+  if (s.anchors.sourceThread) out.push({ kind: 'sourceThread', value: s.anchors.sourceThread });
   return out;
 }
 
@@ -134,12 +135,15 @@ export function threadingRequest(
   if (a.inReplyTo) keys.push({ kind: 'messageId', value: a.inReplyTo });
   if (a.quotedMessageId) keys.push({ kind: 'messageId', value: a.quotedMessageId });
   if (a.threadTs) keys.push({ kind: 'threadTs', value: a.threadTs }, { kind: 'messageId', value: a.threadTs });
+  // ソースのスレッド（0050）。AI を使わない区切りでだけ使うが、引くのは安い
+  if (a.sourceThread) keys.push({ kind: 'sourceThread', value: a.sourceThread });
   return {
     dataSourceId: inbound.dataSourceId,
     keys: uniqueKeys(keys),
     sourceKeys: a.threadKey ? [a.threadKey] : [],
-    awaiting: conversation.ours ? false : conversation.group ? 'all' : { address: inbound.from },
-    window: { since: windowStart(now, policy.candidateWindowDays), limit: policy.candidateWindowLimit },
+    // AI を使わない区切り（0050）は返事待ちと直近の候補を使わないので読まない
+    awaiting: policy.threading === 'source' || conversation.ours ? false : conversation.group ? 'all' : { address: inbound.from },
+    window: policy.threading === 'source' ? null : { since: windowStart(now, policy.candidateWindowDays), limit: policy.candidateWindowLimit },
   };
 }
 

@@ -13,6 +13,8 @@ export const GraphMessage = z.object({
   /** delta で消えたもの */
   '@removed': z.unknown().optional(),
   internetMessageId: z.string().optional(),
+  /** Outlook の会話。AI を使わない区切りのソースのスレッド（0050） */
+  conversationId: z.string().optional(),
   subject: z.string().nullable().optional(),
   from: EmailAddress.nullable().optional(),
   sender: EmailAddress.nullable().optional(),
@@ -38,6 +40,7 @@ export type DeltaPage = z.infer<typeof DeltaPage>;
 /** delta で取る項目（$select）。受信トレイは delta でヘッダー（In-Reply-To）まで取れる。送信済みにはヘッダーがない（2026-10-30 に実物で確認） */
 export const MESSAGE_SELECT = [
   'internetMessageId',
+  'conversationId',
   'subject',
   'from',
   'sender',

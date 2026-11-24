@@ -65,6 +65,13 @@ function apply(s: Projections, e: DomainEvent, c: Changes): void {
       recompute(s, t, e.at, c);
       return;
     }
+    case 'ThreadRetitled': {
+      const t = mustThread(s, e.payload.threadId);
+      t.title = e.payload.title;
+      t.log.push({ seq: e.seq, at: e.at, kind: 'retitled', title: e.payload.title, actorUserId: e.payload.actorUserId, reason: e.payload.reason });
+      recompute(s, t, e.at, c);
+      return;
+    }
     case 'ThreadLinked':
       return onLinked(s, e, e.payload, c);
     case 'OutboundRecorded':

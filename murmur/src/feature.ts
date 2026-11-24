@@ -1,6 +1,6 @@
 import { drizzle } from 'drizzle-orm/d1';
 import { MurmurService, randomIds, systemClock } from './app/service';
-import { DEFAULT_POLICY } from './domain';
+import { DEFAULT_POLICY, type ThreadingMode } from './domain';
 import { verifyWebhookSignature } from './auth/webhook';
 import { DummyConnector } from './connectors/dummy/connector';
 import { D1DummyBackend } from './connectors/dummy/d1-backend';
@@ -42,7 +42,13 @@ import { D1ConnectorState } from './store/connector-state';
 export interface MurmurConfig {
   /** 本体の D1（0021） */
   db: D1Database;
-  anthropicApiKey: string;
+  /**
+   * 区切りの方式（0050）。ai は Claude で区切る（anthropicApiKey が要る）。source は AI を使わず、ソースのスレッドだけで区切る
+   * （鍵は要らない。スレッドで区切れないリストはつながない）。省略は ai
+   */
+  threading?: ThreadingMode;
+  /** threading が ai のときだけ要る */
+  anthropicApiKey?: string;
   claudeModel: string;
   /** 区切りの AI 判断に渡す直近のスレッドの本数 */
   recentThreadLimit?: number;
@@ -87,7 +93,8 @@ const CHANNELS = ['email', 'slack', 'line', 'jira', 'bitbucket'] as const;
 /** 組み立て（IO の配線）。D1 はバインディングなので接続を張ったり閉じたりしない */
 function build(config: MurmurConfig): MurmurService {
   const db = drizzle(config.db) as Db;
-  const llm = new AnthropicLlm({ apiKey: config.anthropicApiKey });
+  const threading = config.threading ?? 'ai';
+  if (threading === 'ai' && !config.anthropicApiKey) throw new Error('murmur: threading=ai には anthropicApiKey が要る');
   const backend = new D1DummyBackend(db);
   const connectors: Connectors = Object.fromEntries(
     CHANNELS.map((ch) => [ch, new DummyConnector(ch, backend)]),
@@ -96,12 +103,13 @@ function build(config: MurmurConfig): MurmurService {
     repo: d1Repo(db),
     clock: systemClock,
     newId: randomIds,
-    decider: new AiDecider(llm, config.claudeModel),
+    decider: threading === 'ai' ? new AiDecider(new AnthropicLlm({ apiKey: config.anthropicApiKey! }), config.claudeModel) : undefined,
     connectors,
     policy: {
       recentThreadLimit: config.recentThreadLimit ?? DEFAULT_POLICY.recentThreadLimit,
       candidateWindowDays: DEFAULT_POLICY.candidateWindowDays,
       candidateWindowLimit: DEFAULT_POLICY.candidateWindowLimit,
+      threading,
     },
   });
 }
@@ -275,7 +283,7 @@ function buildConnectors(config: MurmurConfig, service: MurmurService, waitUntil
       await line.handle(job, directory);
     },
   };
-  const connections = new Connections({ gateway, service, queue, newId: randomIds, graphFor, jiraFor, teamsFor, teamsChatFor, todoFor, gtasksFor, gmailFor, googleChatFor, lineFor, state, now, sharedServices: config.sharedServices ?? [] });
+  const connections = new Connections({ gateway, service, queue, newId: randomIds, graphFor, jiraFor, teamsFor, teamsChatFor, todoFor, gtasksFor, gmailFor, googleChatFor, lineFor, state, now, sharedServices: config.sharedServices ?? [], threading: config.threading ?? 'ai' });
   return {
     sync,
     connections,

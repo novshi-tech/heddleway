@@ -3,7 +3,7 @@ import { canonicalJson, draft } from '../../src/domain';
 import { memoryRepo } from '../../src/store/memory';
 import { ConcurrencyError, type Repo } from '../../src/store/types';
 import { makeService } from '../helpers/service';
-import { answer, email, line, seed, view } from '../helpers/world';
+import { answer, email, line, seed, threaded, view } from '../helpers/world';
 
 describe('MurmurService.ingest', () => {
   it('H6 受信 → 区切り → スレッド。同じ source_ref は duplicate。観測された送信は構造で決まれば AI を呼ばない', async () => {
@@ -43,7 +43,7 @@ describe('スタンドの操作', () => {
   it('H3 片付け・開き直し・移し替え。見えないものは not_found', async () => {
     const { service } = await makeService(seed, { decide: () => answer({ thread: null }) });
     await service.ingest(email({ from: 'carol@example.com', sourceRef: 'r1', anchors: { messageId: '<m1>' } }));
-    const r2 = await service.ingest(email({ from: 'carol@example.com', sourceRef: 'r2', anchors: { inReplyTo: '<m1>' } }));
+    const r2 = threaded(await service.ingest(email({ from: 'carol@example.com', sourceRef: 'r2', anchors: { inReplyTo: '<m1>' } })));
     const [t] = await service.listThreads('u_bob', { filter: 'triage' });
     expect(t!.signalCount).toBe(2);
 

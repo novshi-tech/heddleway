@@ -60,6 +60,7 @@ export type ThreadLogKind =
   | 'dismissed'
   | 'reopened'
   | 'claimed'
+  | 'retitled'
   | 'linked'
   | 'unlinked'
   | 'mirrored'
@@ -91,6 +92,8 @@ export interface ThreadLogEntry {
   noteId?: string;
   body?: string;
   author?: Author;
+  /** retitled: 新しい件名（0050 の決定 4） */
+  title?: string;
   /** mirrored: 変わった写しの項目 */
   fields?: MirrorFields;
   /** acknowledged: 外したアドレス・リスト宛てか・どのシグナルまでか */

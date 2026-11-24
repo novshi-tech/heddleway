@@ -64,6 +64,26 @@ describe("Murmur off (no MURMUR_DB)", () => {
   });
 });
 
+describe("Murmur without an Anthropic key (Murmur's 0050)", () => {
+  const noKey = { ...env, MURMUR_DB: testEnv.TEST_MURMUR_DB, MURMUR_WEBHOOK_SECRET: "test-webhook-secret" } as unknown as Env;
+
+  it("stays off when the deployment sets neither the key nor MURMUR_THREADING=source", () => {
+    expect(features(noKey)).toEqual([]);
+  });
+
+  it("turns on with MURMUR_THREADING=source, and refuses lists that cannot be threaded by the source", async () => {
+    const source = { ...noKey, MURMUR_THREADING: "source" } as unknown as Env;
+    expect(features(source).map((f) => f.name)).toEqual(["murmur"]);
+    const token = await apiToken(bob, { murmur: "identity" });
+    expect((await call(source, "/api/murmur/me", { headers: { authorization: `Bearer ${token}` } })).status).toBe(200);
+    for (const kind of ["teams-chat", "google-chat-dm", "line"]) {
+      const res = await call(source, `/api/murmur/connections/${kind}`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: "{}" });
+      expect(res.status, kind).toBe(409);
+      expect(JSON.stringify(await res.json()), kind).toContain("requires_ai");
+    }
+  });
+});
+
 describe("Murmur on", () => {
   it("serves Murmur's API behind the token proxy, for a token that covers identity:murmur", async () => {
     const res = await call(on, "/api/murmur/me", { headers: { authorization: `Bearer ${await apiToken(bob, { murmur: "identity" })}` } });

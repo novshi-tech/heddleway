@@ -30,6 +30,11 @@ export const Anchors = z.object({
    * 同じデータソースで一致すればそのスレッド、一致しなければ新しいスレッドに決まる
    */
   threadKey: z.string().optional(),
+  /**
+   * ソースのスレッド（Outlook の conversationId、Gmail の threadId。0050）。AI を使わないデプロイでだけ区切りに使う
+   * （同じデータソースで一致すればそのスレッド、一致しなければ新しいスレッド）。AI を使うデプロイでは使わない（0041）
+   */
+  sourceThread: z.string().optional(),
   /** 本文などで触れている Jira キー（結び候補用。区切りには使わない） */
   jiraKeys: z.array(z.string()).optional(),
   /** "<repo>#<number>"（結び候補用。区切りには使わない） */
@@ -224,6 +229,12 @@ export const AttentionAcknowledged = z.object({
   reason: z.string().optional(),
 });
 
+/**
+ * スレッドの件名を変える（0050 の決定 4）。人とエージェントの操作。状態を持つソースの写しの件名は変えない（ソースが正）。
+ * 共有リストのスレッドでは、メンバー全員の表示が変わる
+ */
+export const ThreadRetitled = z.object({ threadId: z.string(), title: z.string().min(1), actorUserId: z.string(), reason: z.string().optional() });
+
 /** 返事期待の期限超過（Cron の見回り）。冪等: 同じ送信に 1 回だけ */
 export const ReplyOverdue = z.object({ threadId: z.string(), signalId: z.string(), replyExpectedBy: z.string() });
 
@@ -233,6 +244,7 @@ export const EventPayloads = {
   ThreadDismissed,
   ThreadReopened,
   ThreadClaimed,
+  ThreadRetitled,
   ThreadLinked,
   ThreadNoted,
   ThreadMirrored,

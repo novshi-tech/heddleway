@@ -30,6 +30,7 @@ import {
   MoveSignalBody,
   RecordSentBody,
   ReopenBody,
+  RetitleBody,
 } from '../api/schemas';
 import { bearerToken } from '../auth/bearer';
 import type { Connections } from '../app/connections';
@@ -251,6 +252,11 @@ export function createApp(opts: HttpOptions) {
   api.post('/threads/:id/reopen', async (c) => {
     const b = ReopenBody.parse(await json(c));
     return c.json(await c.var.service.reopenThread(c.var.userId, { threadId: c.req.param('id'), reason: b.reason }));
+  });
+
+  api.post('/threads/:id/title', async (c) => {
+    const b = RetitleBody.parse(await json(c));
+    return c.json(await c.var.service.retitleThread(c.var.userId, { threadId: c.req.param('id'), title: b.title, reason: b.reason }));
   });
 
   api.post('/signals/:id/move', async (c) => {

@@ -3,7 +3,7 @@ import { signWebhook, verifyWebhookSignature } from '../../src/auth/webhook';
 import { MoveSignalBody } from '../../src/api/schemas';
 import { createApp } from '../../src/http/app';
 import { makeService } from '../helpers/service';
-import { answer, email, seed } from '../helpers/world';
+import { answer, email, seed, threaded } from '../helpers/world';
 
 // ゲートウェイの口の偽物: トークン "gw:<User ID>" だけを通す（本物はゲートウェイの issue_token のトークンを確かめる）
 const token = (user: string) => `gw:${user}`;
@@ -107,7 +107,7 @@ describe('HTTP API', () => {
     expect((await call('GET', '/api/me', 'u_alice')).body.contact.contactId).toBe('p_alice');
 
     await service.ingest(email({ from: 'carol@example.com', sourceRef: 'r1', anchors: { messageId: '<m1>' } }));
-    const r2 = await service.ingest(email({ from: 'carol@example.com', sourceRef: 'r2', anchors: { inReplyTo: '<m1>' } }));
+    const r2 = threaded(await service.ingest(email({ from: 'carol@example.com', sourceRef: 'r2', anchors: { inReplyTo: '<m1>' } })));
     const threads = (await call('GET', '/api/threads?filter=triage', 'u_alice')).body as { id: string }[];
     expect(threads).toHaveLength(1);
     const threadId = threads[0]!.id;
@@ -120,6 +120,10 @@ describe('HTTP API', () => {
     expect((await call('POST', `/api/threads/${threadId}/dismiss`, 'u_bob', {})).status).toBe(400);
     expect((await call('GET', '/api/threads', 'u_alice')).body).toEqual([]);
     expect((await call('POST', `/api/threads/${threadId}/reopen`, 'u_alice')).body.thread.dismissed).toBe(false);
+    // 件名を変える（0050 の決定 4）
+    expect((await call('POST', `/api/threads/${threadId}/title`, 'u_bob', { title: '雨漏りの見積' })).body.thread.title).toBe('雨漏りの見積');
+    expect((await call('POST', `/api/threads/${threadId}/title`, 'u_bob', {})).status).toBe(400);
+    expect((await call('POST', `/api/threads/${threadId}/title`, 'u_eve', { title: 'x' })).status).toBe(404);
 
     const moved = await call('POST', `/api/signals/${r2.signalId}/move`, 'u_alice', { new_thread_title: '別件', reason: '別の話題' });
     expect(moved.body.thread).toMatchObject({ title: '別件', signalCount: 1 });
@@ -136,7 +140,7 @@ describe('HTTP API', () => {
 
   it('H8 タスク・メモ・担当・名指し・リンク・自分に残っているもの（my_turn）・タイムラインの since の一通り', async () => {
     const { call, service, clock } = await app();
-    const r1 = await service.ingest(email({ from: 'carol@example.com', sourceRef: 'r1', anchors: { messageId: '<m1>' } }));
+    const r1 = threaded(await service.ingest(email({ from: 'carol@example.com', sourceRef: 'r1', anchors: { messageId: '<m1>' } })));
     const threadId = r1.status === 'threaded' ? r1.threadId : '';
     expect((await call('GET', '/api/threads?filter=triage', 'u_bob')).body).toHaveLength(1);
 
