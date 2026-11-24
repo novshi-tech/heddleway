@@ -52,3 +52,4 @@
 - [0048](0048-my-lists-page.md) 本人が「参加中のリスト」をゲートウェイの画面で見られるようにする（メンバーでない共有リストは名前も出さない）
 - [0049](0049-line-official-account-via-front-system.md) LINE 公式アカウントは、受け口（業務システム）の原本を見回りで読み、共有リストにする
 - [0050](0050-source-threading-without-ai.md) AI を使わないデプロイでは、ソースのスレッドだけで区切る（区切れないリストはつながない）
+- [0051](0051-line-display-name-contacts.md) LINE の友だちの表示名で、相手の連絡先を見回りが作る（案）
