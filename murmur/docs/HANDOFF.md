@@ -4,7 +4,7 @@
 
 ## いまの状態
 
-**2026-11-24: AI を使わないデプロイの区切りを `docs/adr/0050` に案で書いた（実装はまだ）。** ほかの組織にデプロイするとき Anthropic の API キーを用意してもらう手間を省くため、デプロイ全体の設定で AI を使わない区切りに切り替えられるようにする。区切りはソースのスレッド（Outlook の conversationId・Gmail の threadId・Teams のチャネルと Google Chat のスペースのスレッド・課題やタスクの ID）だけで決め、区切れないリスト（Teams のチャット・Google Chat の DM とグループ・スレッドを使わないスペース・LINE）はつながない。未決は 0050 の末尾
+**2026-11-24: AI を使わないデプロイの区切りを `docs/adr/0050` を採用した（実装はまだ）。** ほかの組織にデプロイするとき Anthropic の API キーを用意してもらう手間を省くため、デプロイ全体の設定で AI を使わない区切りに切り替えられるようにする。区切りはソースのスレッド（Outlook の conversationId・Gmail の threadId・Teams のチャネルと Google Chat のスペースのスレッド・課題やタスクの ID）だけで決め、区切れないリスト（Teams のチャット・Google Chat の DM とグループ・スレッドを使わないスペース・LINE）はつながない。未決は 0050 の末尾
 
 **2026-11-23: LINE 公式アカウントを、受け口（業務システム）の原本から見回りで読む共有リストにした（`docs/adr/0049`、採用・実装）。** 0019 の受け口を業務システム（bm-next）に置き、Webhook の原本の保存・差分読みの `lineEvents`・送信の `sendLineMessage` を受け口の側に作った（bm-next の PR 563・564）。本体は 5 分ごとの見回りで、ゲートウェイの受け口のサービス（既定 `bm-next`、`MURMUR_BM_NEXT_SERVICE`）の GET の GraphQL だけで読む（`src/connectors/line/`）。公式アカウント 1 つ（受け口の組織 1 つ）= 共有リスト 1 つで、窓口は `oa:<組織 ID>`、読者は自分の接続で読めた人（0042 と同じ。60 分ごとに確かめ直す）。相手は LINE の userId、会話のアンカーは相手の userId か groupId。使うには、デプロイの設定 `MURMUR_SHARED_SERVICES` に `line`、読者それぞれがゲートウェイに業務システムの API キー（メッセージを読むスコープ付き）を登録し、エージェントから `POST /connections/line`（スキル heddleway 0.31.0）。残り（実物で確かめること）: 受け口の GET の GraphQL が通ること・GET の mutation が断られること、Webhook の疎通、`record_sent` と観測された送信が 1 つになること。グループの公式アカウントへのメンションを名指しにするのは、受け口がメンションを保存してから
 
