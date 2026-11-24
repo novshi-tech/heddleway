@@ -18,12 +18,12 @@ interface __BaseEnv_Env {
 	ENCRYPTION_KEY: string;
 	VAULT: DurableObjectNamespace<import("./src/index").UserVault>;
 	REGISTRY: DurableObjectNamespace<import("./src/index").Registry>;
-	REVERSE: DurableObjectNamespace<import("./src/index").ReverseConnection>;
+	TUNNEL: DurableObjectNamespace<import("./src/index").TunnelConnection>;
 }
 declare namespace Cloudflare {
 	interface GlobalProps {
 		mainModule: typeof import("./src/index");
-		durableNamespaces: "UserVault" | "Registry" | "ReverseConnection";
+		durableNamespaces: "UserVault" | "Registry" | "TunnelConnection";
 	}
 	interface Env extends __BaseEnv_Env {}
 }
@@ -624,7 +624,7 @@ interface DurableObjectListOptions {
     startAfter?: string;
     end?: string;
     prefix?: string;
-    reverse?: boolean;
+    tunnel?: boolean;
     limit?: number;
     allowConcurrency?: boolean;
     noCache?: boolean;
@@ -3580,7 +3580,7 @@ interface SyncKvListOptions {
     startAfter?: string;
     end?: string;
     prefix?: string;
-    reverse?: boolean;
+    tunnel?: boolean;
     limit?: number;
 }
 interface WorkerStub {

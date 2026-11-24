@@ -1,12 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
 import { registryFor } from "./registry";
-import { handleCall } from "./reverse";
+import { handleCall } from "./tunnel";
 
-// The live side of a reverse connection (docs/adr/0003): one object per local service holds
+// The live side of a tunnel connection (docs/adr/0003): one object per local service holds
 // the WebSocket that the service opened to the gateway, and relays requests over it. The
-// Worker checks who may connect and who may call (src/reverse.ts) before it reaches here;
+// Worker checks who may connect and who may call (src/tunnel.ts) before it reaches here;
 // this object only keeps the socket, matches answers to requests, and remembers the
-// description the service sent. The wire format is in docs/reverse-protocol.md.
+// description the service sent. The wire format is in docs/tunnel-protocol.md.
 
 // Bodies travel base64 in JSON text frames. Long work is asynchronous at the service
 // (202 and an ID, docs/adr/0003 decision 6), so a relayed request is short.
@@ -44,13 +44,13 @@ export interface ConnectionStatus {
   version?: string;
 }
 
-export type ReverseMode = "standard" | "strict";
+export type TunnelMode = "standard" | "strict";
 
 // What the Worker tells this object when it hands over an upgrade it already verified.
 export interface ConnectGrant {
   serviceId: string;
   name: string;
-  mode: ReverseMode;
+  mode: TunnelMode;
   // The key the Worker checked, by thumbprint. The object checks it again against the
   // registration as it is now, so that a key replaced meanwhile cannot slip in.
   thumbprint: string;
@@ -90,7 +90,7 @@ interface Pending {
   timer: ReturnType<typeof setTimeout>;
 }
 
-export const GRANT_HEADER = "x-heddleway-reverse-grant";
+export const GRANT_HEADER = "x-heddleway-tunnel-grant";
 
 function randomValue(): string {
   return btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -128,7 +128,7 @@ function headerList(value: unknown): HeaderList | null {
   return list;
 }
 
-export class ReverseConnection extends DurableObject<Env> {
+export class TunnelConnection extends DurableObject<Env> {
   private pending = new Map<string, Pending>();
   private callsInFlight = new Map<string, number>();
 
@@ -138,7 +138,7 @@ export class ReverseConnection extends DurableObject<Env> {
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
   }
 
-  // The upgrade, already verified by the Worker (src/reverse.ts reverseConnect).
+  // The upgrade, already verified by the Worker (src/tunnel.ts tunnelConnect).
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return new Response("expected a WebSocket upgrade", { status: 426 });
     const grant = JSON.parse(request.headers.get(GRANT_HEADER) ?? "null") as ConnectGrant | null;
@@ -166,7 +166,7 @@ export class ReverseConnection extends DurableObject<Env> {
     }
     // The registration as it is now: removed or re-paired with another key since the Worker
     // checked, and the connection is refused.
-    const current = await registryFor(this.env).getReverse(grant.serviceId);
+    const current = await registryFor(this.env).getTunnel(grant.serviceId);
     if (!current || current.thumbprint !== grant.thumbprint) return refuse("the registration changed; pair again");
     if (grant.mode === "strict" && grant.proof.kind === "key") await this.ctx.storage.put("keySpent", grant.thumbprint);
     await this.ctx.storage.put("mode", grant.mode);
@@ -202,7 +202,7 @@ export class ReverseConnection extends DurableObject<Env> {
       await this.sendResume(server, grant.serviceId, grant.thumbprint, now);
       await this.ctx.storage.setAlarm(now + RESUME_ROTATE_MS);
     }
-    console.log(JSON.stringify({ type: "reverse_connected", service: grant.serviceId, mode: grant.mode, proof: grant.proof.kind }));
+    console.log(JSON.stringify({ type: "tunnel_connected", service: grant.serviceId, mode: grant.mode, proof: grant.proof.kind }));
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -344,7 +344,7 @@ export class ReverseConnection extends DurableObject<Env> {
       return;
     }
 
-    // A call back to the gateway as the owner (src/reverse.ts handleCall).
+    // A call back to the gateway as the owner (src/tunnel.ts handleCall).
     if (frame.type === "call") {
       const attachment = this.attachment(socket);
       if (!attachment) return this.protocolError(socket, "unknown connection");
@@ -359,7 +359,7 @@ export class ReverseConnection extends DurableObject<Env> {
         try {
           result = await handleCall(this.env, ctx, serviceId, thumbprint, frame);
         } catch (error) {
-          console.error(JSON.stringify({ type: "reverse_call_failed", reverse: serviceId, error: String(error) }));
+          console.error(JSON.stringify({ type: "tunnel_call_failed", tunnel: serviceId, error: String(error) }));
           result = { type: "call_result", id: frame.id, status: 502, headers: [["content-type", "application/json"]], body: btoa('{"error":"the gateway could not complete the call"}') };
         } finally {
           const n = (this.callsInFlight.get(attachment.connection) ?? 1) - 1;
@@ -390,7 +390,7 @@ export class ReverseConnection extends DurableObject<Env> {
       const status = await this.ctx.storage.get<ConnectionStatus>("status");
       if (status) await this.ctx.storage.put<ConnectionStatus>("status", { ...status, connected: false, disconnectedAt: Date.now() });
     }
-    console.log(JSON.stringify({ type: "reverse_disconnected", code, reason: reason.slice(0, 200) }));
+    console.log(JSON.stringify({ type: "tunnel_disconnected", code, reason: reason.slice(0, 200) }));
   }
 
   async webSocketError(socket: WebSocket): Promise<void> {
@@ -439,14 +439,14 @@ export class ReverseConnection extends DurableObject<Env> {
   }
 }
 
-export function connectionFor(env: Env, serviceId: string): DurableObjectStub<ReverseConnection> {
-  const ns = reverseNamespace(env);
-  if (!ns) throw new Error("the deployment has no REVERSE binding");
+export function connectionFor(env: Env, serviceId: string): DurableObjectStub<TunnelConnection> {
+  const ns = tunnelNamespace(env);
+  if (!ns) throw new Error("the deployment has no TUNNEL binding");
   return ns.get(ns.idFromName(serviceId));
 }
 
 // The binding is new (wrangler.example.jsonc migration v3); a deployment that has not added
-// it yet has no reverse connections.
-export function reverseNamespace(env: Env): DurableObjectNamespace<ReverseConnection> | undefined {
-  return (env as unknown as { REVERSE?: DurableObjectNamespace<ReverseConnection> }).REVERSE;
+// it yet has no tunnel connections.
+export function tunnelNamespace(env: Env): DurableObjectNamespace<TunnelConnection> | undefined {
+  return (env as unknown as { TUNNEL?: DurableObjectNamespace<TunnelConnection> }).TUNNEL;
 }

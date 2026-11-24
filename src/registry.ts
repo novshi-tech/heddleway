@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import type { AppEntry } from "./apps";
 import type { ServiceConfig } from "./config";
 import { decryptJson, encryptJson, importAesKey } from "./crypto";
-import type { Pairing, PairingDecision, PairingPoll, ReverseService } from "./reverse";
+import type { Pairing, PairingDecision, PairingPoll, TunnelService } from "./tunnel";
 import type { OAuthClient } from "./upstream-oauth";
 
 export interface RegistryEntry {
@@ -106,26 +106,27 @@ export class Registry extends DurableObject<Env> {
     return this.ctx.storage.delete(`app:${name}`);
   }
 
-  // Reverse connections (src/reverse.ts, docs/adr/0003): the registrations under "reverse:",
+  // Tunnels (src/tunnel.ts, docs/adr/0003): the registrations under "reverse:" (the feature's
+  // first name; the storage keys stay so that registrations survive the rename),
   // pending pairings under "pairing:<hash of the code>", and the pairing's poll ID under
   // "pairpoll:<hash>". One object for the deployment, so approving a code is atomic.
-  async listReverse(): Promise<ReverseService[]> {
-    return [...(await this.ctx.storage.list<ReverseService>({ prefix: "reverse:" })).values()].sort((a, b) => a.createdAt - b.createdAt);
+  async listTunnel(): Promise<TunnelService[]> {
+    return [...(await this.ctx.storage.list<TunnelService>({ prefix: "reverse:" })).values()].sort((a, b) => a.createdAt - b.createdAt);
   }
 
-  async getReverse(id: string): Promise<ReverseService | null> {
-    return (await this.ctx.storage.get<ReverseService>(`reverse:${id}`)) ?? null;
+  async getTunnel(id: string): Promise<TunnelService | null> {
+    return (await this.ctx.storage.get<TunnelService>(`reverse:${id}`)) ?? null;
   }
 
-  async setReverseCallback(id: string, owner: string, callback: string[]): Promise<ReverseService | null> {
-    const service = await this.getReverse(id);
+  async setTunnelCallback(id: string, owner: string, callback: string[]): Promise<TunnelService | null> {
+    const service = await this.getTunnel(id);
     if (!service || service.owner !== owner) return null;
     const next = { ...service, callback };
     await this.ctx.storage.put(`reverse:${id}`, next);
     return next;
   }
 
-  async removeReverse(id: string): Promise<boolean> {
+  async removeTunnel(id: string): Promise<boolean> {
     return this.ctx.storage.delete(`reverse:${id}`);
   }
 
@@ -160,8 +161,8 @@ export class Registry extends DurableObject<Env> {
   // Approving stores the registration. The name must be free among the owner's services, unless
   // the owner confirmed replacing the service of that name (`replaces`, its ID): the new
   // registration then takes over that ID in the same write, so that nothing is lost if this
-  // fails, and what holds `reverse:<ID>` keeps working.
-  async decidePairing(codeHash: string, decision: PairingDecision, pollTtlMs: number, replaces?: string): Promise<{ status: "ok"; service?: ReverseService; replaced?: ReverseService } | { status: "expired" | "name_taken" }> {
+  // fails, and what holds `tunnel:<ID>` keeps working.
+  async decidePairing(codeHash: string, decision: PairingDecision, pollTtlMs: number, replaces?: string): Promise<{ status: "ok"; service?: TunnelService; replaced?: TunnelService } | { status: "expired" | "name_taken" }> {
     const p = await this.getPairing(codeHash);
     if (!p) return { status: "expired" };
     const expiresAt = Date.now() + pollTtlMs;
@@ -169,9 +170,9 @@ export class Registry extends DurableObject<Env> {
       await this.ctx.storage.put<Pairing>(`pairing:${codeHash}`, { ...p, status: "denied", expiresAt });
       return { status: "ok" };
     }
-    const existing = (await this.listReverse()).find((s) => s.owner === decision.owner && s.name === decision.name);
+    const existing = (await this.listTunnel()).find((s) => s.owner === decision.owner && s.name === decision.name);
     if (existing && existing.id !== replaces) return { status: "name_taken" };
-    const service: ReverseService = { ...decision, id: existing?.id ?? decision.id };
+    const service: TunnelService = { ...decision, id: existing?.id ?? decision.id };
     await this.ctx.storage.put({
       [`reverse:${service.id}`]: service,
       [`pairing:${codeHash}`]: { ...p, status: "approved", serviceId: service.id, expiresAt } satisfies Pairing,
@@ -187,7 +188,7 @@ export class Registry extends DurableObject<Env> {
     if (p.status === "pending") return { status: "pending" };
     await this.ctx.storage.delete([`pairing:${codeHash}`, `pairpoll:${pollHash}`]);
     if (p.status === "denied") return { status: "denied" };
-    const service = p.serviceId ? await this.getReverse(p.serviceId) : null;
+    const service = p.serviceId ? await this.getTunnel(p.serviceId) : null;
     return service ? { status: "approved", service } : { status: "expired" };
   }
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// A reference client for reverse connections (docs/adr/0003, docs/reverse-protocol.md): it pairs
+// A reference client for tunnel connections (docs/adr/0003, docs/tunnel-protocol.md): it pairs
 // a local HTTP service with its owner's account at a gateway, then keeps a WebSocket open and
 // relays the owner's calls to the service. Node 22 or later, no dependencies.
 //
-//   node tools/reverse-client.mjs pair <gateway URL> --name <name> --key <key file> [--description <text>]
-//   node tools/reverse-client.mjs strict <gateway URL> --name <name> --target <http://127.0.0.1:PORT> [--describe <file>] [--callback-port <PORT>]
-//   node tools/reverse-client.mjs connect --key <key file> --target <http://127.0.0.1:PORT> [--describe <file>] [--callback-port <PORT>]
+//   node tools/tunnel-client.mjs pair <gateway URL> --name <name> --key <key file> [--description <text>]
+//   node tools/tunnel-client.mjs strict <gateway URL> --name <name> --target <http://127.0.0.1:PORT> [--describe <file>] [--callback-port <PORT>]
+//   node tools/tunnel-client.mjs connect --key <key file> --target <http://127.0.0.1:PORT> [--describe <file>] [--callback-port <PORT>]
 //
 // With --callback-port, the client also listens on 127.0.0.1:<PORT> and passes requests to
 // /api/<service>/... back to the gateway over the connection, as the owner (ADR 0003 decision 5):
@@ -54,7 +54,7 @@ async function signJwt(privateJwk, claims) {
 async function postJson(url, body) {
   const res = await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json", "user-agent": "heddleway-reverse-client" },
+    headers: { "content-type": "application/json", "user-agent": "heddleway-tunnel-client" },
     body: JSON.stringify(body),
   });
   return { status: res.status, body: await res.json().catch(() => ({})) };
@@ -70,7 +70,7 @@ async function pair(strict = false) {
   const pairKey = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
   const privateJwk = await crypto.subtle.exportKey("jwk", pairKey.privateKey);
   const publicJwk = { kty: "OKP", crv: "Ed25519", x: privateJwk.x };
-  const started = await postJson(`${gateway}/reverse/pair`, { name, public_key: publicJwk, description: option("description"), mode: strict ? "strict" : "standard" });
+  const started = await postJson(`${gateway}/tunnel/pair`, { name, public_key: publicJwk, description: option("description"), mode: strict ? "strict" : "standard" });
   if (started.status !== 201) fail(`pairing was refused (${started.status}): ${started.body.error ?? ""}`);
 
   console.log(`Open ${started.body.verification_uri_complete}`);
@@ -79,7 +79,7 @@ async function pair(strict = false) {
   const deadline = Date.now() + started.body.expires_in * 1000;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, started.body.interval * 1000));
-    const polled = await postJson(`${gateway}/reverse/pair/status`, { pairing_id: started.body.pairing_id });
+    const polled = await postJson(`${gateway}/tunnel/pair/status`, { pairing_id: started.body.pairing_id });
     if (polled.body.status === "pending") continue;
     if (polled.body.status !== "approved") fail(`pairing ${polled.body.status}`);
     const saved = { gateway, service_id: polled.body.service_id, name: polled.body.name, private_jwk: privateJwk };
@@ -174,24 +174,24 @@ async function connect(inMemory) {
           if (resume.expiresAt < Date.now()) fail("the resume token expired; pair again");
           authorization = `Resume ${resume.token}`;
         } else {
-          const { body } = await postJson(`${saved.gateway}/reverse/challenge`, {});
+          const { body } = await postJson(`${saved.gateway}/tunnel/challenge`, {});
           const now = Math.floor(Date.now() / 1000);
           const assertion = await signJwt(saved.private_jwk, {
             iss: saved.service_id,
-            aud: `${saved.gateway}/reverse/connect`,
+            aud: `${saved.gateway}/tunnel/connect`,
             nonce: body.challenge,
             iat: now,
             exp: now + 60,
           });
           authorization = `Bearer ${assertion}`;
         }
-        const ws = new WebSocket(`${saved.gateway.replace(/^http/, "ws")}/reverse/connect`, { headers: { authorization } });
+        const ws = new WebSocket(`${saved.gateway.replace(/^http/, "ws")}/tunnel/connect`, { headers: { authorization } });
         let ping;
         ws.onopen = () => {
           open = true;
           current = ws;
           console.log(`connected as "${saved.name}"`);
-          ws.send(JSON.stringify({ type: "hello", version: "reverse-client", ...(description ? { description } : {}) }));
+          ws.send(JSON.stringify({ type: "hello", version: "tunnel-client", ...(description ? { description } : {}) }));
           ping = setInterval(() => ws.send("ping"), 30_000);
         };
         ws.onmessage = async (event) => {
@@ -227,4 +227,4 @@ async function connect(inMemory) {
 if (command === "pair") await pair();
 else if (command === "connect") await connect();
 else if (command === "strict") await connect(await pair(true));
-else fail("usage: reverse-client.mjs pair|connect ... (see the top of the file)");
+else fail("usage: tunnel-client.mjs pair|connect ... (see the top of the file)");

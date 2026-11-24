@@ -9,29 +9,29 @@ import {
   connectionFor,
   GRANT_HEADER,
   MAX_BODY_BYTES,
-  reverseNamespace,
+  tunnelNamespace,
   type ConnectGrant,
   type ConnectionStatus,
   type HeaderList,
-  type ReverseMode,
+  type TunnelMode,
   fromBase64,
   toBase64,
-} from "./reverse-connection";
+} from "./tunnel-connection";
 import { getDirectory } from "./services";
 import { signToken, verifyToken } from "./tokens";
 import { vaultFor } from "./vault";
 
-// Reverse connections (docs/adr/0003): a service on someone's PC or in a customer's cluster
+// Tunnel connections (docs/adr/0003): a service on someone's PC or in a customer's cluster
 // opens a WebSocket to the gateway, and the gateway relays calls to it. Each one belongs to
 // one user, who paired it, and only that user can call it. The protocol is in
-// docs/reverse-protocol.md; the socket itself lives in src/reverse-connection.ts.
+// docs/tunnel-protocol.md; the socket itself lives in src/tunnel-connection.ts.
 
-export const REVERSE_CREDENTIAL_PREFIX = "reverse:";
-export const PAIR_PATH = "/reverse/pair";
-export const PAIR_STATUS_PATH = "/reverse/pair/status";
-export const CHALLENGE_PATH = "/reverse/challenge";
-export const CONNECT_PATH = "/reverse/connect";
-// Where the owner enters the code (src/web/reverse.ts).
+export const TUNNEL_CREDENTIAL_PREFIX = "tunnel:";
+export const PAIR_PATH = "/tunnel/pair";
+export const PAIR_STATUS_PATH = "/tunnel/pair/status";
+export const CHALLENGE_PATH = "/tunnel/challenge";
+export const CONNECT_PATH = "/tunnel/connect";
+// Where the owner enters the code (src/web/tunnel.ts).
 export const OWNER_PAIR_PATH = "/pair";
 
 export const PAIRING_TTL_MS = 5 * 60 * 1000;
@@ -57,7 +57,7 @@ export interface Ed25519PublicJwk {
 }
 
 // A registered local service: who owns it and the key it proves itself with.
-export interface ReverseService {
+export interface TunnelService {
   id: string;
   // Its service name under /api/<name>, unique among the owner's services.
   name: string;
@@ -71,7 +71,7 @@ export interface ReverseService {
   // Services the owner lets it call back as them (ADR 0003 decision 5); none at first.
   callback?: string[];
   // How it proves itself when it reconnects (decision 4); "standard" when absent.
-  mode?: ReverseMode;
+  mode?: TunnelMode;
   createdAt: number;
 }
 
@@ -82,7 +82,7 @@ export interface Pairing {
   publicKey: Ed25519PublicJwk;
   thumbprint: string;
   description?: string;
-  mode: ReverseMode;
+  mode: TunnelMode;
   createdAt: number;
   expiresAt: number;
   status: "pending" | "approved" | "denied";
@@ -91,35 +91,35 @@ export interface Pairing {
   source?: string;
 }
 
-export type PairingDecision = ReverseService | "deny";
+export type PairingDecision = TunnelService | "deny";
 
 export type PairingPoll =
   | { status: "pending" | "denied" | "expired" }
-  | { status: "approved"; service: ReverseService };
+  | { status: "approved"; service: TunnelService };
 
-export function reverseCredentialId(serviceId: string): string {
-  return `${REVERSE_CREDENTIAL_PREFIX}${serviceId}`;
+export function tunnelCredentialId(serviceId: string): string {
+  return `${TUNNEL_CREDENTIAL_PREFIX}${serviceId}`;
 }
 
-export function serviceIdOfReverseCredential(credential: string): string | null {
-  return credential.startsWith(REVERSE_CREDENTIAL_PREFIX) ? credential.slice(REVERSE_CREDENTIAL_PREFIX.length) : null;
+export function serviceIdOfTunnelCredential(credential: string): string | null {
+  return credential.startsWith(TUNNEL_CREDENTIAL_PREFIX) ? credential.slice(TUNNEL_CREDENTIAL_PREFIX.length) : null;
 }
 
-// Off when the deployment lacks the binding, or sets REVERSE_PAIRING to "off" (ADR 0003
+// Off when the deployment lacks the binding, or sets TUNNEL_PAIRING to "off" (ADR 0003
 // decision 3: an admin can forbid pairing). Already paired services keep working.
-export function reverseEnabled(env: Env): boolean {
-  return reverseNamespace(env) !== undefined;
+export function tunnelEnabled(env: Env): boolean {
+  return tunnelNamespace(env) !== undefined;
 }
 
 export function pairingAllowed(env: Env): boolean {
-  const flag = (env as unknown as Record<string, unknown>).REVERSE_PAIRING;
-  return reverseEnabled(env) && !(typeof flag === "string" && flag.trim().toLowerCase() === "off");
+  const flag = (env as unknown as Record<string, unknown>).TUNNEL_PAIRING;
+  return tunnelEnabled(env) && !(typeof flag === "string" && flag.trim().toLowerCase() === "off");
 }
 
-// REVERSE_CALLBACK "off" forbids every call back, whatever owners chose (decision 3).
+// TUNNEL_CALLBACK "off" forbids every call back, whatever owners chose (decision 3).
 export function callbackAllowed(env: Env): boolean {
-  const flag = (env as unknown as Record<string, unknown>).REVERSE_CALLBACK;
-  return reverseEnabled(env) && !(typeof flag === "string" && flag.trim().toLowerCase() === "off");
+  const flag = (env as unknown as Record<string, unknown>).TUNNEL_CALLBACK;
+  return tunnelEnabled(env) && !(typeof flag === "string" && flag.trim().toLowerCase() === "off");
 }
 
 // The services an owner can let a local service call back: those the owner reaches through
@@ -190,9 +190,9 @@ async function readJson(request: Request): Promise<Record<string, unknown> | nul
   }
 }
 
-// POST /reverse/pair: the local service asks to be paired and gets a code to show its owner.
+// POST /tunnel/pair: the local service asks to be paired and gets a code to show its owner.
 export async function startPairing(request: Request, env: Env): Promise<Response> {
-  if (!reverseEnabled(env)) return json({ error: "this gateway does not accept reverse connections" }, 404);
+  if (!tunnelEnabled(env)) return json({ error: "this gateway does not accept tunnel connections" }, 404);
   if (!pairingAllowed(env)) return json({ error: "pairing is turned off at this gateway; ask an admin" }, 403);
   const body = await readJson(request);
   if (!body) return json({ error: "send a JSON object" }, 400);
@@ -202,7 +202,7 @@ export async function startPairing(request: Request, env: Env): Promise<Response
   if (!publicKey) return json({ error: "public_key must be an Ed25519 public JWK ({kty: OKP, crv: Ed25519, x}) without the private part" }, 400);
   const description = typeof body.description === "string" ? body.description.trim().slice(0, MAX_PAIRING_DESCRIPTION) : undefined;
   if (body.mode !== undefined && body.mode !== "standard" && body.mode !== "strict") return json({ error: 'mode must be "standard" or "strict"' }, 400);
-  const mode: ReverseMode = body.mode === "strict" ? "strict" : "standard";
+  const mode: TunnelMode = body.mode === "strict" ? "strict" : "standard";
 
   const code = newCode();
   const pairingId = randomToken();
@@ -239,9 +239,9 @@ export async function startPairing(request: Request, env: Env): Promise<Response
   );
 }
 
-// POST /reverse/pair/status: the local service polls with the pairing ID until the owner decides.
+// POST /tunnel/pair/status: the local service polls with the pairing ID until the owner decides.
 export async function pairingStatus(request: Request, env: Env): Promise<Response> {
-  if (!reverseEnabled(env)) return json({ error: "this gateway does not accept reverse connections" }, 404);
+  if (!tunnelEnabled(env)) return json({ error: "this gateway does not accept tunnel connections" }, 404);
   const body = await readJson(request);
   const pairingId = typeof body?.pairing_id === "string" ? body.pairing_id : "";
   if (!pairingId) return json({ error: "pairing_id is required" }, 400);
@@ -254,22 +254,22 @@ function connectUrl(env: Env): string {
   return `${publicUrl(env).replace(/^http/, "ws")}${CONNECT_PATH}`;
 }
 
-// POST /reverse/challenge: a one-time value for the service to sign when it connects.
+// POST /tunnel/challenge: a one-time value for the service to sign when it connects.
 export async function challenge(_request: Request, env: Env): Promise<Response> {
-  if (!reverseEnabled(env)) return json({ error: "this gateway does not accept reverse connections" }, 404);
-  const { token } = await signToken(env.SIGNING_KEY, publicUrl(env), "rchallenge", "reverse", { jti: randomToken() }, CHALLENGE_TTL_SECONDS);
+  if (!tunnelEnabled(env)) return json({ error: "this gateway does not accept tunnel connections" }, 404);
+  const { token } = await signToken(env.SIGNING_KEY, publicUrl(env), "rchallenge", "tunnel", { jti: randomToken() }, CHALLENGE_TTL_SECONDS);
   return json({ challenge: token, expires_in: CHALLENGE_TTL_SECONDS });
 }
 
-// GET /reverse/connect (WebSocket upgrade): proves the service with a JWT signed by its key
+// GET /tunnel/connect (WebSocket upgrade): proves the service with a JWT signed by its key
 // (EdDSA, iss = its service ID, aud = this URL, nonce = a challenge), then hands the upgrade
 // to the service's object. The connection is the session from then on (ADR 0003 decision 4).
-export async function reverseConnect(request: Request, env: Env): Promise<Response> {
-  if (!reverseEnabled(env)) return json({ error: "this gateway does not accept reverse connections" }, 404);
+export async function tunnelConnect(request: Request, env: Env): Promise<Response> {
+  if (!tunnelEnabled(env)) return json({ error: "this gateway does not accept tunnel connections" }, 404);
   if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return json({ error: "expected a WebSocket upgrade" }, 426);
   const authorization = request.headers.get("authorization") ?? "";
   const refuse = (reason: string) => {
-    console.warn(JSON.stringify({ type: "reverse_refused", reason }));
+    console.warn(JSON.stringify({ type: "tunnel_refused", reason }));
     return json({ error: "the assertion was not accepted" }, 401);
   };
 
@@ -277,7 +277,7 @@ export async function reverseConnect(request: Request, env: Env): Promise<Respon
   const resume = authorization.match(/^Resume\s+(\S+)$/i)?.[1];
   if (resume) {
     const serviceId = resume.split(".")[0];
-    const service = serviceId ? await registryFor(env).getReverse(serviceId) : null;
+    const service = serviceId ? await registryFor(env).getTunnel(serviceId) : null;
     if (!service || service.mode !== "strict") return refuse("resume_unknown_service");
     return handOver(env, service, { kind: "resume", token: resume });
   }
@@ -292,7 +292,7 @@ export async function reverseConnect(request: Request, env: Env): Promise<Respon
     return refuse("malformed");
   }
   if (!issuer) return refuse("no_issuer");
-  const service = await registryFor(env).getReverse(issuer);
+  const service = await registryFor(env).getTunnel(issuer);
   if (!service) return refuse("unknown_service");
 
   let payload: Record<string, unknown>;
@@ -315,29 +315,29 @@ export async function reverseConnect(request: Request, env: Env): Promise<Respon
   return handOver(env, service, { kind: "key", challenge: issued.jti, challengeExpiresAt: issued.exp * 1000 });
 }
 
-function handOver(env: Env, service: ReverseService, proof: ConnectGrant["proof"]): Promise<Response> {
+function handOver(env: Env, service: TunnelService, proof: ConnectGrant["proof"]): Promise<Response> {
   const grant: ConnectGrant = { serviceId: service.id, name: service.name, mode: service.mode ?? "standard", thumbprint: service.thumbprint, proof };
   const headers = new Headers({ upgrade: "websocket", [GRANT_HEADER]: JSON.stringify(grant) });
-  return connectionFor(env, service.id).fetch("https://reverse.internal/connect", { headers });
+  return connectionFor(env, service.id).fetch("https://tunnel.internal/connect", { headers });
 }
 
-// The proxy's leg for a reverse credential (src/proxy.ts): only the owner reaches it.
+// The proxy's leg for a tunnel credential (src/proxy.ts): only the owner reaches it.
 export async function relayToLocal(
   request: Request,
   env: Env,
   who: { user: string; credential: string; service: string; via: string; app?: string },
   upstreamPath: string,
 ): Promise<Response> {
-  const id = serviceIdOfReverseCredential(who.credential);
-  const service = id && reverseEnabled(env) ? await registryFor(env).getReverse(id) : null;
+  const id = serviceIdOfTunnelCredential(who.credential);
+  const service = id && tunnelEnabled(env) ? await registryFor(env).getTunnel(id) : null;
   if (!service || service.owner !== who.user || service.name !== who.service) return denied(403, `token does not cover service: ${who.service}`);
 
   let body: ArrayBuffer | null = null;
   if (request.method !== "GET" && request.method !== "HEAD") {
     const length = Number(request.headers.get("content-length") ?? "0");
-    if (length > MAX_BODY_BYTES) return denied(413, `the body is larger than ${MAX_BODY_BYTES} bytes, the most a reverse connection relays`);
+    if (length > MAX_BODY_BYTES) return denied(413, `the body is larger than ${MAX_BODY_BYTES} bytes, the most a tunnel connection relays`);
     body = await request.arrayBuffer();
-    if (body.byteLength > MAX_BODY_BYTES) return denied(413, `the body is larger than ${MAX_BODY_BYTES} bytes, the most a reverse connection relays`);
+    if (body.byteLength > MAX_BODY_BYTES) return denied(413, `the body is larger than ${MAX_BODY_BYTES} bytes, the most a tunnel connection relays`);
     if (body.byteLength === 0) body = null;
   }
   const headers: HeaderList = [...forwardHeaders(request.headers, {})];
@@ -351,7 +351,7 @@ export async function relayToLocal(
       credential: who.credential,
       service: who.service,
       via: who.via,
-      reverse: service.id,
+      tunnel: service.id,
       ...(who.app !== undefined ? { app: who.app } : {}),
       method: request.method,
       path: upstreamPath || "/",
@@ -364,7 +364,7 @@ export async function relayToLocal(
     if (result.error === "timeout") {
       return denied(504, `the local service "${service.name}" did not answer in time; long work should be started asynchronously (202 and an ID) and fetched later`);
     }
-    if (result.error === "too_large") return denied(502, `the local service's answer is larger than ${MAX_BODY_BYTES} bytes, the most a reverse connection relays`);
+    if (result.error === "too_large") return denied(502, `the local service's answer is larger than ${MAX_BODY_BYTES} bytes, the most a tunnel connection relays`);
     if (result.error === "closed") return denied(502, `the connection to the local service "${service.name}" closed before it answered`);
     return denied(502, `the local service "${service.name}" sent an answer the gateway could not read`);
   }
@@ -384,13 +384,13 @@ export async function relayToLocal(
 
 // Local services as the owner sees them, with whether each is connected and what it said.
 export interface OwnedService {
-  service: ReverseService;
+  service: TunnelService;
   status: ConnectionStatus;
 }
 
 export async function listOwned(env: Env, owner?: string): Promise<OwnedService[]> {
-  if (!reverseEnabled(env)) return [];
-  const all = await registryFor(env).listReverse();
+  if (!tunnelEnabled(env)) return [];
+  const all = await registryFor(env).listTunnel();
   const mine = owner === undefined ? all : all.filter((s) => s.owner === owner);
   return Promise.all(
     mine.map(async (service) => {
@@ -403,25 +403,25 @@ export async function listOwned(env: Env, owner?: string): Promise<OwnedService[
   );
 }
 
-export async function getOwned(env: Env, owner: string, serviceId: string): Promise<ReverseService | null> {
-  if (!reverseEnabled(env)) return null;
-  const service = await registryFor(env).getReverse(serviceId);
+export async function getOwned(env: Env, owner: string, serviceId: string): Promise<TunnelService | null> {
+  if (!tunnelEnabled(env)) return null;
+  const service = await registryFor(env).getTunnel(serviceId);
   return service && service.owner === owner ? service : null;
 }
 
 // Deletes the registration and cuts the connection; the service must pair again.
 export async function removeService(env: Env, serviceId: string): Promise<boolean> {
-  const removed = await registryFor(env).removeReverse(serviceId);
+  const removed = await registryFor(env).removeTunnel(serviceId);
   await connectionFor(env, serviceId).revoke();
   return removed;
 }
 
-export async function setCallback(env: Env, owner: string, serviceId: string, chosen: string[]): Promise<ReverseService | null> {
+export async function setCallback(env: Env, owner: string, serviceId: string, chosen: string[]): Promise<TunnelService | null> {
   const service = await getOwned(env, owner, serviceId);
   if (!service) return null;
   const callable = new Set((await callableServices(env, owner)).map((c) => c.service));
   const callback = [...new Set(chosen)].filter((s) => callable.has(s)).sort();
-  return registryFor(env).setReverseCallback(serviceId, owner, callback);
+  return registryFor(env).setTunnelCallback(serviceId, owner, callback);
 }
 
 // The token a call back carries only has to live while the proxy (and a feature's port) checks it.
@@ -441,11 +441,11 @@ export async function handleCall(env: Env, ctx: ExecutionContext, serviceId: str
   if (!["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"].includes(method)) return answer(400, `unsupported method: ${method}`);
   if (!path.startsWith("/")) return answer(400, "path must start with /");
 
-  const local = await registryFor(env).getReverse(serviceId);
+  const local = await registryFor(env).getTunnel(serviceId);
   // A connection opened with a key that was replaced since may not call as the owner.
   if (!local || local.thumbprint !== thumbprint) return answer(403, "the registration was removed or paired again with another key");
   const refuse = (reason: string, message: string) => {
-    console.warn(JSON.stringify({ type: "reverse_call_refused", reverse: serviceId, user: local.owner, service, method, reason }));
+    console.warn(JSON.stringify({ type: "tunnel_call_refused", tunnel: serviceId, user: local.owner, service, method, reason }));
     return answer(403, message);
   };
   if (!callbackAllowed(env)) return refuse("deployment", "calls back to the gateway are turned off at this gateway");
@@ -474,7 +474,7 @@ export async function handleCall(env: Env, ctx: ExecutionContext, serviceId: str
       }
     }
   }
-  if (!headers.has("user-agent")) headers.set("user-agent", "heddleway-reverse");
+  if (!headers.has("user-agent")) headers.set("user-agent", "heddleway-tunnel");
   let body: ArrayBuffer | undefined;
   if (typeof frame.body === "string" && method !== "GET" && method !== "HEAD") {
     try {
@@ -484,12 +484,12 @@ export async function handleCall(env: Env, ctx: ExecutionContext, serviceId: str
     }
     if (body.byteLength > MAX_BODY_BYTES) return answer(413, `the body is larger than ${MAX_BODY_BYTES} bytes`);
   }
-  const { token } = await signToken(env.SIGNING_KEY, base, "api", local.owner, { creds: { [service]: target.credential }, reverse: serviceId }, CALL_TOKEN_TTL_SECONDS);
+  const { token } = await signToken(env.SIGNING_KEY, base, "api", local.owner, { creds: { [service]: target.credential }, tunnel: serviceId }, CALL_TOKEN_TTL_SECONDS);
   headers.set("authorization", `Bearer ${token}`);
 
-  const response = await handleProxy(new Request(url, { method, headers, body }), env, ctx, "reverse");
+  const response = await handleProxy(new Request(url, { method, headers, body }), env, ctx, "tunnel");
   const out = await response.arrayBuffer();
-  if (out.byteLength > MAX_BODY_BYTES) return answer(502, `the answer is larger than ${MAX_BODY_BYTES} bytes, the most a reverse connection relays`);
+  if (out.byteLength > MAX_BODY_BYTES) return answer(502, `the answer is larger than ${MAX_BODY_BYTES} bytes, the most a tunnel connection relays`);
   return { type: "call_result", id, status: response.status, headers: [...response.headers], body: out.byteLength > 0 ? toBase64(out) : null };
 }
 
