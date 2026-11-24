@@ -2,7 +2,7 @@ import { appAllows, getApp } from "./apps";
 import { publicUrl, type ServiceConfig } from "./config";
 import { feature, withPath } from "./features";
 import { IDENTITY_CREDENTIAL, signIdentity } from "./identity";
-import { relayToLocal, serviceIdOfReverseCredential } from "./reverse";
+import { relayToLocal, serviceIdOfTunnelCredential } from "./tunnel";
 import { getUpstream } from "./services";
 import { bearer, verifyToken, type GatewayClaims } from "./tokens";
 import { vaultFor } from "./vault";
@@ -44,9 +44,9 @@ export function forwardHeaders(incoming: Headers, injected: Record<string, strin
 }
 
 // `via` names the entrance in the audit log: the REST endpoint, a local service calling back over
-// its reverse connection (src/reverse.ts), or the MCP tools (src/mcp.ts),
+// its tunnel connection (src/tunnel.ts), or the MCP tools (src/mcp.ts),
 // which build the same request with a gateway token of their own.
-export async function handleProxy(request: Request, env: Env, ctx: ExecutionContext, via: "rest" | "mcp" | "reverse" = "rest"): Promise<Response> {
+export async function handleProxy(request: Request, env: Env, ctx: ExecutionContext, via: "rest" | "mcp" | "tunnel" = "rest"): Promise<Response> {
   const url = new URL(request.url);
   const rest = url.pathname.slice(API_PREFIX.length);
   const slash = rest.indexOf("/");
@@ -72,11 +72,11 @@ export async function handleProxy(request: Request, env: Env, ctx: ExecutionCont
     }
   }
 
-  // A local service on a reverse connection (src/reverse.ts, docs/adr/0003): the credential
+  // A local service on a tunnel connection (src/tunnel.ts, docs/adr/0003): the credential
   // names it, and only its owner reaches it.
-  const reverse = claims.creds?.[service];
-  if (reverse !== undefined && serviceIdOfReverseCredential(reverse) !== null) {
-    return relayToLocal(request, env, { user: claims.sub, credential: reverse, service, via, ...(claims.app !== undefined ? { app: claims.app } : {}) }, upstreamPath);
+  const tunnel = claims.creds?.[service];
+  if (tunnel !== undefined && serviceIdOfTunnelCredential(tunnel) !== null) {
+    return relayToLocal(request, env, { user: claims.sub, credential: tunnel, service, via, ...(claims.app !== undefined ? { app: claims.app } : {}) }, upstreamPath);
   }
 
   // A feature of this Worker (src/features.ts) takes its name over a configured service. The
@@ -121,7 +121,7 @@ export async function handleProxy(request: Request, env: Env, ctx: ExecutionCont
     service,
     via,
     ...(claims.app !== undefined ? { app: claims.app } : {}),
-    ...(claims.reverse !== undefined ? { reverse: claims.reverse } : {}),
+    ...(claims.tunnel !== undefined ? { tunnel: claims.tunnel } : {}),
   });
 }
 

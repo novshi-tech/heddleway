@@ -1,7 +1,7 @@
 # 0001 boid の API ゲートウェイを引き取り、認証情報の置き場を一本にする
 
 - 状態: 案(2026-10-29、直樹とのディスカッション)
-- 関連: [0002](0002-git-over-gateway.md)(git の接続先)、[0003](0003-reverse-connection.md)(所有者の決まった逆向きの接続と、手元からの呼び返し)、[concept.md](../concept.md)、[background-access.md](../background-access.md)
+- 関連: [0002](0002-git-over-gateway.md)(git の接続先)、[0003](0003-reverse-connection.md)(所有者の決まったトンネルでつなぐローカルサービスと、その呼び返し)、[concept.md](../concept.md)、[background-access.md](../background-access.md)
 - 発端: novshi-tech/boid の `docs/plans/split-and-shrink.md`(boid の分割と縮退)
 
 ## 背景

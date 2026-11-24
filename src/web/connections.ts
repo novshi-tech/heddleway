@@ -7,8 +7,8 @@ import { ALREADY_CONNECTED, vaultFor, type CredentialInfo } from "../vault";
 import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { featureRows } from "./features";
 import { grantRows, listGrants } from "./grants";
-import { reverseEnabled } from "../reverse";
-import { reverseSection } from "./reverse";
+import { tunnelEnabled } from "../tunnel";
+import { tunnelSection } from "./tunnel";
 import { Html, html } from "./html";
 import { page } from "./layout";
 import { cookie, isAdmin, LOGIN_TTL_SECONDS, readCookie, redirect, sameOrigin, session, type Session } from "./session";
@@ -38,7 +38,7 @@ function addable(directory: Directory): [string, ServiceConfig][] {
 
 export function masthead(env: Env, user: Session): Html {
   return html`<header class="masthead"><a class="home" href="/">Heddleway · ${organizationName(env)}</a>
-<div class="who"><a href="/setup">Claude につなぐ</a>${isAdmin(env, user) && html`<a href="/admin/services">接続先の管理</a><a href="/admin/apps">アプリの管理</a>${reverseEnabled(env) && html`<a href="/admin/local-services">手元のサービスの管理</a>`}<a href="/admin/plugins">プラグインの配布</a>`}<span>${user.name}</span><form method="post" action="/logout"><button class="quiet">サインアウト</button></form></div></header>`;
+<div class="who"><a href="/setup">Claude につなぐ</a>${isAdmin(env, user) && html`<a href="/admin/services">接続先の管理</a><a href="/admin/apps">アプリの管理</a>${tunnelEnabled(env) && html`<a href="/admin/local-services">ローカルサービスの管理</a>`}<a href="/admin/plugins">プラグインの配布</a>`}<span>${user.name}</span><form method="post" action="/logout"><button class="quiet">サインアウト</button></form></div></header>`;
 }
 
 function notice(url: URL, credentials: CredentialInfo[], services: Services): Html | false {
@@ -53,9 +53,9 @@ function notice(url: URL, credentials: CredentialInfo[], services: Services): Ht
   if (url.searchParams.has("deleted")) return html`<p class="notice" role="status">接続を削除しました。</p>`;
   if (url.searchParams.has("revoked")) return html`<p class="notice" role="status">アプリのアクセスを取り消しました。</p>`;
   if (url.searchParams.has("disabled")) return html`<p class="notice" role="status">機能を無効にしました。</p>`;
-  if (url.searchParams.has("paired")) return html`<p class="notice" role="status">手元のサービスをペアリングしました。サービスの側でつながるのを待ってください。</p>`;
+  if (url.searchParams.has("paired")) return html`<p class="notice" role="status">ローカルサービスをペアリングしました。サービスの側でつながるのを待ってください。</p>`;
   if (url.searchParams.has("pairing_denied")) return html`<p class="notice" role="status">ペアリングを断りました。</p>`;
-  if (url.searchParams.has("local_removed")) return html`<p class="notice" role="status">手元のサービスを削除しました。</p>`;
+  if (url.searchParams.has("local_removed")) return html`<p class="notice" role="status">ローカルサービスを削除しました。</p>`;
   return false;
 }
 
@@ -98,7 +98,7 @@ export async function home(request: Request, env: Env & { OAUTH_PROVIDER: OAuthH
   const rows = [...credentials.map((c) => connectionRow(c, services, duplicated.has(c.service))), ...identity.map(identityRow)];
   const grants = await listGrants(env, user.sub);
   const featureSection = await featureRows(env, user.sub);
-  const localSection = await reverseSection(env, user);
+  const localSection = await tunnelSection(env, user);
   return page(
     `Heddleway · ${organizationName(env)}`,
     html`${masthead(env, user)}

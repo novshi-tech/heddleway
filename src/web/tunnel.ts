@@ -11,21 +11,21 @@ import {
   pairingAllowed,
   POLL_TTL_MS,
   removeService,
-  reverseEnabled,
+  tunnelEnabled,
   setCallback,
   validName,
   type OwnedService,
   type Pairing,
-  type ReverseService,
-} from "../reverse";
-import { connectionFor, type ConnectionStatus } from "../reverse-connection";
+  type TunnelService,
+} from "../tunnel";
+import { connectionFor, type ConnectionStatus } from "../tunnel-connection";
 import { admin } from "./admin";
 import { masthead } from "./connections";
 import { Html, html } from "./html";
 import { page } from "./layout";
 import { isAdmin, redirect, sameOrigin, session, type Session } from "./session";
 
-// The owner's side of reverse connections (docs/adr/0003 decision 3): entering the code a
+// The owner's side of tunnel connections (docs/adr/0003 decision 3): entering the code a
 // local service shows, approving it as one's own, and seeing and removing one's services.
 // Admins see every service of the deployment and can remove any.
 
@@ -37,7 +37,7 @@ function statusText(status: ConnectionStatus): Html {
   return html`<span class="badge">まだつないでいません</span>`;
 }
 
-function subline(service: ReverseService, status: ConnectionStatus, withOwner: boolean): string {
+function subline(service: TunnelService, status: ConnectionStatus, withOwner: boolean): string {
   const parts = [`${at.format(service.createdAt)}にペアリング`];
   if (service.mode === "strict") parts.push("厳しめのモード");
   if (status.connectedAt) parts.push(`最後につないだのは${at.format(status.connectedAt)}`);
@@ -46,7 +46,7 @@ function subline(service: ReverseService, status: ConnectionStatus, withOwner: b
   return parts.join(" · ");
 }
 
-function callbackText(env: Env, service: ReverseService): string {
+function callbackText(env: Env, service: TunnelService): string {
   if (!callbackAllowed(env)) return "";
   const chosen = service.callback ?? [];
   return chosen.length > 0 ? `呼び返せるサービス: ${chosen.join("、")}` : "呼び返しなし";
@@ -73,26 +73,26 @@ ${callable.length > 0
 }
 
 
-// The home page's section; nothing when the deployment has no reverse connections.
-export async function reverseSection(env: Env, user: Session): Promise<Html | false> {
-  if (!reverseEnabled(env)) return false;
+// The home page's section; nothing when the deployment has no tunnel connections.
+export async function tunnelSection(env: Env, user: Session): Promise<Html | false> {
+  if (!tunnelEnabled(env)) return false;
   const owned = await listOwned(env, user.sub);
   if (owned.length === 0 && !pairingAllowed(env)) return false;
-  return html`<h2>手元のサービス</h2>
+  return html`<h2>ローカルサービス</h2>
 <p>あなたの PC や、あなたが置いたコンテナで動くサービスです。サービスのほうからゲートウェイにつなぎに来るので、手元に入口を開けずに、Claude からその API を呼べます。呼べるのはあなただけです。</p>
-${owned.length > 0 ? html`<ul class="list">${owned.map((o) => serviceRow(env, o))}</ul>` : html`<p class="empty">ペアリングした手元のサービスはありません。</p>`}
+${owned.length > 0 ? html`<ul class="list">${owned.map((o) => serviceRow(env, o))}</ul>` : html`<p class="empty">ペアリングしたローカルサービスはありません。</p>`}
 ${pairingAllowed(env) && html`<p><a class="button quiet" href="${OWNER_PAIR_PATH}">ペアリングのコードを入力</a></p>`}`;
 }
 
 function codeForm(env: Env, user: Session, code = "", error?: string, status = 200): Response {
   return page(
-    "手元のサービスをペアリング",
+    "ローカルサービスをペアリング",
     html`${masthead(env, user)}
 <a class="back" href="/">‹ つないだサービスに戻る</a>
-<h1>手元のサービスをペアリング</h1>
+<h1>ローカルサービスをペアリング</h1>
 ${error && html`<p class="error" role="alert">${error}</p>`}
 <form method="get" action="${OWNER_PAIR_PATH}" class="card">
-<p>手元のサービスが表示したコード(<code>XXXX-XXXX</code>)を入力してください。コードは 5 分で切れ、1 回だけ使えます。</p>
+<p>ローカルサービスが表示したコード(<code>XXXX-XXXX</code>)を入力してください。コードは 5 分で切れ、1 回だけ使えます。</p>
 <label>ペアリングのコード<input type="text" name="code" value="${code}" autocomplete="off" autocapitalize="characters" spellcheck="false" required></label>
 <div class="actions"><button>次へ</button></div>
 </form>`,
@@ -103,8 +103,8 @@ ${error && html`<p class="error" role="alert">${error}</p>`}
 
 // The owner's service of this name, which approving would replace (pairing again after a
 // restart in strict mode, a new machine, a lost key).
-async function ownedByName(env: Env, owner: string, name: string): Promise<ReverseService | undefined> {
-  return (await registryFor(env).listReverse()).find((s) => s.owner === owner && s.name === name);
+async function ownedByName(env: Env, owner: string, name: string): Promise<TunnelService | undefined> {
+  return (await registryFor(env).listTunnel()).find((s) => s.owner === owner && s.name === name);
 }
 
 async function confirmPage(env: Env, user: Session, code: string, pairing: Pairing, name: string, error?: string, status = 200, chosen?: string[]): Promise<Response> {
@@ -113,10 +113,10 @@ async function confirmPage(env: Env, user: Session, code: string, pairing: Pairi
   // else, and the owner picks again what the new key may call.
   const fieldset = await callbackFieldset(env, user.sub, chosen ?? []);
   return page(
-    "手元のサービスをペアリング",
+    "ローカルサービスをペアリング",
     html`${masthead(env, user)}
 <a class="back" href="${OWNER_PAIR_PATH}">‹ コードの入力に戻る</a>
-<h1>このサービスを、あなたの手元のサービスとしてつなぎますか?</h1>
+<h1>このサービスを、あなたのローカルサービスとしてつなぎますか?</h1>
 ${error && html`<p class="error" role="alert">${error}</p>`}
 <form method="post" action="${OWNER_PAIR_PATH}" class="card">
 <input type="hidden" name="code" value="${code}">
@@ -126,9 +126,9 @@ ${pairing.mode === "strict" && html`<p class="hint">厳しめのモードです�
 <label>サービスの名前(Claude からは <code>/api/&lt;名前&gt;/...</code> で呼びます)<input type="text" name="name" value="${name}" pattern="[a-z0-9][a-z0-9\\-]*" maxlength="40" required></label>
 <p>つなぐと、${organizationName(env)} のゲートウェイを通して、あなた(だけ)が Claude からこのサービスの API を呼べるようになります。${fieldset ? "このサービスからは、下でチェックしたサービスだけを、あなたとして呼べます。" : "このサービスから、あなたの接続(ほかのサービス)を使うことはできません。"}</p>
 ${fieldset}
-${existing && html`<fieldset><p>あなたの手元のサービス「${existing.name}」(${at.format(existing.createdAt)}にペアリング)が、もうあります。つなぐと、このサービスで置き換えます。古い鍵は使えなくなり、いまの接続は切れます。Claude から呼ぶときの接続の ID は変わりません。</p>
+${existing && html`<fieldset><p>あなたのローカルサービス「${existing.name}」(${at.format(existing.createdAt)}にペアリング)が、もうあります。つなぐと、このサービスで置き換えます。古い鍵は使えなくなり、いまの接続は切れます。Claude から呼ぶときの接続の ID は変わりません。</p>
 <p class="hint">いまの鍵の指紋: <code>${existing.thumbprint}</code><br>新しい鍵の指紋: <code>${pairing.thumbprint}</code></p>
-<label class="choice"><input type="checkbox" name="replace" value="${existing.id}"> 自分で手元のサービスを入れ直したので、「${existing.name}」を置き換える</label></fieldset>`}
+<label class="choice"><input type="checkbox" name="replace" value="${existing.id}"> 自分でローカルサービスを入れ直したので、「${existing.name}」を置き換える</label></fieldset>`}
 <p class="hint">自分で起動したサービスのコードだけを承認してください。覚えのないコードなら、断ってください。</p>
 <div class="actions"><button name="decision" value="approve">つなぐ</button><button class="quiet" name="decision" value="deny">断る</button></div>
 </form>`,
@@ -139,8 +139,8 @@ ${existing && html`<fieldset><p>あなたの手元のサービス「${existing.n
 
 function closedPage(env: Env, user: Session): Response {
   return page(
-    "手元のサービスをペアリング",
-    html`${masthead(env, user)}<div class="card"><h1>ペアリングはできません</h1><p>このゲートウェイでは、管理者が手元のサービスのペアリングを止めています。</p><p><a href="/">つないだサービスに戻る</a></p></div>`,
+    "ローカルサービスをペアリング",
+    html`${masthead(env, user)}<div class="card"><h1>ペアリングはできません</h1><p>このゲートウェイでは、管理者がローカルサービスのペアリングを止めています。</p><p><a href="/">つないだサービスに戻る</a></p></div>`,
     undefined,
     403,
   );
@@ -155,7 +155,7 @@ export async function pairPage(request: Request, env: Env): Promise<Response> {
   const code = (url.searchParams.get("code") ?? "").trim();
   if (!code) return codeForm(env, user);
   const pairing = await registryFor(env).getPairing(await hashCode(code));
-  if (!pairing) return codeForm(env, user, code, "コードが見つからないか、切れています。手元のサービスでもう一度ペアリングを始めてください。", 404);
+  if (!pairing) return codeForm(env, user, code, "コードが見つからないか、切れています。ローカルサービスでもう一度ペアリングを始めてください。", 404);
   return confirmPage(env, user, code, pairing, pairing.name);
 }
 
@@ -170,11 +170,11 @@ export async function pairSubmit(request: Request, env: Env): Promise<Response> 
   const codeHash = await hashCode(code);
   const registry = registryFor(env);
   const pairing = await registry.getPairing(codeHash);
-  if (!pairing) return codeForm(env, user, code, "コードが見つからないか、切れています。手元のサービスでもう一度ペアリングを始めてください。", 404);
+  if (!pairing) return codeForm(env, user, code, "コードが見つからないか、切れています。ローカルサービスでもう一度ペアリングを始めてください。", 404);
 
   if (form.get("decision") !== "approve") {
     await registry.decidePairing(codeHash, "deny", POLL_TTL_MS);
-    console.log(JSON.stringify({ type: "reverse_pairing_denied", user: user.sub }));
+    console.log(JSON.stringify({ type: "tunnel_pairing_denied", user: user.sub }));
     return redirect("/?pairing_denied=1");
   }
   const name = String(form.get("name") ?? "").trim();
@@ -187,7 +187,7 @@ export async function pairSubmit(request: Request, env: Env): Promise<Response> 
   const existing = await ownedByName(env, user.sub, name);
   const replaces = String(form.get("replace") ?? "") || undefined;
   if (existing && replaces !== existing.id) return confirmPage(env, user, code, pairing, name, `「${name}」を置き換えるなら、置き換えるのチェックを入れてください。別のサービスなら、別の名前にしてください。`, 409, wanted);
-  const decision: ReverseService = {
+  const decision: TunnelService = {
     id: crypto.randomUUID(),
     name,
     owner: user.sub,
@@ -200,13 +200,13 @@ export async function pairSubmit(request: Request, env: Env): Promise<Response> 
     createdAt: Date.now(),
   };
   const result = await registry.decidePairing(codeHash, decision, POLL_TTL_MS, replaces);
-  if (result.status === "name_taken") return confirmPage(env, user, code, pairing, name, `「${name}」という手元のサービスがもうあります。もう一度試してください。`, 409, wanted);
-  if (result.status !== "ok" || !result.service) return codeForm(env, user, code, "コードが切れました。手元のサービスでもう一度ペアリングを始めてください。", 404);
+  if (result.status === "name_taken") return confirmPage(env, user, code, pairing, name, `「${name}」というローカルサービスがもうあります。もう一度試してください。`, 409, wanted);
+  if (result.status !== "ok" || !result.service) return codeForm(env, user, code, "コードが切れました。ローカルサービスでもう一度ペアリングを始めてください。", 404);
   const service = result.service;
   // The old key's connection and resume tokens go; the registration already names the new key,
   // so the old one is refused even before this.
   if (result.replaced) await connectionFor(env, service.id).reset(service.thumbprint);
-  console.log(JSON.stringify({ type: "reverse_paired", user: user.sub, service: service.id, name, ...(result.replaced ? { replaced: true } : {}) }));
+  console.log(JSON.stringify({ type: "tunnel_paired", user: user.sub, service: service.id, name, ...(result.replaced ? { replaced: true } : {}) }));
   return redirect(`/?paired=${service.id}`);
 }
 
@@ -238,13 +238,13 @@ export async function settingsSubmit(request: Request, env: Env, id: string): Pr
   const form = await request.formData();
   const saved = await setCallback(env, user.sub, id, form.getAll("callback").map(String));
   if (!saved) return redirect("/");
-  console.log(JSON.stringify({ type: "reverse_callback_set", user: user.sub, service: id, callback: saved.callback }));
+  console.log(JSON.stringify({ type: "tunnel_callback_set", user: user.sub, service: id, callback: saved.callback }));
   return redirect(`/local-services/${id}?saved=1`);
 }
 
-async function findForRemoval(env: Env, user: Session, id: string): Promise<ReverseService | null> {
-  if (!reverseEnabled(env)) return null;
-  if (isAdmin(env, user)) return registryFor(env).getReverse(id);
+async function findForRemoval(env: Env, user: Session, id: string): Promise<TunnelService | null> {
+  if (!tunnelEnabled(env)) return null;
+  if (isAdmin(env, user)) return registryFor(env).getTunnel(id);
   return getOwned(env, user.sub, id);
 }
 
@@ -255,12 +255,12 @@ export async function confirmRemove(request: Request, env: Env, id: string): Pro
   if (!service) return redirect("/");
   const others = service.owner !== user.sub;
   return page(
-    "手元のサービスの削除",
+    "ローカルサービスの削除",
     html`${masthead(env, user)}
 <a class="back" href="${others ? "/admin/local-services" : "/"}">‹ 戻る</a>
 <h1>「${service.name}」を削除しますか?</h1>
 <form method="post" action="/local-services/${service.id}/delete" class="card">
-<p>${others ? `${service.ownerName} さんの手元のサービスです。` : ""}削除すると、いまの接続が切れ、このサービスはゲートウェイにつなげなくなります。使うときは、サービスの側からもう一度ペアリングします。</p>
+<p>${others ? `${service.ownerName} さんのローカルサービスです。` : ""}削除すると、いまの接続が切れ、このサービスはゲートウェイにつなげなくなります。使うときは、サービスの側からもう一度ペアリングします。</p>
 <div class="actions"><button class="danger">削除する</button><a class="button quiet" href="${others ? "/admin/local-services" : "/"}">やめる</a></div>
 </form>`,
   );
@@ -273,7 +273,7 @@ export async function remove(request: Request, env: Env, id: string): Promise<Re
   const service = await findForRemoval(env, user, id);
   if (service) {
     await removeService(env, service.id);
-    console.log(JSON.stringify({ type: "reverse_removed", user: user.sub, owner: service.owner, service: service.id }));
+    console.log(JSON.stringify({ type: "tunnel_removed", user: user.sub, owner: service.owner, service: service.id }));
     if (service.owner !== user.sub) return redirect("/admin/local-services?removed=1");
   }
   return redirect("/?local_removed=1");
@@ -286,17 +286,17 @@ export async function adminPage(request: Request, env: Env): Promise<Response> {
   const owned = await listOwned(env);
   const removed = new URL(request.url).searchParams.has("removed");
   return page(
-    "手元のサービスの管理",
+    "ローカルサービスの管理",
     html`${masthead(env, user)}
-${removed && html`<p class="notice" role="status">手元のサービスを削除しました。</p>`}
-<h1>手元のサービスの管理</h1>
-<p>利用者がペアリングした、逆向きの接続でつながるサービスです。呼べるのは、それぞれの所有者だけです。所有者が退職したときなどは、ここで削除します。</p>
-${!reverseEnabled(env)
-  ? html`<p class="empty">このデプロイには逆向きの接続の Durable Object(<code>REVERSE</code>)がありません。</p>`
+${removed && html`<p class="notice" role="status">ローカルサービスを削除しました。</p>`}
+<h1>ローカルサービスの管理</h1>
+<p>利用者がペアリングした、トンネルでつながるサービスです。呼べるのは、それぞれの所有者だけです。所有者が退職したときなどは、ここで削除します。</p>
+${!tunnelEnabled(env)
+  ? html`<p class="empty">このデプロイにはトンネルの Durable Object(<code>TUNNEL</code>)がありません。</p>`
   : owned.length > 0
     ? html`<ul class="list">${owned.map((o) => serviceRow(env, o, true))}</ul>`
-    : html`<p class="empty">ペアリングされた手元のサービスはありません。</p>`}
-<p class="hint">${pairingAllowed(env) ? "ペアリングは許可しています。止めるときは、デプロイの設定の vars に REVERSE_PAIRING: \"off\" を足します。" : "ペアリングは止めています(REVERSE_PAIRING)。ペアリング済みのサービスは使えます。"}</p>
-<p class="hint">${callbackAllowed(env) ? "呼び返し(手元のサービスが所有者としてゲートウェイを呼ぶこと)は、所有者がサービスごとに選べます。止めるときは REVERSE_CALLBACK: \"off\" を足します。" : "呼び返しは止めています(REVERSE_CALLBACK)。"}</p>`,
+    : html`<p class="empty">ペアリングされたローカルサービスはありません。</p>`}
+<p class="hint">${pairingAllowed(env) ? "ペアリングは許可しています。止めるときは、デプロイの設定の vars に TUNNEL_PAIRING: \"off\" を足します。" : "ペアリングは止めています(TUNNEL_PAIRING)。ペアリング済みのサービスは使えます。"}</p>
+<p class="hint">${callbackAllowed(env) ? "呼び返し(ローカルサービスが所有者としてゲートウェイを呼ぶこと)は、所有者がサービスごとに選べます。止めるときは TUNNEL_CALLBACK: \"off\" を足します。" : "呼び返しは止めています(TUNNEL_CALLBACK)。"}</p>`,
   );
 }

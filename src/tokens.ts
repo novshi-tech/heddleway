@@ -2,7 +2,7 @@ import { jwtVerify, SignJWT, type JWTPayload } from "jose";
 
 // One HS256 key signs every token; the audience keeps the kinds apart.
 // "appdef" carries an app definition from the admin's confirmation page to the approval.
-// "rchallenge" is the one-time value a local service signs to open a reverse connection.
+// "rchallenge" is the one-time value a local service signs to open a tunnel connection.
 export type TokenKind = "api" | "session" | "login" | "connect" | "consent" | "appdef" | "rchallenge";
 
 export const GATEWAY_TOKEN_TTL_SECONDS = 15 * 60;
@@ -60,8 +60,8 @@ export interface GatewayClaims extends JWTPayload {
   creds: Record<string, string>;
   // Set for a token issued to an app (docs/adr/0008): the proxy lets through only its ports.
   app?: string;
-  // Set for a call a local service made back over its reverse connection (docs/adr/0003 decision 5).
-  reverse?: string;
+  // Set for a call a local service made back over its tunnel connection (docs/adr/0003 decision 5).
+  tunnel?: string;
 }
 
 export function bearer(request: Request): string | null {
