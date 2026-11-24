@@ -3,7 +3,7 @@ import { counterIds, ManualClock } from '../../scripts/lib/clock';
 export { counterIds, ManualClock };
 import { DummyConnector, MemoryDummyBackend } from '../../src/connectors/dummy/connector';
 import type { Connectors } from '../../src/connectors/types';
-import { DEFAULT_POLICY, type AiIngestDecision, type IngestRequest, type Seed } from '../../src/domain';
+import { DEFAULT_POLICY, type AiIngestDecision, type IngestPolicy, type IngestRequest, type Seed } from '../../src/domain';
 import type { Decider } from '../../src/ingest/deciders';
 import { memoryRepo } from '../../src/store/memory';
 import type { Repo } from '../../src/store/types';
@@ -20,7 +20,7 @@ export class StubDecider implements Decider {
 
 export async function makeService(
   seed: Seed,
-  opts: { repo?: Repo; decide?: (req: IngestRequest) => AiIngestDecision; clock?: ManualClock } = {},
+  opts: { repo?: Repo; decide?: (req: IngestRequest) => AiIngestDecision; clock?: ManualClock; policy?: IngestPolicy } = {},
 ) {
   const repo = opts.repo ?? memoryRepo();
   await repo.master.replaceSeed(seed);
@@ -37,6 +37,6 @@ export async function makeService(
         throw new Error('unexpected AI decision');
       }),
   );
-  const service = new MurmurService({ repo, clock, newId: counterIds(), decider, connectors, policy: DEFAULT_POLICY });
+  const service = new MurmurService({ repo, clock, newId: counterIds(), decider, connectors, policy: opts.policy ?? DEFAULT_POLICY });
   return { service, repo, backend, clock, decider };
 }

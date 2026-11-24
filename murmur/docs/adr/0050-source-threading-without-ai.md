@@ -97,6 +97,8 @@ AI を使わないデプロイでは、件名は元の件名か本文の先頭�
 - 接続: source では `teams-chat`・`google-chat-dm`・`line` と、スレッドを使わない Google Chat のスペースを `conflict`（メッセージに `requires_ai`）で断る。取り込みは `MurmurService.ingest` が `unsupported` を返す
 - 件名: `ThreadRetitled`・`retitleThread`・`POST /threads/:id/title`。状態を持つソースの写し（`sourceKey` のあるもの）は `invalid`。スキル heddleway 0.32.0
 - 未確認: 未決 3（実物の `conversationId`）
+- 運用中のデプロイを source に切り替えるとき: Outlook・共有メールボックスの delta のリンクは、つないだときの `$select` を持ち続ける（Graph の delta の決まり）。この変更より前につないだリストは `conversationId` を取らないので、`sourceThread` のないメールが毎回新しいスレッドになる。切り替えるなら、その前にリストをつなぎ直す（外してつなぐ）。新しいデプロイと Gmail（`threadId` はいつも返る）は関係ない
+- セルフレビュー（同じ日、フレッシュなサブエージェント）の指摘で、同意の戻りの経路でも区切れないリストを断るようにし、保存先（メモリと D1）を通す取り込みのテスト（`test/shell/source-threading.test.ts`）を足した
 
 ## 実装の見通し
 

@@ -201,9 +201,7 @@ export class Connections {
   }
 
   private async connect(userId: string, credentialId: string | null, request: NonNullable<PendingAuthorization['request']>): Promise<ConnectResult> {
-    if (this.deps.threading === 'source' && NEEDS_AI.has(request.kind)) {
-      throw requiresAi(request.kind === 'line' ? 'LINE 公式アカウント' : request.kind === 'teams-chat' ? 'Teams のチャット' : 'Google Chat の DM・グループのチャット');
-    }
+    this.refuseNeedsAi(request);
     const dir = await this.deps.service.directory();
     if (!dir.seed.users.some((u) => u.id === userId)) throw new DomainError('forbidden', `user ${userId} はまだサインインしていない`);
     try {
@@ -273,6 +271,12 @@ export class Connections {
     }
   }
 
+  /** AI を使わないデプロイでつながないリスト（0050 の決定 3）。同意の戻り（AI のデプロイで始めた同意を切り替え後に終えた）でも断る */
+  private refuseNeedsAi(request: NonNullable<PendingAuthorization['request']>): void {
+    if (this.deps.threading !== 'source' || !NEEDS_AI.has(request.kind)) return;
+    throw requiresAi(request.kind === 'line' ? 'LINE 公式アカウント' : request.kind === 'teams-chat' ? 'Teams のチャット' : 'Google Chat の DM・グループのチャット');
+  }
+
   private kindOf(request: NonNullable<PendingAuthorization['request']>): UpstreamKind {
     switch (request.kind) {
       case 'jira':
@@ -297,6 +301,7 @@ export class Connections {
     credentialId: string | undefined,
     request: NonNullable<PendingAuthorization['request']>,
   ): Promise<ConnectResult> {
+    this.refuseNeedsAi(request);
     const kind = this.kindOf(request);
     const chosen = credentialId ? creds.find((c) => c.id === credentialId) : creds.length === 1 ? creds[0] : undefined;
     if (credentialId && !chosen) throw new DomainError('not_found', `credential ${credentialId} はゲートウェイの ${kind} の接続にない`);
