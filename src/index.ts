@@ -99,8 +99,9 @@ const ROUTES: Route[] = [
   ["GET", /^\/local-services\/([0-9a-f-]+)$/, (request, env, [id]) => settingsPage(request, env, id)],
   ["POST", /^\/local-services\/([0-9a-f-]+)$/, (request, env, [id]) => settingsSubmit(request, env, id)],
   ["GET", "/admin/local-services", adminLocalServices],
-  ["GET", /^\/features\/([a-z0-9][a-z0-9-]*)$/, (request, env, [name], ctx) => userPage(request, env, name, ctx)],
   ["GET", /^\/features\/([a-z0-9][a-z0-9-]*)\/consent$/, (request, env, [name]) => consentPage(request, env, name)],
+  // After the consent page: everything else under /features/<name> is the feature's pages for the user.
+  ["GET", /^\/features\/([a-z0-9][a-z0-9-]*)(?:\/([A-Za-z0-9_\/-]+))?$/, (request, env, [name, sub], ctx) => userPage(request, env, name, sub ?? "", ctx)],
   ["POST", /^\/features\/([a-z0-9][a-z0-9-]*)\/consent$/, (request, env, [name]) => consentSubmit(request, env, name)],
   ["POST", /^\/features\/([a-z0-9][a-z0-9-]*)\/disable$/, (request, env, [name]) => disableFeature(request, env, name)],
 ];

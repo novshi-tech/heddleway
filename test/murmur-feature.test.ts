@@ -105,23 +105,34 @@ describe("Murmur on", () => {
     expect(await v.text()).toBe("hello");
   });
 
-  it("shows the signed-in user the lists they are a member of, at /features/murmur (Murmur's 0048)", async () => {
+  it("shows the signed-in user what to do now and the lists they are a member of, under /features/murmur (Murmur's 0048, 0051)", async () => {
     // Not signed in: sign in first, then come back here.
     const anon = await call(on, "/features/murmur");
     expect(anon.headers.get("location")).toBe(`/login?next=${encodeURIComponent("/features/murmur")}`);
+    const anonThread = await call(on, "/features/murmur/threads/thr_1");
+    expect(anonThread.headers.get("location")).toBe(`/login?next=${encodeURIComponent("/features/murmur/threads/thr_1")}`);
 
     const cookie = await sessionCookie(bob);
     const home = await (await call(on, "/", { headers: { cookie } })).text();
-    expect(home).toContain('<a href="/features/murmur">参加中のリストを見る</a>');
+    expect(home).toContain('<a href="/features/murmur">今やること・参加中のリストを見る</a>');
 
     const off = await (await call(on, "/features/murmur", { headers: { cookie } })).text();
-    expect(off).toContain("<h1>参加中のリスト</h1>");
-    expect(off).toContain("まだどの共有リストのメンバーにもなっていません");
+    expect(off).toContain("<title>今やること - トピック索引</title>");
+    expect(off).toContain("<h1>今やること</h1>");
+    expect(off).toContain("まだどのリストのメンバーにもなっていません");
     expect(off).toContain("トピック索引は無効になっています");
+
+    const lists = await (await call(on, "/features/murmur/lists", { headers: { cookie } })).text();
+    expect(lists).toContain("<h1>参加中のリスト</h1>");
+    expect(lists).toContain('<a class="tab" href="/features/murmur/lists" aria-current="page">参加中のリスト</a>');
+    expect(lists).toContain("まだどの共有リストのメンバーにもなっていません");
 
     await vaultFor(env, bob).setConsent("murmur", true);
     const on_ = await (await call(on, "/features/murmur", { headers: { cookie } })).text();
     expect(on_).not.toContain("トピック索引は無効になっています");
+    // A topic the user cannot see, and paths the feature has no page for, are not found.
+    expect((await call(on, "/features/murmur/threads/thr_nope", { headers: { cookie } })).status).toBe(404);
+    expect((await call(on, "/features/murmur/elsewhere", { headers: { cookie } })).status).toBe(404);
     // Only features with a page have one.
     expect((await call(on, "/features/nothing", { headers: { cookie } })).status).toBe(404);
   });

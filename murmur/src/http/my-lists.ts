@@ -99,7 +99,7 @@ export function idpOf(userId: string): 'entra' | 'google' | null {
 }
 
 /** リストの種類。取り込みの状態があればそれ、なければデータソースの経路から */
-export function kindOf(list: ListView, connection: ConnectionView | undefined): ListKind | null {
+export function kindOf(list: { dataSource: Pick<ListView['dataSource'], 'origin'> }, connection: ConnectionView | undefined): ListKind | null {
   if (connection) return connection.kind;
   const o = list.dataSource.origin;
   if (!o) return null;

@@ -8,7 +8,10 @@ import type { Connectors } from './connectors/types';
 import { AiDecider } from './ingest/deciders';
 import { AnthropicLlm } from './ingest/llm';
 import { createApp, type ConnectorHttp } from './http/app';
-import { renderMyLists } from './http/my-lists';
+import { kindOf, renderMyLists } from './http/my-lists';
+import { renderNow, renderThread, tabs, type PageList } from './http/now';
+import type { ConnectionView } from './app/connections';
+import type { ListView } from './domain';
 import { d1Repo, type Db } from './store/d1';
 import { Connections } from './app/connections';
 import { GatewayAuthError, type GatewayPort, type UpstreamCall } from './ports/gateway';
@@ -82,10 +85,11 @@ export interface MurmurHandlers {
   /** 取り込みのキュー（同時実行 1）。失敗した仕事はキューが試し直す */
   queue(batch: MessageBatch<unknown>, ctx: ExecutionContext): Promise<void>;
   /**
-   * 本人の「参加中のリスト」の画面の本文（HTML の断片。0048）。ゲートウェイがサインインを確かめた本人の User ID で呼び、自分の枠に入れて出す。
-   * 読むのは Murmur の中だけで、上流は呼ばない
+   * 本人の画面の本文（HTML の断片。0048・0051）。ゲートウェイがサインインを確かめた本人の User ID と、画面の根（base、例 /features/murmur）の下の
+   * 経路（path。'' は今やること、'lists' は参加中のリスト、'threads/<ID>' はトピックの詳細）で呼び、自分の枠に入れて出す。
+   * 読むのは Murmur の中だけで、上流は呼ばない。ない経路・見えないトピックは null
    */
-  myLists(userId: string, ctx: ExecutionContext): Promise<string>;
+  userPage(userId: string, page: { path: string; base: string }, ctx: ExecutionContext): Promise<{ title: string; body: string } | null>;
 }
 
 const CHANNELS = ['email', 'slack', 'line', 'jira', 'bitbucket'] as const;
@@ -324,11 +328,28 @@ export function createMurmur(config: MurmurConfig, authenticate: GatewayPort['au
       return app.fetch(request);
     },
 
-    async myLists(userId, ctx) {
+    async userPage(userId, { path, base }, ctx) {
       const service = build(config);
-      const shell = buildConnectors(config, service, (p) => ctx.waitUntil(p));
-      const [data, connections] = await Promise.all([service.myLists(userId), shell ? shell.connections.list(userId) : Promise.resolve([])]);
-      return renderMyLists({ ...data, userId, connections, sharedServices: config.sharedServices ?? [] });
+      const now = systemClock.now();
+      if (path === '' || path === 'lists') {
+        const shell = buildConnectors(config, service, (p) => ctx.waitUntil(p));
+        const [data, connections] = await Promise.all([service.myLists(userId), shell ? shell.connections.list(userId) : Promise.resolve([])]);
+        if (path === 'lists') {
+          return { title: '参加中のリスト', body: `${tabs(base, 'lists')}\n${renderMyLists({ ...data, userId, connections, sharedServices: config.sharedServices ?? [] })}` };
+        }
+        const byDs = new Map(connections.map((c) => [c.data_source, c]));
+        const lists = data.lists.map((l) => pageList(l.dataSource, l.shared, byDs.get(l.dataSource.id)));
+        return { title: '今やること', body: renderNow({ base, name: data.name, lists, threads: data.threads, now }) };
+      }
+      const m = /^threads\/([A-Za-z0-9_-]{1,128})$/.exec(path);
+      if (!m) return null;
+      const data = await service.threadPage(userId, m[1]!);
+      if (!data) return null;
+      const list = pageList(data.view.dataSource, data.shared);
+      return {
+        title: data.view.thread.title,
+        body: renderThread({ base, thread: data.view.thread, list, assigneeNames: data.assigneeNames, counterparts: data.counterparts, linked: data.linked, entries: data.entries, now }),
+      };
     },
 
     async scheduled(ctx) {
@@ -360,4 +381,10 @@ export function createMurmur(config: MurmurConfig, authenticate: GatewayPort['au
       }
     },
   };
+}
+
+/** 画面に出すリスト（0051）。種類は取り込みの状態か、データソースの経路から */
+function pageList(ds: Pick<ListView['dataSource'], 'id' | 'name' | 'origin'>, shared: boolean, connection?: ConnectionView): PageList {
+  const o = ds.origin;
+  return { id: ds.id, name: ds.name, kind: kindOf({ dataSource: ds }, connection), shared, jiraSite: o?.kind === 'jira' ? o.site : null };
 }

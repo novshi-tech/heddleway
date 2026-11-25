@@ -167,6 +167,29 @@ pre { margin: 0 0 1rem; padding: .7rem 1rem; overflow-x: auto; background: var(-
 pre code { font-size: .8125rem; }
 .version { font-weight: 400; color: var(--muted); font-size: .875rem; }
 input[type=file] { display: block; margin-top: .4rem; font: inherit; color: var(--ink); }
+.tabs { display: flex; gap: .25rem; margin: 0 0 1.5rem; border-bottom: 1px solid var(--line); }
+.tab { padding: .45rem .9rem; margin-bottom: -1px; border: 1px solid transparent; border-radius: .4rem .4rem 0 0; color: var(--muted); font-weight: 600; font-size: .9375rem; text-decoration: none; }
+.tab[aria-current=page] { color: var(--ink); background: var(--panel); border-color: var(--line); border-bottom-color: var(--panel); }
+.summary { font-weight: 700; }
+.count { display: inline-block; min-width: 1.6em; padding: 0 .45rem; border-radius: 999px; background: var(--hover); color: var(--muted); font-size: .8125rem; text-align: center; }
+a.row-title { color: var(--ink); text-decoration: none; }
+a.row-title:hover { text-decoration: underline; }
+.badge.warn { background: var(--ok-bg); color: var(--ok); }
+details.more { margin: 2rem 0 1.5rem; }
+details.more > summary { cursor: pointer; font-weight: 700; margin-bottom: .75rem; }
+.badges { display: flex; flex-wrap: wrap; gap: .35rem; }
+.facts { list-style: none; margin: 0 0 1.25rem; padding: 0; color: var(--muted); font-size: .9375rem; }
+.facts li { overflow-wrap: anywhere; }
+.timeline { list-style: none; margin: 0 0 1.25rem; padding: 0; }
+.entry { margin: 0 0 .75rem; padding: .7rem 1rem; background: var(--panel); border: 1px solid var(--line); border-radius: .6rem; }
+.entry.outbound { border-left: 4px solid var(--action); }
+.entry.note { border-style: dashed; }
+.entry.op { background: transparent; border: 0; padding: .1rem 1rem; }
+.entry-meta { margin: 0 0 .3rem; color: var(--muted); font-size: .8125rem; overflow-wrap: anywhere; max-width: none; }
+.entry.op .entry-meta { margin: 0; }
+.entry-subject { margin: 0 0 .3rem; font-weight: 700; max-width: none; }
+.entry-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .9375rem; }
+.entry-more > summary { cursor: pointer; color: var(--action); font-size: .875rem; margin-top: .3rem; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: .6rem; padding: 1.5rem; }
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin-top: 1.25rem; }
 

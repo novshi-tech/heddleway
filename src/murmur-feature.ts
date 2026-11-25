@@ -102,7 +102,7 @@ export function murmurFeature(env: Env): Feature | null {
     consentText:
       "トピック索引は、あなたがつないだメール(Outlook・Gmail)・To Do・Google Tasks のタスク・Teams のチャネルとチャット・Google Chat のスペースとチャット・Jira・LINE 公式アカウント(業務システムが受けたもの)を読み取り、やりとりをトピックにまとめて、誰が担当か・誰に見てほしいと届いたかを記録します。エージェント(Claude など)が「いまやるべきこと」に答えるときに使います。読むのは、あなたがエージェントに頼んでつないだものだけで、送信や書き込みはしません。",
     consentCallbackPath: CALLBACK_PATH,
-    userPage: { linkText: "参加中のリストを見る", render: (userId, ctx) => murmur.myLists(userId, ctx) },
+    userPage: { linkText: "今やること・参加中のリストを見る", render: (userId, page, ctx) => murmur.userPage(userId, page, ctx) },
     fetch: (request, ctx) => murmur.fetch(request, ctx),
     scheduled: (_controller, ctx) => murmur.scheduled(ctx),
     queue: (batch, ctx) => murmur.queue(batch, ctx),
