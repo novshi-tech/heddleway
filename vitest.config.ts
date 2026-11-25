@@ -32,7 +32,7 @@ const SERVICES = {
   "graph-app": {
     display_name: "Microsoft Graph(アプリ)",
     base_url: "https://graph.microsoft.com",
-    auth: { type: "client_credentials", client: "murmur-app", token_url: "https://login.app.example/token", scope: "https://graph.microsoft.com/.default" },
+    auth: { type: "client_credentials", client: "topic-index-app", token_url: "https://login.app.example/token", scope: "https://graph.microsoft.com/.default" },
   },
   "app-unclient": {
     base_url: "https://api.app-unclient.example",
@@ -48,16 +48,16 @@ const SERVICES = {
     base_url: "https://basic.example",
     auth: { type: "basic", username_label: "メールアドレス" },
   },
-  murmur: {
+  "topic-index": {
     display_name: "トピック索引",
-    base_url: "https://murmur.example/api",
-    auth: { type: "identity", audience: "murmur" },
+    base_url: "https://topic-index.example/api",
+    auth: { type: "identity", audience: "topic-index" },
   },
 };
 
-// Murmur's tables, for the tests that turn the Murmur feature on (test/murmur-feature.test.ts).
-// The database is bound under another name, so the other tests run with Murmur off.
-const MURMUR_MIGRATIONS = await readD1Migrations("murmur/drizzle");
+// The topic index's tables, for the tests that turn the topic index feature on (test/topic-index-feature.test.ts).
+// The database is bound under another name, so the other tests run with the topic index off.
+const MURMUR_MIGRATIONS = await readD1Migrations("topic-index/drizzle");
 
 const IDP = "https://idp.test";
 const OIDC_ISSUER = `${IDP}/tenant/v2.0`;
@@ -150,7 +150,7 @@ async function oauthServer(
 }
 
 const APP_LOGIN = "https://login.app.example";
-const APP_CLIENT = { id: "murmur-app-client", secret: "murmur-app-secret" };
+const APP_CLIENT = { id: "topic-index-app-client", secret: "topic-index-app-secret" };
 const appTokens = new Map<string, number>();
 
 // A fake token endpoint for client credentials. Tokens are counted per scope, so tests can
@@ -187,15 +187,15 @@ function appDocument(request: Request): Response {
   if (!m) return new Response("not found", { status: 404 });
   const name = m[2];
   const variant = m[1] === "live" ? (liveVariants.get(name) ?? "plain") : m[1];
-  const ports: { service: string; method: string; path: string }[] = [{ service: "murmur", method: "GET", path: "^/threads$" }];
-  if (variant === "wide") ports.push({ service: "murmur", method: "POST", path: "^/notes$" });
+  const ports: { service: string; method: string; path: string }[] = [{ service: "topic-index", method: "GET", path: "^/threads$" }];
+  if (variant === "wide") ports.push({ service: "topic-index", method: "POST", path: "^/notes$" });
   const app: Record<string, unknown> = {
     name,
     description: "決まったリストを見張り、エージェントを起動します",
-    ports: variant === "unanchored" ? [{ service: "murmur", method: "GET", path: "/threads" }] : ports,
+    ports: variant === "unanchored" ? [{ service: "topic-index", method: "GET", path: "/threads" }] : ports,
     examples: {
-      allow: ["GET murmur /threads?since=2026-11-01T00:00:00Z"],
-      deny: variant === "wrong-example" ? ["GET murmur /threads"] : ["POST murmur /sent", "GET murmur /threads/thr_1"],
+      allow: ["GET topic-index /threads?since=2026-11-01T00:00:00Z"],
+      deny: variant === "wrong-example" ? ["GET topic-index /threads"] : ["POST topic-index /sent", "GET topic-index /threads/thr_1"],
     },
   };
   return Response.json({
@@ -236,8 +236,8 @@ async function upstream(request: Request): Promise<Response> {
 }
 
 export default defineConfig({
-  // murmur/ is its own package with its own tests (npm test in murmur/). See murmur/docs/adr/0023.
-  test: { exclude: [...configDefaults.exclude, "murmur/**"] },
+  // topic-index/ is its own package with its own tests (npm test in topic-index/). See topic-index/docs/adr/0023.
+  test: { exclude: [...configDefaults.exclude, "topic-index/**"] },
   plugins: [
     cloudflareTest({
       wrangler: { configPath: CONFIG },
@@ -262,8 +262,8 @@ export default defineConfig({
           OAUTH_MICROSOFT_CLIENT_SECRET: GRAPH.client.secret,
           OAUTH_GOOGLE_CLIENT_ID: DOCS.client.id,
           OAUTH_GOOGLE_CLIENT_SECRET: DOCS.client.secret,
-          OAUTH_MURMUR_APP_CLIENT_ID: APP_CLIENT.id,
-          OAUTH_MURMUR_APP_CLIENT_SECRET: APP_CLIENT.secret,
+          OAUTH_TOPIC_INDEX_APP_CLIENT_ID: APP_CLIENT.id,
+          OAUTH_TOPIC_INDEX_APP_CLIENT_SECRET: APP_CLIENT.secret,
         },
         outboundService: upstream,
       },

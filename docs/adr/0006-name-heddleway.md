@@ -1,7 +1,7 @@
 # 0006 製品の名前を Heddleway にする。説明の言葉は「チームのゲートウェイ」
 
 - 状態: 採用(2026-11-05、直樹とのディスカッション)。段取り 1〜5 を終えた(2026-11-05。リポジトリの改名は直樹が GitHub で行った)
-- 関連: [0004](0004-one-deployment-per-organization.md)(1 つのデプロイ = 1 つの組織)、[0005](0005-murmur-as-a-feature.md)(Murmur をゲートウェイの機能にする。決定 5 で製品の総称を保留した)、Murmur の [`murmur/docs/adr/0020`](../../murmur/docs/adr/0020-team-unit-self-hosted.md)(1 チームに 1 つ、ゲートウェイとは 1 対 1)
+- 関連: [0004](0004-one-deployment-per-organization.md)(1 つのデプロイ = 1 つの組織)、[0005](0005-murmur-as-a-feature.md)(Murmur をゲートウェイの機能にする。決定 5 で製品の総称を保留した)、Murmur の [`topic-index/docs/adr/0020`](../../topic-index/docs/adr/0020-team-unit-self-hosted.md)(1 チームに 1 つ、ゲートウェイとは 1 対 1)
 
 ## 背景
 
@@ -36,8 +36,8 @@
 
 ### 3. Murmur は Heddleway の機能の名前として残す
 
-- Murmur(チームの仕事の記憶)は 0005 のとおり Heddleway の機能の 1 つ。機能の名前・REST の経路(`/api/murmur/...`・`/murmur/...`)・`identity:murmur`・`murmur/` のディレクトリは変えない
-- Murmur の ADR の番号(`murmur/docs/adr/`)もそのまま続ける
+- Murmur(チームの仕事の記憶)は 0005 のとおり Heddleway の機能の 1 つ。機能の名前・REST の経路(`/api/murmur/...`・`/murmur/...`)・`identity:murmur`・`topic-index/` のディレクトリは変えない
+- Murmur の ADR の番号(`topic-index/docs/adr/`)もそのまま続ける
 
 ### 4. 変えるもの
 

@@ -50,7 +50,7 @@ describe("admin screens", () => {
     const page = await (await get("/admin/services")).text();
     expect(page).toContain("gmail");
     expect(page).toContain("組み込み");
-    expect(page).toContain("murmur");
+    expect(page).toContain("topic-index");
     expect(page).toContain("設定ファイル");
   });
 
@@ -184,26 +184,26 @@ describe("admin screens", () => {
       auth_type: "client_credentials",
       cc_token_url: "https://login.app.example/token",
       cc_scope: "https://graph.microsoft.com/.default",
-      cc_client_id: "murmur-app-client",
+      cc_client_id: "topic-index-app-client",
       cc_client_secret: "",
       // The OAuth 2.0 fieldset's inputs are sent too; they must not count.
       client_id: "other",
       client_secret: "other-secret",
     };
     expect(await (await post("/admin/services", fields)).text()).toContain("クライアントシークレットを入れてください");
-    expect((await post("/admin/services", { ...fields, cc_client_secret: "murmur-app-secret" })).status).toBe(303);
+    expect((await post("/admin/services", { ...fields, cc_client_secret: "topic-index-app-secret" })).status).toBe(303);
     forgetRegistry();
-    expect((await upstream(name)).client).toEqual({ id: "murmur-app-client", secret: "murmur-app-secret" });
+    expect((await upstream(name)).client).toEqual({ id: "topic-index-app-client", secret: "topic-index-app-secret" });
 
     const list = await (await get("/admin/services")).text();
     expect(list).toContain("OAuth 2.0(client credentials)");
     expect(list).toContain("Background の入口から使います");
     const edit = await (await get(`/admin/services/${name}`)).text();
     expect(edit).toContain(`value="https://login.app.example/token"`);
-    expect(edit).not.toContain("murmur-app-secret");
+    expect(edit).not.toContain("topic-index-app-secret");
     expect((await post(`/admin/services/${name}`, fields)).status).toBe(303);
     forgetRegistry();
-    expect((await upstream(name)).client?.secret).toBe("murmur-app-secret");
+    expect((await upstream(name)).client?.secret).toBe("topic-index-app-secret");
 
     expect(await (await get("/connections/new", "user-6")).text()).not.toContain(`/connections/new/${name}"`);
     expect((await get(`/connections/new/${name}`, "user-6")).status).toBe(404);
@@ -223,9 +223,9 @@ describe("admin screens", () => {
   });
 
   it("lets a definition in SERVICES win over one with the same name", async () => {
-    await post("/admin/services", headerService("murmur", "https://elsewhere.example"));
+    await post("/admin/services", headerService("topic-index", "https://elsewhere.example"));
     forgetRegistry();
-    expect((await upstream("murmur")).config.auth.type).toBe("identity");
+    expect((await upstream("topic-index")).config.auth.type).toBe("identity");
     expect(await (await get("/admin/services")).text()).toContain("設定ファイルの定義が優先されています");
   });
 });

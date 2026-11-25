@@ -4,7 +4,7 @@ import { html, type Html } from "./html";
 import { page } from "./layout";
 import { redirect, sameOrigin, session, type Session } from "./session";
 
-// The apps a user let into the gateway (Claude, Murmur, ...): each sign-in through
+// The apps a user let into the gateway (Claude, the topic index, ...): each sign-in through
 // /authorize is one grant. Revoking one cuts that app's access and refresh tokens.
 
 type GrantEnv = Env & { OAUTH_PROVIDER: OAuthHelpers };

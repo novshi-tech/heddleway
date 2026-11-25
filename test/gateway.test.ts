@@ -247,7 +247,7 @@ describe("proxy", () => {
 describe("identity upstreams", () => {
   async function verifyIdentity(token: string) {
     const keys = (await (await SELF.fetch(`${BASE}/.well-known/jwks.json`)).json()) as { keys: never[] };
-    return jwtVerify(token, createLocalJWKSet(keys), { issuer: BASE, audience: "murmur", algorithms: ["EdDSA"] });
+    return jwtVerify(token, createLocalJWKSet(keys), { issuer: BASE, audience: "topic-index", algorithms: ["EdDSA"] });
   }
 
   it("publishes only the public half of the identity key", async () => {
@@ -261,12 +261,12 @@ describe("identity upstreams", () => {
   });
 
   it("replaces the caller's authorization with the user's signed identity", async () => {
-    const res = await SELF.fetch(`${BASE}/api/murmur/tasks?filter=open`, {
-      headers: { authorization: `Bearer ${await apiToken(alice, { murmur: "identity" })}`, "x-murmur-identity": "forged" },
+    const res = await SELF.fetch(`${BASE}/api/topic-index/tasks?filter=open`, {
+      headers: { authorization: `Bearer ${await apiToken(alice, { "topic-index": "identity" })}`, "x-topic-index-identity": "forged" },
     });
     expect(res.status).toBe(200);
     const echoed = (await res.json()) as { url: string; headers: Record<string, string> };
-    expect(echoed.url).toBe("https://murmur.example/api/tasks?filter=open");
+    expect(echoed.url).toBe("https://topic-index.example/api/tasks?filter=open");
     const token = echoed.headers.authorization.replace(/^Bearer /, "");
     const { payload, protectedHeader } = await verifyIdentity(token);
     expect(payload.sub).toBe(alice);
@@ -276,11 +276,11 @@ describe("identity upstreams", () => {
 
   it("refuses a token whose credential for the service is not the identity", async () => {
     const cred = await addBoard(alice);
-    const res = await SELF.fetch(`${BASE}/api/murmur/tasks`, {
-      headers: { authorization: `Bearer ${await apiToken(alice, { murmur: cred.id })}` },
+    const res = await SELF.fetch(`${BASE}/api/topic-index/tasks`, {
+      headers: { authorization: `Bearer ${await apiToken(alice, { "topic-index": cred.id })}` },
     });
     expect(res.status).toBe(403);
-    const none = await SELF.fetch(`${BASE}/api/murmur/tasks`, { headers: { authorization: `Bearer ${await apiToken(alice, {})}` } });
+    const none = await SELF.fetch(`${BASE}/api/topic-index/tasks`, { headers: { authorization: `Bearer ${await apiToken(alice, {})}` } });
     expect(none.status).toBe(403);
   });
 
@@ -288,8 +288,8 @@ describe("identity upstreams", () => {
     const seen: Request[] = [];
     const bound = {
       ...env,
-      SERVICES: { murmur: { base_url: "https://murmur.internal/api", binding: "MURMUR", auth: { type: "identity", audience: "murmur" } } },
-      MURMUR: {
+      SERVICES: { "topic-index": { base_url: "https://topic-index.internal/api", binding: "TOPIC_INDEX", auth: { type: "identity", audience: "topic-index" } } },
+      TOPIC_INDEX: {
         fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
           seen.push(new Request(input, init));
           return Response.json({ ok: true });
@@ -297,19 +297,19 @@ describe("identity upstreams", () => {
       },
     } as unknown as Env;
     const res = await handleProxy(
-      new Request(`${BASE}/api/murmur/me`, { headers: { authorization: `Bearer ${await apiToken(bob, { murmur: "identity" })}` } }),
+      new Request(`${BASE}/api/topic-index/me`, { headers: { authorization: `Bearer ${await apiToken(bob, { "topic-index": "identity" })}` } }),
       bound,
       {} as ExecutionContext,
     );
     expect(res.status).toBe(200);
     expect(seen).toHaveLength(1);
-    expect(seen[0].url).toBe("https://murmur.internal/api/me");
+    expect(seen[0].url).toBe("https://topic-index.internal/api/me");
     const { payload } = await verifyIdentity(seen[0].headers.get("authorization")!.replace(/^Bearer /, ""));
     expect(payload.sub).toBe(bob);
   });
 
   it("does not store credentials for identity services", async () => {
-    expect(await vaultFor(env, alice).add(await upstream("murmur"), {})).toEqual({ error: "murmur needs no credential" });
+    expect(await vaultFor(env, alice).add(await upstream("topic-index"), {})).toEqual({ error: "topic-index needs no credential" });
   });
 });
 
@@ -332,10 +332,10 @@ describe("mcp tools", () => {
     const client = await connect(alice);
     const listed = JSON.parse(text(await client.callTool({ name: "list_credentials", arguments: {} })));
     // "unclient" has no OAuth client in the tests, so it is not offered.
-    expect(listed.services).toEqual(["freee", "gmail", "drive", "calendar", "docs", "analytics", "analytics-admin", "tasks", "chat", "board", "gbizinfo", "serper", "graph", "git-host", "basic-free", "murmur"]);
+    expect(listed.services).toEqual(["freee", "gmail", "drive", "calendar", "docs", "analytics", "analytics-admin", "tasks", "chat", "board", "gbizinfo", "serper", "graph", "git-host", "basic-free", "topic-index"]);
     expect(listed.credentials).toEqual([
       expect.objectContaining({ id: cred.id, service: "board" }),
-      { id: "identity:murmur", service: "murmur", label: "トピック索引(サインイン中のユーザー)" },
+      { id: "identity:topic-index", service: "topic-index", label: "トピック索引(サインイン中のユーザー)" },
     ]);
   });
 
@@ -347,7 +347,7 @@ describe("mcp tools", () => {
     for (const tool of tools) expect(tool.description).toContain(`"Acme"`);
     const gateway = { organization: "Acme", idp: "Microsoft Entra ID", url: BASE };
     expect(JSON.parse(text(await client.callTool({ name: "list_credentials", arguments: {} }))).gateway).toEqual(gateway);
-    const issued = JSON.parse(text(await client.callTool({ name: "issue_token", arguments: { credential_ids: ["identity:murmur"] } })));
+    const issued = JSON.parse(text(await client.callTool({ name: "issue_token", arguments: { credential_ids: ["identity:topic-index"] } })));
     expect(issued.gateway).toEqual(gateway);
   });
 
@@ -420,8 +420,8 @@ describe("mcp tools", () => {
 
     it("reaches identity services", async () => {
       const client = await connect(alice);
-      const out = JSON.parse((await call(client, "api_get", { credential_id: "identity:murmur", path: "/me" })).raw);
-      expect(out.body.url).toBe("https://murmur.example/api/me");
+      const out = JSON.parse((await call(client, "api_get", { credential_id: "identity:topic-index", path: "/me" })).raw);
+      expect(out.body.url).toBe("https://topic-index.example/api/me");
       expect(out.body.headers.authorization).toMatch(/^Bearer ey/);
     });
 
@@ -475,11 +475,11 @@ describe("mcp tools", () => {
     const cred = await addBoard(alice);
     const client = await connect(alice);
     const issued = JSON.parse(
-      text(await client.callTool({ name: "issue_token", arguments: { credential_ids: ["identity:murmur", cred.id] } })),
+      text(await client.callTool({ name: "issue_token", arguments: { credential_ids: ["identity:topic-index", cred.id] } })),
     );
     const claims = await verifyToken<{ creds: Record<string, string> }>(env.SIGNING_KEY, BASE, "api", issued.token);
-    expect(claims?.creds).toEqual({ murmur: "identity", board: cred.id });
-    const res = await SELF.fetch(`${issued.services.murmur}/me`, { headers: { authorization: `Bearer ${issued.token}` } });
+    expect(claims?.creds).toEqual({ "topic-index": "identity", board: cred.id });
+    const res = await SELF.fetch(`${issued.services["topic-index"]}/me`, { headers: { authorization: `Bearer ${issued.token}` } });
     expect(res.status).toBe(200);
 
     const notIdentity = await client.callTool({ name: "issue_token", arguments: { credential_ids: ["identity:board"] } });
@@ -572,7 +572,7 @@ describe("web ui", () => {
     expect(page).toContain(`href="/connections/new/board"`);
     expect(page).toContain(`href="/connections/new/gmail"`);
     expect(page).not.toContain(`href="/connections/new/unclient"`);
-    expect(page).not.toContain(`href="/connections/new/murmur"`);
+    expect(page).not.toContain(`href="/connections/new/topic-index"`);
     expect(page).toContain(`<script src="/assets/app.js" defer></script>`);
   });
 
@@ -589,7 +589,7 @@ describe("web ui", () => {
     expect(form).toContain(`action="/credentials"`);
     expect(form).toContain(`name="h:x-api-key"`);
     expect(await (await SELF.fetch(`${BASE}/connections/new/freee`, { headers: { cookie } })).text()).toContain(`action="/connect"`);
-    expect((await SELF.fetch(`${BASE}/connections/new/murmur`, { headers: { cookie } })).status).toBe(404);
+    expect((await SELF.fetch(`${BASE}/connections/new/topic-index`, { headers: { cookie } })).status).toBe(404);
     expect((await SELF.fetch(`${BASE}/connections/new/unclient`, { headers: { cookie } })).status).toBe(404);
     expect((await SELF.fetch(`${BASE}/connections/new/constructor`, { headers: { cookie } })).status).toBe(404);
   });

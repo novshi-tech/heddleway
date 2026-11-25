@@ -1,7 +1,7 @@
 import { OAuthProvider, type OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { authorizeCallback, authorizeGet, authorizePost, MCP_CALLBACK_PATH, MCP_SCOPE } from "./authorize";
 import { publicUrl } from "./config";
-import { features, withPath } from "./features";
+import { features, namesOf, withPath } from "./features";
 import { jwks, JWKS_PATH } from "./identity";
 import { mcpHandler } from "./mcp";
 import { API_PREFIX, handleProxy } from "./proxy";
@@ -28,7 +28,7 @@ import { adminPage as adminLocalServices, confirmRemove as confirmRemoveLocal, p
 import { login, LOGIN_CALLBACK_PATH, loginCallback, logout } from "./web/session";
 import { downloadPlugin, setup, SETUP_PATH } from "./web/setup";
 
-import "./murmur-feature";
+import "./topic-index-feature";
 
 export { Background } from "./background";
 export { Registry } from "./registry";
@@ -122,11 +122,14 @@ function route(method: string, pathname: string): { route: Route; params: string
 // A feature's public routes (webhooks, its own pages) live under `/<name>/`; its API only
 // behind the token proxy (`/api/<name>/...`), so `/<name>/api/` is not routed.
 function featureRoute(env: Env, pathname: string) {
+  // Former names too (docs/adr/0009): webhooks registered upstream keep their URL until renewed.
   for (const f of features(env)) {
-    const prefix = `/${f.name}`;
-    if (!pathname.startsWith(`${prefix}/`)) continue;
-    const rest = pathname.slice(prefix.length);
-    return rest === "/api" || rest.startsWith("/api/") ? null : { feature: f, path: rest };
+    for (const name of namesOf(f)) {
+      const prefix = `/${name}`;
+      if (!pathname.startsWith(`${prefix}/`)) continue;
+      const rest = pathname.slice(prefix.length);
+      return rest === "/api" || rest.startsWith("/api/") ? null : { feature: f, path: rest };
+    }
   }
   return null;
 }
@@ -178,7 +181,7 @@ export default {
   fetch(request, env, ctx) {
     return provider(env).fetch(request, env, ctx);
   },
-  // The daily cron purges expired grants; any other cron is for the features (Murmur's tick).
+  // The daily cron purges expired grants; any other cron is for the features (the topic index's tick).
   async scheduled(controller, env, ctx) {
     if (controller.cron === PURGE_CRON) {
       await provider(env).purgeExpiredData(env);
@@ -186,7 +189,7 @@ export default {
     }
     for (const f of features(env)) await f.scheduled?.(controller, ctx);
   },
-  // Queues belong to the features (Murmur's sync queue).
+  // Queues belong to the features (the topic index's sync queue).
   async queue(batch, env, ctx) {
     const own = features(env).filter((f) => f.queue);
     if (own.length === 0) {

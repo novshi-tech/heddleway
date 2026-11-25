@@ -129,14 +129,20 @@ export class UserVault extends DurableObject<Env> {
     return record;
   }
 
-  // Whether the user turned a feature on (src/features.ts). Off until they do.
-  async consented(feature: string): Promise<boolean> {
-    return (await this.ctx.storage.get<boolean>(`consent:${feature}`)) === true;
+  // Whether the user turned a feature on (src/features.ts). Off until they do. A consent recorded
+  // under one of the feature's former names counts (docs/adr/0009).
+  async consented(feature: string, formerNames: string[] = []): Promise<boolean> {
+    for (const name of [feature, ...formerNames]) {
+      if ((await this.ctx.storage.get<boolean>(`consent:${name}`)) === true) return true;
+    }
+    return false;
   }
 
-  async setConsent(feature: string, on: boolean): Promise<void> {
+  // Recorded under the feature's name only; any record under a former name goes either way.
+  async setConsent(feature: string, on: boolean, formerNames: string[] = []): Promise<void> {
     if (on) await this.ctx.storage.put(`consent:${feature}`, true);
     else await this.ctx.storage.delete(`consent:${feature}`);
+    for (const name of formerNames) await this.ctx.storage.delete(`consent:${name}`);
   }
 
   async remove(id: string): Promise<boolean> {

@@ -6,7 +6,7 @@
 //   npm run deploy -- <name> [wrangler deploy options]
 //   npm run secret -- <name> put <KEY>        (also list, delete)
 //   npm run tail -- <name> [--format json]
-//   npm run d1-migrate -- <name>             (Murmur's tables: wrangler d1 migrations apply MURMUR_DB --remote)
+//   npm run d1-migrate -- <name>             (the topic index's tables: wrangler d1 migrations apply MURMUR_DB --remote)
 //   node tools/wrangler.mjs <wrangler command> <name> [options]
 //
 // There is no wrangler.jsonc at the root, so a bare `wrangler deploy` fails
@@ -45,9 +45,9 @@ if (command === "deploy" || command === "versions") {
   if (built.status !== 0) process.exit(built.status ?? 1);
 }
 
-// Murmur (docs/adr/0005) is bundled from murmur/, which has its own dependencies.
-if ((command === "deploy" || command === "versions") && !existsSync(join(root, "murmur", "node_modules"))) {
-  console.error("murmur/node_modules is missing: run npm install at the repository root first");
+// The topic index (docs/adr/0005) is bundled from topic-index/, which has its own dependencies.
+if ((command === "deploy" || command === "versions") && !existsSync(join(root, "topic-index", "node_modules"))) {
+  console.error("topic-index/node_modules is missing: run npm install at the repository root first");
   process.exit(2);
 }
 

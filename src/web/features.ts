@@ -47,7 +47,7 @@ export async function consentSubmit(request: Request, env: Env, name: string): P
   const state = String(form.get("state") ?? "");
   if (!STATE.test(state)) return new Response("bad request", { status: 400 });
   if (form.get("decision") !== "allow") return redirect(back(f, { state, error: "access_denied" }));
-  await vaultFor(env, user.sub).setConsent(f.name, true);
+  await vaultFor(env, user.sub).setConsent(f.name, true, f.formerNames);
   console.log(JSON.stringify({ type: "feature_enabled", user: user.sub, feature: f.name }));
   return redirect(back(f, { state, code: await consentCode(env, f.name, user.sub) }));
 }
@@ -58,7 +58,7 @@ export async function disableFeature(request: Request, env: Env, name: string): 
   if (!f) return new Response("not found", { status: 404 });
   const user = await session(request, env);
   if (!user) return redirect("/login");
-  await vaultFor(env, user.sub).setConsent(f.name, false);
+  await vaultFor(env, user.sub).setConsent(f.name, false, f.formerNames);
   console.log(JSON.stringify({ type: "feature_disabled", user: user.sub, feature: f.name }));
   return redirect("/?disabled=1");
 }
@@ -70,9 +70,14 @@ export async function disableFeature(request: Request, env: Env, name: string): 
 export async function userPage(request: Request, env: Env, name: string, sub: string, ctx: ExecutionContext): Promise<Response> {
   const f = feature(env, name);
   if (!f?.userPage) return new Response("not found", { status: 404 });
+  // A link or bookmark under a former name (docs/adr/0009) moves to the current one.
+  if (name !== f.name) {
+    const url = new URL(request.url);
+    return new Response(null, { status: 301, headers: { location: `/features/${f.name}${sub ? `/${sub}` : ""}${url.search}` } });
+  }
   const user = await session(request, env);
   if (!user) return redirect(`/login?next=${encodeURIComponent(new URL(request.url).pathname)}`);
-  const on = await vaultFor(env, user.sub).consented(f.name);
+  const on = await vaultFor(env, user.sub).consented(f.name, f.formerNames);
   const result = await f.userPage.render(user.sub, { path: sub, base: `/features/${f.name}` }, ctx);
   if (!result) return new Response("not found", { status: 404 });
   return page(
@@ -91,7 +96,7 @@ export async function featureRows(env: Env, userId: string): Promise<Html | fals
   const vault = vaultFor(env, userId);
   const rows = await Promise.all(
     own.map(async (f) => {
-      const on = await vault.consented(f.name);
+      const on = await vault.consented(f.name, f.formerNames);
       return html`<li>
 <div class="row-main"><p class="row-title">${f.displayName}</p><p class="row-sub">${f.consentText}</p>${f.userPage && html`<p class="row-sub"><a href="/features/${f.name}">${f.userPage.linkText}</a></p>`}</div>
 <div class="row-actions">${on

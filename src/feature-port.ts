@@ -8,7 +8,7 @@ import {
   type ReadScope,
   type UpstreamCall,
   type UpstreamKind,
-} from "../murmur/src/ports/gateway";
+} from "../topic-index/src/ports/gateway";
 import { publicUrl, splitList } from "./config";
 import { randomToken } from "./crypto";
 import { IDENTITY_CREDENTIAL } from "./identity";
@@ -17,7 +17,7 @@ import { getUpstream } from "./services";
 import { signToken, verifyToken, type GatewayClaims } from "./tokens";
 import { vaultFor } from "./vault";
 
-// The gateway core's side of a feature's port (docs/adr/0005; Murmur's murmur/src/ports/gateway.ts).
+// The gateway core's side of a feature's port (docs/adr/0005; the topic index's topic-index/src/ports/gateway.ts).
 // Only the contract is imported from the feature, never its implementation.
 //
 // The feature gets functions, not secrets: upstream() keeps the user's credential inside the
@@ -31,6 +31,8 @@ export const CONSENT_CODE_TTL_SECONDS = 5 * 60;
 
 export interface FeaturePortOptions {
   feature: string;
+  // The feature's former names (src/features.ts): consent and tokens under them still count.
+  formerNames?: string[];
   // Per kind: the gateway service the feature reads and what it may call there. Fixed by the entry.
   kinds: Record<UpstreamKind, { service: string; scope: ReadScope }>;
 }
@@ -38,9 +40,10 @@ export interface FeaturePortOptions {
 export function featurePort(env: Env, opts: FeaturePortOptions): GatewayPort {
   const base = publicUrl(env);
   const { feature, kinds } = opts;
+  const formerNames = opts.formerNames ?? [];
   const vault = (userId: string) => vaultFor(env, userId);
   const requireConsent = async (userId: string) => {
-    if (!(await vault(userId).consented(feature))) throw new ConsentRequired();
+    if (!(await vault(userId).consented(feature, formerNames))) throw new ConsentRequired();
   };
 
   return {
@@ -54,7 +57,7 @@ export function featurePort(env: Env, opts: FeaturePortOptions): GatewayPort {
     // The stand's gateway token, as issued by issue_token for `identity:<feature>`.
     async authenticate(token) {
       const claims = await verifyToken<GatewayClaims>(env.SIGNING_KEY, base, "api", token);
-      return claims && claims.creds?.[feature] === IDENTITY_CREDENTIAL ? claims.sub : null;
+      return claims && [feature, ...formerNames].some((name) => claims.creds?.[name] === IDENTITY_CREDENTIAL) ? claims.sub : null;
     },
 
     async credentials(userId, kind): Promise<GatewayCredential[]> {
@@ -109,7 +112,7 @@ export function featurePort(env: Env, opts: FeaturePortOptions): GatewayPort {
       async complete({ userId, code, kind }) {
         const claims = await verifyToken<{ feature?: string }>(env.SIGNING_KEY, base, "consent", code);
         if (!claims || claims.feature !== feature || claims.sub !== userId) return "wrong_user";
-        if (!(await vault(userId).consented(feature))) return "wrong_user";
+        if (!(await vault(userId).consented(feature, formerNames))) return "wrong_user";
         return (await vault(userId).list()).some((c) => c.service === kinds[kind].service) ? "ok" : "no_credential";
       },
     },

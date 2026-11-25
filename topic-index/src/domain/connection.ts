@@ -1,0 +1,492 @@
+import type { CoreContext } from './context';
+import { sameAddress } from './comm';
+import { Directory, sameValue } from './directory';
+import type { AddressRef, DataSource, Seed, ServiceDataSource } from './entities';
+import { DomainError } from './errors';
+import { bindIdentity, createPersonalDataSource, type IdentityOutcome } from './people';
+import { connectSharedSpace, type SharedSpacePlan } from './shared';
+
+// 実行時のデータソースの作成（0024 の決定 3）。個人の箱は本人がゲートウェイの OAuth で本体に同意したあとに作る。
+// 作り方は 0030 の個人のリスト（createPersonalDataSource）と同じ: 読者は本人だけ、窓口のアドレスは持たず、
+// メールボックスのアドレスが本人の Contact に付いて「こちら」になる。マスタの書き換えはシェルの changeMaster が記録に残す。
+
+export interface MailboxInput {
+  userId: string;
+  /** ゲートウェイの資格情報（本人の graph の接続）の ID */
+  gatewayCredentialId: string;
+  /** メールボックスの持ち主の表示名（データソースの名前に使う） */
+  displayName: string;
+  /** 本人のアドレスとエイリアス。先頭が主のアドレスで、リストでのアイデンティティになる（Gmail は主のアドレスだけを渡す。0041 の決定 2） */
+  addresses: string[];
+  /** 個人の箱のサービス（経路）。省けば Outlook（0041 で Gmail を足した。作り方は同じ） */
+  service?: MailboxService;
+}
+
+export type MailboxService = 'graph-mail' | 'gmail';
+
+const MAILBOX_LABEL: Record<MailboxService, string> = { 'graph-mail': 'Outlook', gmail: 'Gmail' };
+
+export type MailboxPlan =
+  | { kind: 'exists'; dataSource: ServiceDataSource }
+  | { kind: 'created'; dataSource: ServiceDataSource; identity: IdentityOutcome };
+
+/**
+ * 同じ本人・同じ種類のメールボックスがあればそれを返し、なければマスタの下書き（draft）に作る。
+ * 同じメールボックスは、同じゲートウェイの接続か、同じ主のアドレスで見つける。ゲートウェイの接続を消して足し直すと
+ * 資格情報の ID が変わるので、主のアドレスが同じなら、データソースは作り直さず資格情報を新しい ID に付け替える（つなぎ直し）。
+ * エイリアスも本人の Contact に付ける（別の人のアドレスなら conflict）
+ */
+export function connectMailbox(draft: Seed, ctx: CoreContext, input: MailboxInput): MailboxPlan {
+  const service = input.service ?? 'graph-mail';
+  const label = MAILBOX_LABEL[service];
+  const user = draft.users.find((u) => u.id === input.userId);
+  if (!user) throw new DomainError('forbidden', `user ${input.userId} はまだサインインしていない`);
+
+  const values = dedupe(input.addresses.map((a) => a.trim()).filter((a) => a.includes('@')));
+  const mine = draft.dataSources.flatMap((ds) => {
+    // 共有メールボックス（0042）は同じ経路でも本人の箱ではない
+    if (ds.kind !== 'service' || ds.connector?.kind !== service || ds.shared || ds.connector.mailbox !== 'me') return [];
+    const cred = draft.credentialRefs.find((c) => c.id === ds.credentialRefId);
+    return cred?.principal.kind === 'user' && cred.principal.userId === input.userId ? [{ ds, cred }] : [];
+  });
+  const found =
+    mine.find((m) => m.cred.gatewayCredentialId === input.gatewayCredentialId) ??
+    (values[0] ? mine.find((m) => sameAddress(m.cred.address, { channel: 'email', value: values[0]! })) : undefined);
+  if (found) {
+    found.cred.gatewayCredentialId = input.gatewayCredentialId;
+    return { kind: 'exists', dataSource: found.ds };
+  }
+
+  if (values.length === 0) throw new DomainError('invalid', 'メールボックスのアドレスがわからない');
+  const name = input.displayName || user.name || values[0]!;
+
+  const created = createPersonalDataSource(
+    draft,
+    input.userId,
+    {
+      channel: 'email',
+      name: `${name} の ${label}`,
+      description: `${name} の個人のメールボックス。本人の同意で取り込む（読者は本人だけ）`,
+      identity: values[0]!,
+      gatewayCredentialId: input.gatewayCredentialId,
+    },
+    ctx,
+  );
+  for (const alias of values.slice(1)) bindIdentity(draft, input.userId, { channel: 'email', value: alias }, ctx);
+  const dataSource = draft.dataSources.find((d) => d.id === created.dataSourceId) as ServiceDataSource;
+  dataSource.connector = service === 'gmail' ? { kind: 'gmail', mailbox: 'me' } : { kind: 'graph-mail', mailbox: 'me', folders: ['inbox', 'sentitems'] };
+  return { kind: 'created', dataSource, identity: created.identity };
+}
+
+// ---- To Do（0039）: 本人のタスクのリスト ----
+
+export interface TaskListInput {
+  userId: string;
+  /** ゲートウェイの資格情報（本人の graph の接続）の ID */
+  gatewayCredentialId: string;
+  /** 持ち主の表示名 */
+  displayName: string;
+  /** 本人の主のアドレス。リストでのアイデンティティ（チャネル todo）になる */
+  address: string;
+  listId: string;
+  listName: string;
+  /** タスクのサービス（経路）。省けば To Do（0041 で Google Tasks を足した。作り方は同じ） */
+  service?: TaskService;
+}
+
+export type TaskService = 'graph-todo' | 'google-tasks';
+
+const TASK_SERVICE_LABEL: Record<TaskService, string> = { 'graph-todo': 'To Do', 'google-tasks': 'Google Tasks' };
+
+/**
+ * 本人の To Do・Google Tasks のタスクのリストを個人リストとして作る（同じリストがあればそれを返す）。
+ * To Do のリスト 1 つがトピック索引のリスト 1 つで、いくつでもつなげる（0039 の未決 2）。どのリストも同じ扱いで、特別なリストは置かない。
+ * 同じアカウントの 2 つめからは、最初のリストの資格情報を使い回す（資格情報はアカウントに 1 つ）
+ */
+export function connectTaskList(draft: Seed, ctx: CoreContext, input: TaskListInput): MailboxPlan {
+  const user = draft.users.find((u) => u.id === input.userId);
+  if (!user) throw new DomainError('forbidden', `user ${input.userId} はまだサインインしていない`);
+  const address = input.address.trim();
+  if (!address.includes('@')) throw new DomainError('invalid', 'アカウントのアドレスがわからない');
+  const service = input.service ?? 'graph-todo';
+  const label = TASK_SERVICE_LABEL[service];
+  // 本人のそのアカウントの資格情報（同じアカウントのリストで共有する）。ゲートウェイの接続を足し直して ID が変わったら付け替える
+  const cred = draft.credentialRefs.find(
+    (c) => c.principal.kind === 'user' && c.principal.userId === input.userId && sameAddress(c.address, { channel: 'todo', value: address }),
+  );
+  if (cred) cred.gatewayCredentialId = input.gatewayCredentialId;
+  const same = draft.dataSources.find(
+    (ds): ds is ServiceDataSource => ds.kind === 'service' && (ds.connector?.kind === 'graph-todo' || ds.connector?.kind === 'google-tasks') && ds.connector.kind === service && ds.connector.listId === input.listId && ds.credentialRefId === cred?.id,
+  );
+  if (same) {
+    if (same.connector?.kind === 'graph-todo' || same.connector?.kind === 'google-tasks') same.connector.listName = input.listName;
+    return { kind: 'exists', dataSource: same };
+  }
+  const name = input.displayName || user.name || address;
+  const connector = { kind: service, listId: input.listId, listName: input.listName };
+  const naming = { name: `${name} の ${label}（${input.listName}）`, description: `${name} の ${label} のタスクのリスト「${input.listName}」。本人の同意で取り込む（読者は本人だけ。0039・0041）` };
+  if (cred) {
+    const identity = bindIdentity(draft, input.userId, { channel: 'todo', value: address }, ctx);
+    const dataSource: ServiceDataSource = { kind: 'service', id: ctx.newId('ds'), channel: 'todo', ...naming, credentialRefId: cred.id, selfAddresses: [], group: false, connector };
+    draft.dataSources.push(dataSource);
+    const listId = ctx.newId('l');
+    draft.lists.push({ id: listId, dataSourceId: dataSource.id });
+    draft.listMembers.push({ listId, userId: input.userId });
+    return { kind: 'created', dataSource, identity };
+  }
+  const created = createPersonalDataSource(
+    draft,
+    input.userId,
+    { channel: 'todo', ...naming, identity: address, gatewayCredentialId: input.gatewayCredentialId },
+    ctx,
+  );
+  const dataSource = draft.dataSources.find((d) => d.id === created.dataSourceId) as ServiceDataSource;
+  dataSource.connector = connector;
+  return { kind: 'created', dataSource, identity: created.identity };
+}
+
+/** タスクのサービスの側でリストの名前が変わった（見回りで気づく）。データソースの名前と、写しの statusLabel に使う名前を直す */
+export function renameTaskList(draft: Seed, dataSourceId: string, listName: string): boolean {
+  const ds = draft.dataSources.find((d) => d.id === dataSourceId);
+  const kind = ds?.connector?.kind;
+  if (!ds || (kind !== 'graph-todo' && kind !== 'google-tasks') || ds.connector?.kind !== kind || ds.connector.listName === listName || !listName.trim()) return false;
+  const label = TASK_SERVICE_LABEL[kind];
+  const displayName = ds.name.split(` の ${label}（`)[0] || ds.name;
+  ds.connector.listName = listName;
+  ds.name = `${displayName} の ${label}（${listName}）`;
+  ds.description = `${displayName} の ${label} のタスクのリスト「${listName}」。本人の同意で取り込む（読者は本人だけ。0039・0041）`;
+  return true;
+}
+
+// ---- Jira（0034・0037）: プロジェクト単位の共有リスト ----
+
+const PROJECT_KEY = /^[A-Z][A-Z0-9_]*$/;
+
+export function jiraSpaceKey(cloudId: string, projectKey: string): string {
+  return `jira:${cloudId}/${projectKey}`;
+}
+
+/** 取り込む範囲。セキュリティレベル付きの課題は、プロジェクトを閲覧できても見えない人がいるので入れない（0037 の決定 3） */
+export function jiraProjectJql(projectKey: string): string {
+  return `project = ${projectKey} AND level IS EMPTY`;
+}
+
+export interface JiraProjectInput {
+  userId: string;
+  /** つなぐ人のゲートウェイの jira の接続 */
+  gatewayCredentialId: string;
+  cloudId: string;
+  /** サイトの URL と名前（accessible-resources） */
+  site: string;
+  siteName: string;
+  projectKey: string;
+  projectName: string;
+  /** つなぐ人の accountId（myself）。名乗り */
+  accountId: string;
+}
+
+/** Jira のプロジェクトの共有リストを作る（あればそれを返す）。読者は見回りでプロジェクトを閲覧できる人から写す */
+export function connectJiraProject(draft: Seed, ctx: CoreContext, input: JiraProjectInput): SharedSpacePlan {
+  if (!PROJECT_KEY.test(input.projectKey)) throw new DomainError('invalid', `project key ${input.projectKey} is invalid`);
+  return connectSharedSpace(draft, ctx, {
+    userId: input.userId,
+    gatewayCredentialId: input.gatewayCredentialId,
+    channel: 'jira',
+    spaceKey: jiraSpaceKey(input.cloudId, input.projectKey),
+    name: `${input.projectName}（Jira）`,
+    description: `${input.site} のプロジェクト ${input.projectKey} の課題（セキュリティレベル付きを除く）。読者はプロジェクトを閲覧できる人（0037）`,
+    identity: input.accountId,
+    connector: { kind: 'jira', cloudId: input.cloudId, site: input.site, jql: jiraProjectJql(input.projectKey), projectKey: input.projectKey },
+    group: true,
+  });
+}
+
+// ---- Teams（0036・0037）: チャネルの共有リスト ----
+
+export function teamsSpaceKey(teamId: string, channelId: string): string {
+  return `teams:${teamId}/${channelId}`;
+}
+
+/** Teams のアドレスの値。別のテナントのゲストと衝突しないよう、テナントを前に付ける */
+export function teamsAddress(tenantId: string, objectId: string): string {
+  return `${tenantId}/${objectId}`;
+}
+
+export interface TeamsChannelInput {
+  userId: string;
+  /** つなぐ人のゲートウェイの graph の接続 */
+  gatewayCredentialId: string;
+  teamId: string;
+  teamName: string;
+  channelId: string;
+  channelName: string;
+  /** つなぐ人の Entra のテナントとオブジェクト ID（名乗り） */
+  tenantId: string;
+  objectId: string;
+}
+
+/** Teams のチャネルの共有リストを作る（あればそれを返す）。読者は見回りでチャネルのメンバーから写す */
+export function connectTeamsChannel(draft: Seed, ctx: CoreContext, input: TeamsChannelInput): SharedSpacePlan {
+  return connectSharedSpace(draft, ctx, {
+    userId: input.userId,
+    gatewayCredentialId: input.gatewayCredentialId,
+    channel: 'teams',
+    spaceKey: teamsSpaceKey(input.teamId, input.channelId),
+    name: `${input.teamName} / ${input.channelName}（Teams）`,
+    description: `Teams のチーム ${input.teamName} のチャネル ${input.channelName}。読者はチャネルのメンバー（0036・0037）`,
+    identity: teamsAddress(input.tenantId, input.objectId),
+    connector: { kind: 'teams', teamId: input.teamId, channelId: input.channelId },
+    group: true,
+  });
+}
+
+// ---- Teams のチャット（0044）: 本人のチャット全体の個人リスト ----
+
+export interface TeamsChatsInput {
+  userId: string;
+  /** 本人のゲートウェイの graph の接続 */
+  gatewayCredentialId: string;
+  /** 本人の表示名（データソースの名前に使う） */
+  displayName: string;
+  /** 本人の Entra のテナントとオブジェクト ID。リストでのアイデンティティ（チャネル teams）になる */
+  tenantId: string;
+  objectId: string;
+}
+
+/**
+ * 本人の Teams のチャット全体を個人リストとして作る（あればそれを返す）。1 人に 1 つ（0044 の決定 1）。
+ * ゲートウェイの接続を消して足し直したら、資格情報を新しい ID に付け替える（つなぎ直し）
+ */
+export function connectTeamsChats(draft: Seed, ctx: CoreContext, input: TeamsChatsInput): MailboxPlan {
+  const user = draft.users.find((u) => u.id === input.userId);
+  if (!user) throw new DomainError('forbidden', `user ${input.userId} はまだサインインしていない`);
+  const found = draft.dataSources.find((ds): ds is ServiceDataSource => {
+    if (ds.kind !== 'service' || ds.connector?.kind !== 'teams-chat' || ds.shared) return false;
+    const cred = draft.credentialRefs.find((c) => c.id === ds.credentialRefId);
+    return cred?.principal.kind === 'user' && cred.principal.userId === input.userId;
+  });
+  if (found) {
+    const cred = draft.credentialRefs.find((c) => c.id === found.credentialRefId)!;
+    cred.gatewayCredentialId = input.gatewayCredentialId;
+    return { kind: 'exists', dataSource: found };
+  }
+  const name = input.displayName || user.name || input.objectId;
+  const created = createPersonalDataSource(
+    draft,
+    input.userId,
+    {
+      channel: 'teams',
+      name: `${name} の Teams のチャット`,
+      description: `${name} が参加している Teams の 1 対 1・グループのチャット。本人の同意で取り込む（読者は本人だけ。0044）`,
+      identity: teamsAddress(input.tenantId, input.objectId),
+      gatewayCredentialId: input.gatewayCredentialId,
+    },
+    ctx,
+  );
+  const dataSource = draft.dataSources.find((d) => d.id === created.dataSourceId) as ServiceDataSource;
+  dataSource.connector = { kind: 'teams-chat', tenantId: input.tenantId, objectId: input.objectId };
+  return { kind: 'created', dataSource, identity: created.identity };
+}
+
+// ---- Google Chat（0045）: スペースの共有リストと、本人の DM・グループの個人リスト ----
+
+export function googleChatSpaceKey(space: string): string {
+  return `google-chat:${space}`;
+}
+
+/** Chat の User の名前（users/<ID>）からアドレスの値（<ID>）を取る。users/<ID> の形でなければ null */
+export function googleChatAccount(userName: string | null | undefined): string | null {
+  const m = /^users\/([0-9]+)$/.exec(userName ?? '');
+  return m ? m[1]! : null;
+}
+
+/** ゲートウェイの User ID（Google でサインインしたとき google_<sub>）。Chat の users/<ID> の ID は sub と同じ（0045 の S0） */
+export function googleUserId(account: string): string {
+  return `google_${account}`;
+}
+
+/** ゲートウェイの User ID から Google のアカウントの ID（sub）を取る。Google でサインインしていなければ null */
+export function googleAccountOf(userId: string): string | null {
+  const m = /^google_([0-9]+)$/.exec(userId);
+  return m ? m[1]! : null;
+}
+
+export interface GoogleChatSpaceInput {
+  userId: string;
+  /** つなぐ人のゲートウェイの chat の接続 */
+  gatewayCredentialId: string;
+  /** スペースの名前（spaces/<ID>）と表示名 */
+  space: string;
+  spaceName: string;
+  threaded: boolean;
+  /** つなぐ人の Google のアカウントの ID（名乗り。sub） */
+  account: string;
+}
+
+/** Google Chat のスペースの共有リストを作る（あればそれを返す）。読者は見回りでスペースのメンバーから写す */
+export function connectGoogleChatSpace(draft: Seed, ctx: CoreContext, input: GoogleChatSpaceInput): SharedSpacePlan {
+  return connectSharedSpace(draft, ctx, {
+    userId: input.userId,
+    gatewayCredentialId: input.gatewayCredentialId,
+    channel: 'google-chat',
+    spaceKey: googleChatSpaceKey(input.space),
+    name: `${input.spaceName}（Google Chat）`,
+    description: `Google Chat のスペース ${input.spaceName}。読者はスペースのメンバー（0045・0037）`,
+    identity: input.account,
+    connector: { kind: 'google-chat', space: input.space, threaded: input.threaded },
+    group: true,
+  });
+}
+
+export interface GoogleChatDmInput {
+  userId: string;
+  /** 本人のゲートウェイの chat の接続 */
+  gatewayCredentialId: string;
+  /** 本人の表示名（データソースの名前に使う） */
+  displayName: string;
+  /** 本人の Google のアカウントの ID（sub）。リストでのアイデンティティ（チャネル google-chat）になる */
+  account: string;
+}
+
+/**
+ * 本人の Google Chat の DM・グループのチャット全体を個人リストとして作る（あればそれを返す）。1 人に 1 つ（0045 の決定 2）。
+ * ゲートウェイの接続を消して足し直したら、資格情報を新しい ID に付け替える（つなぎ直し）
+ */
+export function connectGoogleChatDms(draft: Seed, ctx: CoreContext, input: GoogleChatDmInput): MailboxPlan {
+  const user = draft.users.find((u) => u.id === input.userId);
+  if (!user) throw new DomainError('forbidden', `user ${input.userId} はまだサインインしていない`);
+  const found = draft.dataSources.find((ds): ds is ServiceDataSource => {
+    if (ds.kind !== 'service' || ds.connector?.kind !== 'google-chat-dm' || ds.shared) return false;
+    const cred = draft.credentialRefs.find((c) => c.id === ds.credentialRefId);
+    return cred?.principal.kind === 'user' && cred.principal.userId === input.userId;
+  });
+  if (found) {
+    const cred = draft.credentialRefs.find((c) => c.id === found.credentialRefId)!;
+    cred.gatewayCredentialId = input.gatewayCredentialId;
+    return { kind: 'exists', dataSource: found };
+  }
+  const name = input.displayName || user.name || input.account;
+  const created = createPersonalDataSource(
+    draft,
+    input.userId,
+    {
+      channel: 'google-chat',
+      name: `${name} の Google Chat のチャット`,
+      description: `${name} が入っている Google Chat の DM・グループのチャット。本人の同意で取り込む（読者は本人だけ。0045）`,
+      identity: input.account,
+      gatewayCredentialId: input.gatewayCredentialId,
+    },
+    ctx,
+  );
+  const dataSource = draft.dataSources.find((d) => d.id === created.dataSourceId) as ServiceDataSource;
+  dataSource.connector = { kind: 'google-chat-dm', account: input.account };
+  return { kind: 'created', dataSource, identity: created.identity };
+}
+
+// ---- 共有メールボックス（0042）: メンバーの委任で見回りで読む共有リスト ----
+
+export interface SharedMailboxInput {
+  userId: string;
+  /** つなぐ人のゲートウェイの graph の接続 */
+  gatewayCredentialId: string;
+  /** 共有メールボックスのアドレス（つなぐ人の委任で読めることはシェルが確かめる） */
+  mailbox: string;
+  /** つなぐ人の主のアドレス（本人の Graph の /me）。リストでの名乗りになる */
+  readerAddress: string;
+}
+
+/** 共有メールボックスのスペースのキー。委任の User.Read では箱のオブジェクト ID が読めないので、アドレスで決める */
+export function sharedMailboxSpaceKey(mailbox: string): string {
+  return `mailbox:${mailbox.trim().toLowerCase()}`;
+}
+
+/**
+ * 共有メールボックスを共有リストとしてつなぐ（0042 の決定 3）。箱に 1 つで、箱のアドレスが窓口。
+ * 本人の箱（つなぐ人のアドレス）や、ほかの User の Contact に付いたアドレス（だれかの個人の箱）はつながない
+ */
+export function connectSharedMailbox(draft: Seed, ctx: CoreContext, input: SharedMailboxInput): SharedSpacePlan {
+  const mailbox = input.mailbox.trim();
+  if (!/^[^@\s]+@[^@\s]+$/.test(mailbox)) throw new DomainError('invalid', `mailbox ${input.mailbox} がメールアドレスではない`);
+  const reader = input.readerAddress.trim();
+  if (!reader.includes('@')) throw new DomainError('invalid', 'つなぐ人のアドレスがわからない');
+  if (sameValue(mailbox, reader)) throw new DomainError('invalid', '本人の箱は共有メールボックスではない（Outlook をつなぐ）');
+  const address = { channel: 'email' as const, value: mailbox };
+  // 窓口のアドレスが同じ共有リスト（同じ箱）があればそれを使う
+  const existing = draft.dataSources.find((d): d is ServiceDataSource => d.kind === 'service' && !!d.shared && d.connector?.kind === 'graph-mail' && d.selfAddresses.some((a) => sameAddress(a, address)));
+  const dir = new Directory(draft);
+  const owner = dir.contactIdOfAddress(address, ctx.now);
+  if (!existing && owner && dir.contact(owner)?.userId) throw new DomainError('conflict', `${mailbox} はだれかの個人のアドレス（共有メールボックスではない）`);
+  return connectSharedSpace(draft, ctx, {
+    userId: input.userId,
+    gatewayCredentialId: input.gatewayCredentialId,
+    channel: 'email',
+    spaceKey: existing?.shared?.spaceKey ?? sharedMailboxSpaceKey(mailbox),
+    name: `${mailbox}（共有メールボックス）`,
+    description: `共有メールボックス ${mailbox}。読者は、自分の委任でこの箱を読めた人（0042）`,
+    identity: reader,
+    connector: { kind: 'graph-mail', mailbox, folders: ['inbox', 'sentitems'] },
+    group: false,
+    selfAddresses: [address],
+  });
+}
+
+/** 実行時に作ったメールボックスのデータソースの持ち主（個人の資格情報の本人） */
+export function connectorOwner(seed: Seed, ds: DataSource): string | null {
+  if (ds.kind !== 'service') return null;
+  const cred = seed.credentialRefs.find((c) => c.id === ds.credentialRefId);
+  return cred?.principal.kind === 'user' ? cred.principal.userId : null;
+}
+
+function dedupe(values: string[]): string[] {
+  const out: string[] = [];
+  for (const v of values) if (!out.some((o) => sameValue(o, v))) out.push(v);
+  return out;
+}
+
+// ---- LINE 公式アカウント（0049）: 受け口（業務システム）の組織に 1 つの共有リスト ----
+
+export function lineSpaceKey(organizationId: string): string {
+  return `line:${organizationId}`;
+}
+
+/** 公式アカウントの窓口のアドレス（0049 の決定 3）。受信はこの窓口宛て、受け口から送ったものはこの窓口から */
+export function lineOfficialAccount(organizationId: string): AddressRef {
+  return { channel: 'line', value: `oa:${organizationId}` };
+}
+
+/**
+ * 読者の名乗りのアドレス（0049 の決定 4）。読者は公式アカウントの中の人で、LINE の友だちではないので、LINE の userId は使わない。
+ * 受け口には本人のメンバーを返す口がないので、受け口の組織とトピック索引の User の組で 1 人に 1 つ
+ */
+export function lineReaderIdentity(organizationId: string, userId: string): AddressRef {
+  return { channel: 'line', value: `bm-next:${organizationId}:${userId}` };
+}
+
+export interface LineAccountInput {
+  userId: string;
+  /** つなぐ人のゲートウェイの受け口（bm-next）の接続 */
+  gatewayCredentialId: string;
+  /** 受け口の組織（そのつなぐ人の接続で読めた組織） */
+  organizationId: string;
+  organizationName: string;
+}
+
+/** 公式アカウントの共有リストがあればそれを返し、なければ作る（0049 の決定 3）。読者は自分の接続で読めた人（0042 と同じ） */
+export function connectLineAccount(draft: Seed, ctx: CoreContext, input: LineAccountInput): SharedSpacePlan {
+  const organizationId = input.organizationId.trim();
+  if (!organizationId) throw new DomainError('invalid', 'organization is required');
+  const name = input.organizationName.trim() || organizationId;
+  return connectSharedSpace(draft, ctx, {
+    userId: input.userId,
+    gatewayCredentialId: input.gatewayCredentialId,
+    channel: 'line',
+    spaceKey: lineSpaceKey(organizationId),
+    name: `${name}（LINE 公式アカウント）`,
+    description: `${name} の LINE 公式アカウント。読者は、自分の接続で受け口のメッセージを読めた人（0049）`,
+    identity: lineReaderIdentity(organizationId, input.userId).value,
+    connector: { kind: 'line', organizationId },
+    // 相手ごとの会話は会話のアンカー（conversationId）で分ける。グループ・トークルームはシグナルの conversationGroup で決まる
+    group: false,
+    selfAddresses: [lineOfficialAccount(organizationId)],
+  });
+}

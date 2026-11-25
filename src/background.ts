@@ -30,7 +30,7 @@ async function accessToken(service: string, auth: ClientCredentialsAuth, client:
   return request;
 }
 
-// For Workers on the same Cloudflare account (Murmur) that work when no one is signed in.
+// For Workers on the same Cloudflare account (the topic index) that work when no one is signed in.
 // A named entrypoint is not routed from the internet: only a Service Binding with
 // `"entrypoint": "Background"` reaches it, so arriving here proves the caller is a Worker
 // on this account, and no shared secret is needed. Requests are `/<service>/<upstream path>`

@@ -1,7 +1,7 @@
 # 0008 アプリには、使える口を絞った許可を出す
 
 - 状態: 採用(2026-11-13、直樹とのディスカッション。案は 2026-11-11)。2026-11-14 に、定義の配り方(決定 1)と照合の置き場(決定 2)を決め、未決の 2 つを閉じた。2026-11-14 に決定 1〜6 を実装した(末尾の実装の記録)。決定 7 は検知(ログ)まで。通知の仕組みは別に決める
-- 関連: [concept.md](../concept.md)(「ゲートウェイがやらないこと」のメソッドやパスによる認可)、[auth-design.md](../auth-design.md)、[0004](0004-one-deployment-per-organization.md)(1 つのデプロイ = 1 つの組織)、[0005](0005-murmur-as-a-feature.md)(機能の口。読める口は入口が固定する)、[background-access.md](../background-access.md)、Murmur の [`0022`](../../murmur/docs/adr/0022-murmur-federation.md)(組織の管理者から見た情報の脱出口)・[`0024`](../../murmur/docs/adr/0024-connectors-own-webhooks.md)(購読の管理)
+- 関連: [concept.md](../concept.md)(「ゲートウェイがやらないこと」のメソッドやパスによる認可)、[auth-design.md](../auth-design.md)、[0004](0004-one-deployment-per-organization.md)(1 つのデプロイ = 1 つの組織)、[0005](0005-murmur-as-a-feature.md)(機能の口。読める口は入口が固定する)、[background-access.md](../background-access.md)、Murmur の [`0022`](../../topic-index/docs/adr/0022-murmur-federation.md)(組織の管理者から見た情報の脱出口)・[`0024`](../../topic-index/docs/adr/0024-connectors-own-webhooks.md)(購読の管理)
 - 発端: novshi-tech/heddleway-calendar の `docs/adr/0001`(複数のデプロイのカレンダーを同期するツール。この許可が前提条件)。novshi-tech/heddleway-dispatcher の `docs/adr/0001`(トピック索引のリストを見張り、エージェントを起動するアプリ)も、この許可の上に立つ
 
 ## 背景
@@ -39,7 +39,7 @@
 
 サービスの単位だけでは足りない。Microsoft 365 は 1 つのサービス(`graph`)にメールも予定表もファイルも入っているので、「カレンダーだけ」をサービスでは切れない。
 
-- 口は「サービス、メソッド、パスの正規表現」の組の一覧。照合はパス(クエリの前)だけで行う。照合には、Murmur の読める口と同じ関数(`murmur/src/ports/gateway.ts` の `scopeTarget`)を使う。照合と送るパスがずれる細工(`..`、符号化した `.` `/` `\` など)を断る処理を 1 か所に保つ。正本は口の取り決めの側に置いたまま、中核が読む(Murmur は中核を import しない約束なので、中核に移すと Murmur に写しが要る)
+- 口は「サービス、メソッド、パスの正規表現」の組の一覧。照合はパス(クエリの前)だけで行う。照合には、Murmur の読める口と同じ関数(`topic-index/src/ports/gateway.ts` の `scopeTarget`)を使う。照合と送るパスがずれる細工(`..`、符号化した `.` `/` `\` など)を断る処理を 1 か所に保つ。正本は口の取り決めの側に置いたまま、中核が読む(Murmur は中核を import しない約束なので、中核に移すと Murmur に写しが要る)
 - 一覧にない呼び出しは、上流に送る前に断る
 - ボディの中身は今までどおり見ない(条件・リスクの 2)
 
@@ -113,7 +113,7 @@ concept.md の「メソッドやパスによる認可はしない」は、スタ
 
 2026-11-14 に実装した。
 
-- 定義と照合: `src/apps.ts`。メタデータ文書の `heddleway_app` を読み(`parseAppDefinition`)、口の照合は `murmur/src/ports/gateway.ts` の `scopeTarget` を使う(`appAllows`)。パスは `^/` で始まり `$` で終わるものだけを受け付ける。登録は Registry の `app:<name>` に、承認した定義を写して置く
+- 定義と照合: `src/apps.ts`。メタデータ文書の `heddleway_app` を読み(`parseAppDefinition`)、口の照合は `topic-index/src/ports/gateway.ts` の `scopeTarget` を使う(`appAllows`)。パスは `^/` で始まり `$` で終わるものだけを受け付ける。登録は Registry の `app:<name>` に、承認した定義を写して置く
 - 登録の画面: `src/web/admin-apps.ts`(`/admin/apps`)。URL の文書を取りに行き(https だけ、リダイレクトはたどらない、64 KB まで)、口・説明・例の照合の結果・今の登録との差分を見せる。承認のフォームは、見せた定義を署名したトークン(種類 `appdef`、15 分)で運び、取り直さない。同じ名前で別のクライアント ID のものと、例のとおりに照合できないものは承認できない
 - 同意: `src/authorize.ts`。スコープ `app:<name>` は、それだけで、登録したクライアント ID からのときだけ受け付け、アプリの同意の画面を出す。許可するスコープはフォームではなく保存された要求から決め、許可の `props` と `metadata` にアプリの名前を持たせる
 - 絞り: `src/mcp.ts` は、アプリの許可では `list_credentials` を口のサービスに絞り、`issue_token`・`api_get`・`api_request` で口の外のサービスの認証情報を断り、発行するトークンに `app` を入れる。`src/proxy.ts` は `app` のあるトークンを、呼び出しのたびに登録を読み直して照合する(機能への呼び出しも)。断ったものは `app_refused` のログに出し、通した呼び出しの操作ログに `app` を足す

@@ -20,26 +20,26 @@ jobs:
           cache: npm
           cache-dependency-path: |
             package-lock.json
-            murmur/package-lock.json
+            topic-index/package-lock.json
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      # The Worker bundles Murmur (docs/adr/0005): make sure it still builds.
+      # The Worker bundles the topic index (docs/adr/0005): make sure it still builds.
       - run: npx wrangler deploy --dry-run --outdir dist/dry-run -c wrangler.example.jsonc
 
 
-  murmur:
+  topic-index:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: murmur
+        working-directory: topic-index
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: murmur/package-lock.json
+          cache-dependency-path: topic-index/package-lock.json
       - run: npm ci
       - run: npm run typecheck
       - run: npm test

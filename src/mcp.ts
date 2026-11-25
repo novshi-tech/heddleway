@@ -3,7 +3,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { z } from "zod";
 import { appServices, getApp, type AppDefinition } from "./apps";
 import { organizationName, publicUrl } from "./config";
-import { feature, features } from "./features";
+import { currentName, feature, features, namesOf } from "./features";
 import { IDENTITY_CREDENTIAL, identityCredentialId, serviceOfIdentityCredential } from "./identity";
 import { callApi, DEFAULT_MAX_CHARS, MAX_MAX_CHARS } from "./mcp-api";
 import { getOwned, listOwned, tunnelCredentialId, serviceIdOfTunnelCredential } from "./tunnel";
@@ -63,7 +63,9 @@ export function buildServer(env: Env, props: McpProps, ctx: ExecutionContext): M
     }
     return { app: entry.definition };
   }
-  const reaches = (app: AppDefinition | null, service: string) => app === null || appServices(app).includes(service);
+  // A feature's former name (docs/adr/0009) stands for the feature, in the app's ports and in the request.
+  const reaches = (app: AppDefinition | null, service: string) =>
+    app === null || appServices(app).some((s) => currentName(env, s) === currentName(env, service));
 
   // Credential IDs to the credential each service uses, at most one per service.
   async function resolveCredentials(ids: string[]): Promise<{ creds: Record<string, string> } | { error: string }> {
@@ -72,8 +74,10 @@ export function buildServer(env: Env, props: McpProps, ctx: ExecutionContext): M
     if ("error" in current) return current;
     const services = await getServices(env);
     for (const id of new Set(ids)) {
-      const identityService = serviceOfIdentityCredential(id);
-      if (identityService !== null) {
+      const named = serviceOfIdentityCredential(id);
+      if (named !== null) {
+        // Issued under the feature's name, also when asked for by a former one.
+        const identityService = currentName(env, named);
         const known = feature(env, identityService) || (Object.hasOwn(services, identityService) && services[identityService].auth.type === "identity");
         if (!known) return { error: `unknown credential: ${id}` };
         if (!reaches(current.app, identityService)) return { error: `the app may not use service: ${identityService}` };
@@ -126,7 +130,7 @@ export function buildServer(env: Env, props: McpProps, ctx: ExecutionContext): M
       const identity = [
         ...own.map((f) => ({ id: identityCredentialId(f.name), service: f.name, label: `${f.displayName}(サインイン中のユーザー)` })),
         ...Object.entries(config)
-          .filter(([service, c]) => c.auth.type === "identity" && !own.some((f) => f.name === service))
+          .filter(([service, c]) => c.auth.type === "identity" && !own.some((f) => namesOf(f).includes(service)))
           .map(([service, c]) => ({ id: identityCredentialId(service), service, label: `${c.display_name}(サインイン中のユーザー)` })),
       ];
       const local = (await listOwned(env, props.userId)).map(({ service, status }) => ({

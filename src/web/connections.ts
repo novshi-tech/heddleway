@@ -66,7 +66,7 @@ function connectionRow(c: CredentialInfo, services: Services, duplicated = false
   const oauth = Object.hasOwn(services, c.service) && services[c.service].auth.type === "oauth2";
   // An OAuth connection can always be reconnected in place (same credential ID), e.g. after the
   // gateway asks for more permissions: deleting and adding it again would change the ID that
-  // other apps (Murmur's data sources) hold.
+  // other apps (the topic index's data sources) hold.
   const reconnect = (label: string, quiet: boolean) =>
     html`<form method="post" action="/connect"><input type="hidden" name="service" value="${c.service}"><input type="hidden" name="credential" value="${c.id}"><button${quiet ? new Html(' class="quiet"') : ''}>${label}</button></form>`;
   const status = c.needsReconnect
