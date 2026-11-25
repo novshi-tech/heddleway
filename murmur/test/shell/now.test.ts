@@ -70,26 +70,37 @@ describe('今やることの画面（0051）', () => {
 
     const html = renderNow({ ...base, threads });
     expect(html).toContain('<a class="tab" href="/features/murmur" aria-current="page">今やること</a>');
-    expect(html).toContain('担当 1 · タスク 1 · アテンション 2 · 返事待ち 1');
+    expect(html).toContain('<a href="#assigned">担当 <b>1</b></a><a href="#tasks">タスク <b>1</b></a><a href="#attention">アテンション <b>2</b></a><a href="#awaiting">返事待ち <b>1</b></a><a href="#triage">割当待ち <b>1</b></a>');
+    expect(html).toContain('<details class="sec" id="assigned" open>');
+    expect(html).toContain('<details class="sec" id="triage">');
     expect(html).toContain('href="/features/murmur/threads/t_jira"');
     expect(html).toContain('バックオフィス · 進行中');
     expect(html).toContain('<span class="badge broken">期限切れ 11/24</span>');
     expect(html).toContain('<span class="badge broken">返事の期限切れ 11/24</span>');
-    expect(html).toContain('相手: Carol（顧客）');
+    expect(html).toContain('野瀬 の Outlook · Carol（顧客）');
     expect(html).toContain('<span class="badge">あなた宛て</span>');
     expect(html).toContain('<span class="badge">リスト宛て</span>');
-    expect(html).toContain('最後の動き 今日 11:00');
-    expect(html).toContain('割当待ち <span class="count">1</span>');
+    expect(html).toContain('今日 11:00 · 全社チャネル');
+    
     expect(html).not.toContain('件名 t_none');
   });
 
   it('H3 タスクのリストがなければタスクの区分を出さず、リストがなければつなぎ方を出す', () => {
     const noTasks = renderNow({ ...base, lists: lists.filter((l) => l.kind !== 'todo') });
     expect(noTasks).not.toContain('自分のタスク');
-    expect(noTasks).toContain('担当 0 · アテンション 0 · 返事待ち 0');
+    expect(noTasks).toContain('<a href="#assigned">担当 <b>0</b></a><a href="#attention">');
+    expect(noTasks).toContain('<details class="sec" id="assigned"><summary>');
     expect(noTasks).toContain('担当のトピックはありません');
     const empty = renderNow({ ...base, lists: [] });
     expect(empty).toContain('まだどのリストのメンバーにもなっていません');
+  });
+
+  it('H3 1 つの区分に多いときは、15 件を出して残りを「ほか n 件」に畳む', () => {
+    const many = Array.from({ length: 20 }, (_, i) => thread(`t${String(i).padStart(2, '0')}`, 'ds_mail', { myTurn: ['named'] }));
+    const html = renderNow({ ...base, threads: many });
+    const [shown, rest] = html.split('<details class="rest"><summary>ほか 5 件</summary>');
+    expect(shown!.match(/class="item"/g)).toHaveLength(15);
+    expect(rest!.match(/class="item"/g)).toHaveLength(5);
   });
 
   it('H3 表示する値はエスケープする', () => {
