@@ -64,7 +64,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/gw_request.py POST murmur /sent --json '{"da
    - `merge_candidate`: そのアドレスは別の仮の連絡先(`ghostContactId`)に付いている。同じ人なら、ユーザーに確かめてから `POST /contacts/{自分の contactId}/merge` で `from` に仮の連絡先を渡してまとめる
 4. **共有リスト**(Jira のプロジェクト、Teams のチャネル、Google Chat のスペース、これから Slack のチャネル)は、スペースに 1 つ。そのスペースを読める人なら誰でもつなげ、メンバーはソースから自動で写る(Jira はプロジェクトを閲覧できる人のうち、自分の Jira をゲートウェイにつないでトピック索引を有効にした人。Teams はチャネルのメンバーのうち、Google Chat はスペースのメンバーのうち、このゲートウェイにサインインしたことのある人)。共有メールボックス・LINE 公式アカウントは、読める人がそれぞれ自分でつなぐとメンバーになる。メンバーになったリストで自分のアカウントを登録するなら `POST /lists/{list_id}/identity`
 5. タスクで追うなら、タスクのサービスのリストをつなぐ(下の「To Do をつなぐ」「Google Tasks をつなぐ」)。メモ(`add_note`)は個人リストのトピックに書くので、メール(Outlook・Gmail)かタスクのサービスをつないでから使える
-6. 終わったら、ユーザーに `<ゲートウェイ>/features/murmur`(ホームの「参加中のリストを見る」)を案内する。自分がメンバーのリストと取り込みの状態、まだつないでいないものを、ユーザーが自分で確かめられる。「どのリストに入っている?」と聞かれたときも、`GET /connections` で答えたうえでこの画面を案内してよい
+6. 終わったら、ユーザーに `<ゲートウェイ>/features/murmur/lists`(ホームの「今やること・参加中のリストを見る」の「参加中のリスト」のタブ)を案内する。自分がメンバーのリストと取り込みの状態、まだつないでいないものを、ユーザーが自分で確かめられる。「どのリストに入っている?」と聞かれたときも、`GET /connections` で答えたうえでこの画面を案内してよい
 
 ### Outlook をつなぐ
 
@@ -342,7 +342,7 @@ LINE 公式アカウントは、アカウント 1 つを 1 つの**共有リス�
 
 ## よくある流れ
 
-1. 「今日やることは?」「自分のタスクを見せて」: `GET /threads -q filter=my_turn`(自分の担当とアテンション)と `filter=mine`(自分の To Do / Google Tasks のタスク)。`myTurn` で理由(担当・アテンション・リスト宛て)を添えて見せる。アテンションだけのものは本文を読んで、タスクか FYI かを分けて伝え、FYI と決まったものはユーザーに確かめて `acknowledge` で外す。タスクと決まったものは、担当するか To Do / Google Tasks のタスクにするかをユーザーと決める。割当待ちは `filter=triage`、返事待ちは `filter=awaiting`、期限超過は `filter=overdue`。前回から何が動いたかは `-q since=<前回見た時刻>`
+1. 「今日やることは?」「自分のタスクを見せて」: `GET /threads -q filter=my_turn`(自分の担当とアテンション)と `filter=mine`(自分の To Do / Google Tasks のタスク)。`myTurn` で理由(担当・アテンション・リスト宛て)を添えて見せる。アテンションだけのものは本文を読んで、タスクか FYI かを分けて伝え、FYI と決まったものはユーザーに確かめて `acknowledge` で外す。タスクと決まったものは、担当するか To Do / Google Tasks のタスクにするかをユーザーと決める。割当待ちは `filter=triage`、返事待ちは `filter=awaiting`、期限超過は `filter=overdue`。前回から何が動いたかは `-q since=<前回見た時刻>`。一覧は会話の中で流れていくので、答えの終わりに、いつでも見返せる画面 `<ゲートウェイ>/features/murmur`(「今やること」。担当・タスク・アテンション・返事待ち・割当待ちと、各トピックの経過を本人の目線で見られる。参照だけ)を一言添える
 2. 「この件は私が担当する」: `POST /threads/{id}/claim`(Jira などはソースで担当者を変える)。引き継ぐなら `{"user_id": "..."}`、手放すなら `{"user_id": null}`
 3. 「この課題に着手する」: 上の「To Do / Google Tasks のタスクで追う」。To Do / Google Tasks のタスクを作る → `POST /sent` で記録して元のトピックと結ぶ → (チームに見せるなら)元のトピックを `claim`。以後、外に出したものは `source_thread_id` に To Do / Google Tasks のタスクのトピックを入れて記録し、経過はそのトピックにメモする
 4. 「この件をまとめて追いたい」: To Do / Google Tasks のタスクを作って `POST /sent` で記録する → `GET /threads/{id}` の `linkCandidates`(結ぶ候補)と、ユーザーの話から関係するトピックを選ぶ → `POST /threads/{タスクのトピックの id}/links`。LINE のトピック 1 つだけで済むなら、To Do に作らず担当するだけでよい。自分のメールのトピック 1 つなら、そこにメモを書くだけでよい

@@ -68,6 +68,7 @@ import {
   type Projections,
   type Seed,
   type ThreadFilter,
+  type TimelineEntry,
   type Viewer,
 } from '../domain';
 import type { Connectors } from '../connectors/types';
@@ -606,8 +607,54 @@ export class MurmurService {
       const ds = dir.dataSource(l.dataSource.id);
       return { ...l, readers: l.readers.map((r) => ({ ...r, name: displayName(r) })), shared: ds?.kind === 'service' && !!ds.shared };
     });
-    const threads = lists.length > 0 ? await this.listThreads(userId, { filter: 'open' }) : [];
+    const open = lists.length > 0 ? await this.listThreads(userId, { filter: 'open' }) : [];
+    // 相手の名前（今やることの画面。0051）。Contact の名前か、解決できなかったアドレスそのまま
+    const threads = open.map((t) => ({
+      ...t,
+      counterparts: [...t.counterpartContactIds.map((id) => contactName(dir, id)).filter((n) => n !== ''), ...t.counterpartAddresses.map((a) => a.value)],
+    }));
     return { name: dir.user(userId)?.name ?? '', lists, threads };
+  }
+
+  /**
+   * 本人の画面のトピックの詳細の材料（0051）。見えなければ null。名前はここで解決し、画面には文字列だけを渡す。
+   * User を作らない（myLists と同じ）
+   */
+  async threadPage(userId: string, threadId: string) {
+    const { viewer, dir } = await this.viewer(userId);
+    if (viewer.dataSourceIds.length === 0) return null;
+    const { p } = await this.threadScope({ threadIds: [threadId], links: true, candidates: false });
+    const view = getThreadView(dir, viewer, p, threadId);
+    if (!view) return null;
+    const userName = (id: string | null | undefined) => (id ? dir.user(id)?.name || '(呼び方なし)' : '');
+    const addressName = (ref: AddressRef) => {
+      const cid = dir.contactIdOfAddress(ref);
+      const c = cid ? dir.contact(cid) : undefined;
+      if (!c) return ref.value;
+      return (c.userId ? dir.user(c.userId)?.name : '') || c.name || ref.value;
+    };
+    const t = view.thread;
+    const assigneeNames = t.assignee
+      ? [...t.assignee.userIds.map(userName), ...t.assignee.contactIds.map((id) => contactName(dir, id) || id), ...t.assignee.addresses.map((a) => a.value)]
+      : [];
+    const counterparts = [...t.counterpartContactIds.map((id) => contactName(dir, id)).filter((n) => n !== ''), ...t.counterpartAddresses.map((a) => a.value)];
+    const titleOf = (id: string) => (id === t.id ? null : (view.linked.find((l) => l.threadId === id)?.title ?? null));
+    const entries = view.timeline.map((e) => {
+      const base = { at: e.at, kind: e.kind, fromLinked: titleOf(e.threadId) };
+      if (e.signal) {
+        const s = e.signal;
+        return {
+          ...base,
+          signal: { direction: s.direction, from: addressName(s.from), to: s.to.map(addressName), subject: s.subject, body: s.body, attachments: s.attachments.length },
+        };
+      }
+      if (e.note) return { ...base, note: { body: e.note.body, author: e.note.author.kind === 'agent' ? `${e.note.author.name}(エージェント)` : userName(e.actorUserId) } };
+      return { ...base, text: entryText(e, userName, (id) => titleOf(id) ?? p.threads[id]?.title ?? null) };
+    });
+    const dsName = (id: string) => dir.dataSource(id)?.name ?? id;
+    const linked = view.linked.map((l) => ({ id: l.threadId, title: l.title, listName: dsName(l.dataSourceId), myTurn: l.myTurn, dismissed: l.dismissed }));
+    const ds = dir.dataSource(t.dataSourceId);
+    return { view, shared: ds?.kind === 'service' && !!ds.shared, assigneeNames, counterparts, linked, entries };
   }
 
   async getList(userId: string, listId: string) {
@@ -615,5 +662,54 @@ export class MurmurService {
     const view = getListView(dir, viewer, listId);
     if (!view) throw new DomainError('not_found', `list ${listId} not found`);
     return view;
+  }
+}
+
+/** Contact の名前。名前がアドレスそのまま（呼び方のない人。people.ts）なら空 */
+function contactName(dir: Directory, contactId: string): string {
+  const c = dir.contact(contactId);
+  if (!c) return '';
+  if (c.userId) {
+    const own = dir.user(c.userId)?.name;
+    if (own) return own;
+  }
+  return dir.addressesOfContact(c.id).some((a) => a.value === c.name) ? '' : c.name;
+}
+
+/** 本人の画面のタイムラインの、シグナルとメモ以外の 1 行（0051） */
+function entryText(e: TimelineEntry, userName: (id: string | null | undefined) => string, threadTitle: (id: string) => string | null): string {
+  const who = userName(e.actorUserId);
+  const by = who ? `${who}が` : '';
+  switch (e.kind) {
+    case 'claimed':
+      return e.userId ? (e.userId === e.actorUserId ? `${by}担当した` : `${by}${userName(e.userId)}を担当にした`) : `${by}担当を外した`;
+    case 'acknowledged':
+      return `${by}アテンションを外した`;
+    case 'dismissed':
+      return `${by}片付けた${e.reason ? `(${e.reason})` : ''}`;
+    case 'reopened':
+      return `${by}再開した`;
+    case 'retitled':
+      return `${by}件名を「${e.title ?? ''}」にした`;
+    case 'linked':
+    case 'unlinked': {
+      const other = e.otherThreadId ? threadTitle(e.otherThreadId) : null;
+      return `${by}${other ? `「${other}」を` : 'トピックを'}${e.kind === 'linked' ? '関連づけた' : '関連づけから外した'}`;
+    }
+    case 'mirrored': {
+      const f = e.fields ?? {};
+      const parts = [
+        f.closed === true ? '完了' : f.closed === false ? '未完了に戻った' : null,
+        f.statusLabel ? `状態「${f.statusLabel}」` : null,
+        f.title ? `件名「${f.title}」` : null,
+        f.due !== undefined ? (f.due ? `期限 ${f.due}` : '期限なし') : null,
+        f.holders !== undefined ? '担当者の変更' : null,
+      ].filter((s): s is string => s !== null);
+      return `ソースの変更${parts.length > 0 ? `: ${parts.join('、')}` : ''}`;
+    }
+    case 'overdue':
+      return '返事の期限を過ぎた';
+    default:
+      return e.kind;
   }
 }

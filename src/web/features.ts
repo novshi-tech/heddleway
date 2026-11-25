@@ -66,19 +66,21 @@ export async function disableFeature(request: Request, env: Env, name: string): 
 // A feature's page for the signed-in user (Feature.userPage). The feature renders the body for
 // the user the session names; turning the feature off does not hide it, since it reads only
 // what the feature already holds (it calls no upstream), and the user may want to see it first.
-export async function userPage(request: Request, env: Env, name: string, ctx: ExecutionContext): Promise<Response> {
+// The path under the root (`sub`, '' for the root) is the feature's to interpret.
+export async function userPage(request: Request, env: Env, name: string, sub: string, ctx: ExecutionContext): Promise<Response> {
   const f = feature(env, name);
   if (!f?.userPage) return new Response("not found", { status: 404 });
   const user = await session(request, env);
   if (!user) return redirect(`/login?next=${encodeURIComponent(new URL(request.url).pathname)}`);
   const on = await vaultFor(env, user.sub).consented(f.name);
-  const body = await f.userPage.render(user.sub, ctx);
+  const result = await f.userPage.render(user.sub, { path: sub, base: `/features/${f.name}` }, ctx);
+  if (!result) return new Response("not found", { status: 404 });
   return page(
-    f.displayName,
+    result.title === f.displayName ? f.displayName : `${result.title} - ${f.displayName}`,
     html`${masthead(env, user)}
-<a class="back" href="/">← つないだサービス</a>
+${sub === "" && html`<a class="back" href="/">← つないだサービス</a>`}
 ${!on && html`<p class="notice" role="status">${f.displayName}は無効になっています。新しいやりとりは取り込まれません。エージェント(Claude など)に頼んでつなぐと、有効にする画面に案内されます。</p>`}
-${new Html(body)}`,
+${new Html(result.body)}`,
   );
 }
 
