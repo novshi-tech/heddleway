@@ -138,7 +138,8 @@ describe('トピックの詳細（0051）', () => {
 
     const alice = await service.threadPage('u_alice', threadId);
     expect(alice?.view.thread.title).toBe('雨漏り');
-    expect(alice?.entries[0]?.signal?.from).toBe('Carol（顧客）');
+    const first = alice?.entries[0];
+    expect(first && 'signal' in first ? first.signal.from : null).toBe('Carol（顧客）');
     expect(alice?.counterparts).toEqual(['Carol（顧客）']);
 
     expect(await service.threadPage('u_eve', threadId)).toBeNull();
