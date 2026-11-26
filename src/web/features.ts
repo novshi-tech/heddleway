@@ -77,8 +77,11 @@ export async function userPage(request: Request, env: Env, name: string, sub: st
   }
   const user = await session(request, env);
   if (!user) return redirect(`/login?next=${encodeURIComponent(new URL(request.url).pathname)}`);
-  const on = await vaultFor(env, user.sub).consented(f.name, f.formerNames);
-  const result = await f.userPage.render(user.sub, { path: sub, base: `/features/${f.name}` }, ctx);
+  // 同意の確かめ（Durable Object）と本文の材料（D1）は別々に待たずに並べる
+  const [on, result] = await Promise.all([
+    vaultFor(env, user.sub).consented(f.name, f.formerNames),
+    f.userPage.render(user.sub, { path: sub, base: `/features/${f.name}` }, ctx),
+  ]);
   if (!result) return new Response("not found", { status: 404 });
   return page(
     result.title === f.displayName ? f.displayName : `${result.title} - ${f.displayName}`,

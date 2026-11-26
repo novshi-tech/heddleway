@@ -370,6 +370,10 @@ export class D1ProjectionStore implements ProjectionStore {
     const listed = results.flat().map((r) => r.id);
     for (const r of results.flat()) out.threads[r.id] = r.data as Thread;
     await this.addThreads(out, listed.flatMap((id) => out.threads[id]!.links.map((l) => l.threadId)));
+    if (req.candidates === false) {
+      for (const id of Object.keys(out.threads)) out.keys[id] = [];
+      return out;
+    }
     const listedSet = new Set(listed);
     const mineRows = await this.keysOfThreads(listed);
     for (const id of listed) out.keys[id] = [];

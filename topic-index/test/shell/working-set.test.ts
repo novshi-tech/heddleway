@@ -57,8 +57,8 @@ describe.each(listScenarios())('H1 作業範囲（D1）は selectWorkingSet と�
       }
       const allDs = [...new Set(Object.values(full.threads).map((t) => t.dataSourceId))];
       for (const dataSourceIds of [allDs, allDs.slice(0, 1), []]) {
-        for (const openOnly of [true, false]) {
-          const req = { dataSourceIds, openOnly };
+        for (const [openOnly, candidates] of [[true, undefined], [false, undefined], [true, false]] as const) {
+          const req = { dataSourceIds, openOnly, ...(candidates === undefined ? {} : { candidates }) };
           expect(canonicalJson(await run.repo.projections.listScope!(req)), JSON.stringify(req)).toBe(canonicalJson(selectListScope(full, req)));
         }
       }
