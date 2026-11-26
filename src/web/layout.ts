@@ -83,10 +83,16 @@ input[type=text], input[type=password], input[type=url] {
 form { margin: 0; }
 
 [hidden] { display: none !important; }
-.masthead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem; margin-bottom: 2rem; padding-bottom: .9rem; border-bottom: 1px solid var(--line); }
+.masthead { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; padding-bottom: .75rem; border-bottom: 1px solid var(--line); }
 .masthead .home { font-weight: 700; color: var(--ink); text-decoration: none; }
-.who { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; color: var(--muted); font-size: .875rem; }
-.who button { padding: .3rem .8rem; font-size: .8125rem; }
+.menu > summary { display: flex; align-items: center; gap: .35rem; max-width: 12rem; padding: .3rem .7rem; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--ink); font-size: .8125rem; cursor: pointer; list-style: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.menu > summary::-webkit-details-marker { display: none; }
+.menu > summary::after { content: "▾"; color: var(--muted); font-size: .7rem; }
+.menu-list { position: absolute; right: 0; top: calc(100% - .25rem); z-index: 10; display: flex; flex-direction: column; min-width: 13rem; padding: .35rem; background: var(--panel); border: 1px solid var(--line); border-radius: .5rem; box-shadow: 0 6px 24px rgba(0, 0, 0, .12); }
+.menu-list a, .menu-list button { display: block; width: 100%; margin: 0; padding: .55rem .75rem; border: 0; border-radius: .35rem; background: none; color: var(--ink); font: inherit; font-size: .875rem; font-weight: 400; text-align: left; text-decoration: none; cursor: pointer; }
+.menu-list a:hover, .menu-list button:hover { background: var(--hover); }
+.menu-list form { margin: .25rem 0 0; padding-top: .25rem; border-top: 1px solid var(--line); }
+.menu-head { margin: .35rem .75rem .15rem; color: var(--muted); font-size: .6875rem; }
 
 a.button {
   display: inline-block;
@@ -150,7 +156,6 @@ textarea {
 .header-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 0 .75rem; }
 .error { max-width: none; padding: .7rem 1rem; border-radius: .5rem; background: var(--alert-bg); color: var(--alert); font-weight: 600; }
 a.button.danger-link { color: var(--alert); border-color: var(--alert); margin-left: auto; }
-.who a { font-size: .875rem; }
 
 .account { margin-top: 2.5rem; color: var(--muted); font-size: .8125rem; }
 .account summary { cursor: pointer; width: max-content; }
@@ -177,6 +182,9 @@ a.row-title:hover { text-decoration: underline; }
 
 /* A dense list of items (the topic index's "now" page): one tappable row per item, title up to two lines, one line of meta. */
 .now .tabs { margin-bottom: 1rem; }
+.tabs { align-items: flex-end; }
+.tabs-note { margin-left: auto; padding: 0 .25rem .45rem; color: var(--muted); font-size: .75rem; white-space: nowrap; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .now-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .75rem; margin-bottom: .5rem; }
 .now-head h1 { font-size: 1.375rem; margin: 0; }
 .now-sub { margin: 0; color: var(--muted); font-size: .8125rem; }

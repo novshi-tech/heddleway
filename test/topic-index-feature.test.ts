@@ -124,12 +124,12 @@ describe("The topic index on", () => {
 
     const off = await (await call(on, "/features/topic-index", { headers: { cookie } })).text();
     expect(off).toContain("<title>今やること - トピック索引</title>");
-    expect(off).toContain("<h1>今やること</h1>");
+    expect(off).toContain("<h1 class=\"sr-only\">今やること</h1>");
     expect(off).toContain("まだどのリストのメンバーにもなっていません");
     expect(off).toContain("トピック索引は無効になっています");
 
     const lists = await (await call(on, "/features/topic-index/lists", { headers: { cookie } })).text();
-    expect(lists).toContain("<h1>参加中のリスト</h1>");
+    expect(lists).toContain("<h1 class=\"sr-only\">参加中のリスト</h1>");
     expect(lists).toContain('<a class="tab" href="/features/topic-index/lists" aria-current="page">参加中のリスト</a>');
     expect(lists).toContain("まだどの共有リストのメンバーにもなっていません");
 

@@ -37,9 +37,12 @@ function addable(directory: Directory): [string, ServiceConfig][] {
   return Object.entries(directory.services).filter(([name, config]) => config.auth.type !== "identity" && directory.available(name));
 }
 
+// The top bar: the home link and one menu (the user's name) with everything else, so the bar stays one short line on a phone.
 export function masthead(env: Env, user: Session): Html {
   return html`<header class="masthead"><a class="home" href="/">Heddleway · ${organizationName(env)}</a>
-<div class="who"><a href="/connections">つないだサービス</a><a href="/setup">Claude につなぐ</a>${isAdmin(env, user) && html`<a href="/admin/services">接続先の管理</a><a href="/admin/apps">アプリの管理</a>${tunnelEnabled(env) && html`<a href="/admin/local-services">ローカルサービスの管理</a>`}<a href="/admin/plugins">プラグインの配布</a>`}<span>${user.name}</span><form method="post" action="/logout"><button class="quiet">サインアウト</button></form></div></header>`;
+<details class="menu"><summary>${user.name}</summary>
+<nav class="menu-list"><a href="/connections">つないだサービス</a><a href="/setup">Claude につなぐ</a>${isAdmin(env, user) && html`<p class="menu-head">管理者</p><a href="/admin/services">接続先の管理</a><a href="/admin/apps">アプリの管理</a>${tunnelEnabled(env) && html`<a href="/admin/local-services">ローカルサービスの管理</a>`}<a href="/admin/plugins">プラグインの配布</a>`}<form method="post" action="/logout"><button>サインアウト</button></form></nav>
+</details></header>`;
 }
 
 function notice(url: URL, credentials: CredentialInfo[], services: Services): Html | false {

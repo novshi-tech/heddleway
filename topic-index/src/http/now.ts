@@ -37,10 +37,12 @@ export const esc = (s: unknown) =>
 
 const TASK_KINDS: readonly (ListKind | null)[] = ['todo', 'google-tasks'];
 
-export function tabs(base: string, current: 'now' | 'lists'): string {
+/** 今やること・参加中のリストのタブ。タブが見出しを兼ねる（見出しは読み上げ用にだけ置く）。note はタブの右に添える一言 */
+export function tabs(base: string, current: 'now' | 'lists', note?: string): string {
   const tab = (href: string, label: string, on: boolean) =>
     on ? `<a class="tab" href="${esc(href)}" aria-current="page">${esc(label)}</a>` : `<a class="tab" href="${esc(href)}">${esc(label)}</a>`;
-  return `<nav class="tabs">${tab(base, '今やること', current === 'now')}${tab(`${base}/lists`, '参加中のリスト', current === 'lists')}</nav>`;
+  const heading = current === 'now' ? '今やること' : '参加中のリスト';
+  return `<nav class="tabs">${tab(base, '今やること', current === 'now')}${tab(`${base}/lists`, '参加中のリスト', current === 'lists')}${note ? `<span class="tabs-note">${esc(note)}</span>` : ''}</nav>\n<h1 class="sr-only">${heading}</h1>`;
 }
 
 /** 日付（YYYY-MM-DD）をそのタイムゾーンで */
@@ -99,7 +101,7 @@ function row(input: Pick<NowInput, 'base' | 'now'>, t: NowThread, list: PageList
   return `<li><a class="item" href="${esc(`${input.base}/threads/${encodeURIComponent(t.id)}`)}"><span class="item-title">${esc(t.title)}</span>${tags ? `<span class="item-tags">${tags}</span>` : ''}<span class="item-meta">${meta}</span></a></li>`;
 }
 
-/** ファーストビューに出す「自分がやるもの」の数（0052） */
+/** ファーストビューに出す「自分の担当」の数（0052） */
 export const TOP = 5;
 
 /** 期限の近いものを先に（期限のないものは後ろで、最後の動きの新しい順） */
@@ -118,7 +120,7 @@ function byActivity(a: NowThread, b: NowThread): number {
 
 /**
  * 区分け（0052）。1 つのトピックは最初に当てはまった区分にだけ出す。
- * 自分がやるもの（担当と、個人リストのタスク）は 1 つにまとめて期限順。アテンションは本人宛てを先に
+ * 自分の担当（担当と、個人リストのタスク）は 1 つにまとめて期限順。アテンションは本人宛てを先に
  */
 export function sortNow(input: Pick<NowInput, 'lists' | 'threads'>) {
   const listOf = new Map(input.lists.map((l) => [l.id, l]));
@@ -185,7 +187,7 @@ const EMPTY_LISTS =
 export type NowSection = 'mine' | 'attention' | 'awaiting' | 'triage';
 
 const SECTION: Record<NowSection, { title: string; note: string; empty: string }> = {
-  mine: { title: '自分がやるもの', note: '担当と、To Do・Google Tasks のタスク。期限の近い順', empty: '担当・タスクはありません。' },
+  mine: { title: '自分の担当', note: '担当と、To Do・Google Tasks のタスク。期限の近い順', empty: '担当・タスクはありません。' },
   attention: { title: 'アテンション', note: '見てほしいと届いたもの。リストごと', empty: '残っているアテンションはありません。' },
   awaiting: { title: '返事待ち', note: '送って返事がまだのもの', empty: '返事待ちはありません。' },
   triage: { title: '割当待ち', note: '共有のリストで担当が決まっていないもの', empty: '割当待ちはありません。' },
@@ -195,15 +197,15 @@ const namedBadge = (t: NowThread) => (t.myTurn.includes('named') ? [`<span class
 
 /**
  * 「今やること」のファーストビュー（0052）。スマホの 1 画面に収める:
- * 期限切れ・今日までの数、自分がやるもの（期限順の上位 5 件）、アテンション（リストごとの件数）、返事待ち・割当待ち（件数だけ）。
+ * 期限切れ・今日までの数、自分の担当（期限順の上位 5 件）、アテンション（リストごとの件数）、返事待ち・割当待ち（件数だけ）。
  * 中身はそれぞれの区分の画面（renderSection）で見る
  */
 export function renderNow(input: NowInput): string {
   const timeZone = input.timeZone ?? 'Asia/Tokyo';
   const listOf = new Map(input.lists.map((l) => [l.id, l]));
-  const parts = [tabs(input.base, 'now')];
   if (input.lists.length === 0) {
-    parts.push('<h1>今やること</h1>', EMPTY_LISTS);
+    const parts = [tabs(input.base, 'now')];
+    parts.push(EMPTY_LISTS);
     return `<div class="now">${parts.join('\n')}</div>`;
   }
   const s = sortNow(input);
@@ -214,7 +216,7 @@ export function renderNow(input: NowInput): string {
   const link = (path: string) => esc(`${input.base}/${path}`);
   const more = (path: string, n: number) => `<a class="more" href="${link(path)}">${n} 件すべて見る</a>`;
 
-  parts.push(`<div class="now-head"><h1>今やること</h1><p class="now-sub">${esc(at)} 時点</p></div>`);
+  const parts = [tabs(input.base, 'now', `${at} 時点`)];
   if (overdue + today > 0) {
     const bits = [overdue > 0 ? `期限切れ <b>${overdue}</b>` : '', today > 0 ? `今日まで <b>${today}</b>` : ''].filter(Boolean).join(' · ');
     parts.push(`<a class="alert${overdue > 0 ? ' broken' : ''}" href="${link('mine')}">${bits}</a>`);
