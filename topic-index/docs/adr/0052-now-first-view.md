@@ -33,9 +33,11 @@
 
 相手の名前は一覧から外し、トピックの詳細にだけ出す。「ほか」は区分の残りにも使わず、「n 件すべて見る」と書く。
 
-### 4. 今やることと区分の画面は接続の状態を読まない
+### 4. 今やることと区分の画面は接続の状態を読まない（と、一覧の結び候補を逆引きで出す）
 
 リストの種類（Jira かタスクのリストか）はデータソースの出所で決まるので、参加中のリストの画面だけが接続の一覧（取り込みの状態）を読む。
+
+あるデプロイの実測では、開くたびのサーバーの CPU が 0.2〜0.5 秒で、送る HTML を小さくしても変わらなかった。一覧（`listThreads`）がスレッドごとに結び候補を全スレッドとの総当たりで探していて、件数の 2 乗で増えていた。一覧では、キー → スレッドの逆引き（`candidateIndex`）を 1 回だけ作って引く。返す候補は総当たりと同じ（API の一覧も同じく速くなる）。
 
 ## 考えたほかの案
 
@@ -50,6 +52,6 @@
 
 ## 実装の記録
 
-- トピック索引: `src/http/now.ts`（`sortNow` の区分、`renderNow` のファーストビュー、`renderSection` の区分の画面、`attentionGroups`）、`createTopicIndex(...).userPage` の経路（`mine`・`attention[/<ID>]`・`awaiting`・`triage`）、`TopicIndexService.myLists` は相手の名前を解決しない
+- トピック索引: `src/http/now.ts`（`sortNow` の区分、`renderNow` のファーストビュー、`renderSection` の区分の画面、`attentionGroups`）、`createTopicIndex(...).userPage` の経路（`mine`・`attention[/<ID>]`・`awaiting`・`triage`）、`TopicIndexService.myLists` は相手の名前を解決しない、`src/domain/turn.ts` の `candidateIndex` と `linkCandidates` の逆引き
 - ゲートウェイ: `src/web/layout.ts` の画面のクラス（block・alert・more・now-more・group-head。使わなくなった chips・details.sec・details.rest を消した）
 - テスト: `topic-index/test/shell/now.test.ts`
