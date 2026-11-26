@@ -108,6 +108,7 @@ export function logout(request: Request, env: Env): Response {
   return page(
     "サインアウト",
     html`<div class="card"><h1>サインアウトしました</h1><p><a href="/login">もう一度サインインする</a></p></div>`,
-    new Headers({ "set-cookie": cookie(SESSION_COOKIE, "", 0) }),
+    // Also drop the pages the app kept on this device and its service worker (docs/adr/0010).
+    new Headers({ "set-cookie": cookie(SESSION_COOKIE, "", 0), "clear-site-data": '"cache", "storage"' }),
   );
 }

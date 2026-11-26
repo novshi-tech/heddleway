@@ -236,6 +236,13 @@ export function page(title: string, body: Html, headers?: HeadersInit, status = 
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title}</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#24425e">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Heddleway">
+<link rel="apple-touch-icon" href="/assets/icon-180.png">
+<script src="/assets/pwa.js" defer></script>
 <style>${new Html(STYLE)}</style>
 </head>
 <body>
@@ -246,7 +253,7 @@ ${body}
 </html>`;
   const h = new Headers(headers);
   h.set("content-type", "text/html; charset=utf-8");
-  h.set("content-security-policy", "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; form-action 'self' https:; frame-ancestors 'none'");
+  h.set("content-security-policy", "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; manifest-src 'self'; worker-src 'self'; img-src 'self'; form-action 'self' https:; frame-ancestors 'none'");
   h.set("x-frame-options", "DENY");
   h.set("cache-control", "no-store");
   return new Response(document.value, { status, headers: h });

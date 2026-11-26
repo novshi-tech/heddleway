@@ -214,7 +214,7 @@ export function renderNow(input: NowInput): string {
   const link = (path: string) => esc(`${input.base}/${path}`);
   const more = (path: string, n: number) => `<a class="more" href="${link(path)}">${n} 件すべて見る</a>`;
 
-  parts.push(`<div class="now-head"><h1>今やること</h1><p class="now-sub">${esc(at)} 時点 · 再読み込みで最新に</p></div>`);
+  parts.push(`<div class="now-head"><h1>今やること</h1><p class="now-sub">${esc(at)} 時点</p></div>`);
   if (overdue + today > 0) {
     const bits = [overdue > 0 ? `期限切れ <b>${overdue}</b>` : '', today > 0 ? `今日まで <b>${today}</b>` : ''].filter(Boolean).join(' · ');
     parts.push(`<a class="alert${overdue > 0 ? ' broken' : ''}" href="${link('mine')}">${bits}</a>`);
