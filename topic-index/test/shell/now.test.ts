@@ -54,7 +54,7 @@ function thread(id: string, dataSourceId: string, over: Partial<NowThread> = {})
 const base: NowInput = { base: '/features/topic-index', name: '野瀬', lists, threads: [], now: NOW };
 
 describe('今やることの画面（0051・0052）', () => {
-  it('H3 自分がやるもの（担当とタスク）・アテンション・返事待ち・割当待ちに分け、1 つのトピックは最初の区分にだけ出す', () => {
+  it('H3 自分の担当（担当とタスク）・アテンション・返事待ち・割当待ちに分け、1 つのトピックは最初の区分にだけ出す', () => {
     const threads = [
       thread('t_jira', 'ds_bo', { myTurn: ['assignee', 'named'], source: { key: 'BO-12', closed: false, holders: [], title: 'x', statusLabel: '進行中', due: null } as never }),
       thread('t_task', 'ds_todo', { source: { key: 'task1', closed: false, holders: [], title: 'x', statusLabel: 'タスク', due: '2026-11-24' } as never }),
@@ -87,14 +87,14 @@ describe('今やることの画面（0051・0052）', () => {
     expect(html).not.toContain('件名 t_none');
   });
 
-  it('H3 自分がやるものは上位 5 件だけ出し、残りは区分の画面で見る', () => {
+  it('H3 自分の担当は上位 5 件だけ出し、残りは区分の画面で見る', () => {
     const many = Array.from({ length: 8 }, (_, i) => thread(`t${i}`, 'ds_bo', { myTurn: ['assignee'], lastActivityAt: `2026-11-2${i}T00:00:00Z` }));
     const html = renderNow({ ...base, threads: many });
     expect(html.match(/class="item"/g)).toHaveLength(5);
     expect(html).toContain('<a class="more" href="/features/topic-index/mine">8 件すべて見る</a>');
     expect(html).not.toContain('class="alert');
     const page = renderSection({ ...base, threads: many }, 'mine');
-    expect(page?.title).toBe('自分がやるもの');
+    expect(page?.title).toBe('自分の担当');
     expect(page?.body.match(/class="item"/g)).toHaveLength(8);
     expect(page?.body).toContain('<a class="back" href="/features/topic-index">← 今やること</a>');
   });

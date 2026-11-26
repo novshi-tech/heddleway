@@ -177,6 +177,9 @@ a.row-title:hover { text-decoration: underline; }
 
 /* A dense list of items (the topic index's "now" page): one tappable row per item, title up to two lines, one line of meta. */
 .now .tabs { margin-bottom: 1rem; }
+.tabs { align-items: flex-end; }
+.tabs-note { margin-left: auto; padding: 0 .25rem .45rem; color: var(--muted); font-size: .75rem; white-space: nowrap; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .now-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .75rem; margin-bottom: .5rem; }
 .now-head h1 { font-size: 1.375rem; margin: 0; }
 .now-sub { margin: 0; color: var(--muted); font-size: .8125rem; }

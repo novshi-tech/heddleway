@@ -189,7 +189,6 @@ export function renderMyLists(input: MyListsInput): string {
     `<h2>${esc(title)}</h2>\n${lists.length > 0 ? `<ul class="list">${lists.map(rowOf).join('\n')}</ul>` : `<p class="empty">${esc(empty)}</p>`}`;
 
   return [
-    '<h1>参加中のリスト</h1>',
     '<p>トピック索引で、あなたがメンバーになっているリストです。エージェント(Claude など)に「今日やることは?」と聞くと、ここにあるリストのトピックから答えます。</p>',
     input.name
       ? `<p class="hint">トピック索引での呼び方: ${esc(input.name)}</p>`
