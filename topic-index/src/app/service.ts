@@ -457,13 +457,13 @@ export class TopicIndexService {
     return this.getContact(userId, contactId);
   }
 
-  async listThreads(userId: string, opts: { filter?: ThreadFilter; dataSourceId?: string; since?: string } = {}) {
+  async listThreads(userId: string, opts: { filter?: ThreadFilter; dataSourceId?: string; since?: string; candidates?: boolean } = {}) {
     const { viewer, dir } = await this.viewer(userId);
     // 見えるリストのスレッドの行だけ。open 系の絞り込みは開いているものだけ（0047 の決定 2）
     const filter = opts.filter ?? 'open';
     const dataSourceIds = opts.dataSourceId ? viewer.dataSourceIds.filter((d) => d === opts.dataSourceId) : viewer.dataSourceIds;
     const store = this.deps.repo.projections;
-    const req = { dataSourceIds, openOnly: filter !== 'all' && filter !== 'mine' };
+    const req = { dataSourceIds, openOnly: filter !== 'all' && filter !== 'mine', candidates: opts.candidates };
     const { p } = await this.scoped(store.listScope ? () => store.listScope!(req) : null);
     return listThreads(dir, viewer, p, opts);
   }
@@ -607,7 +607,8 @@ export class TopicIndexService {
       const ds = dir.dataSource(l.dataSource.id);
       return { ...l, readers: l.readers.map((r) => ({ ...r, name: displayName(r) })), shared: ds?.kind === 'service' && !!ds.shared };
     });
-    const threads = lists.length > 0 ? await this.listThreads(userId, { filter: 'open' }) : [];
+    // 画面は結び候補を出さないので、キーの索引を読まない（0052）
+    const threads = lists.length > 0 ? await this.listThreads(userId, { filter: 'open', candidates: false }) : [];
     return { name: dir.user(userId)?.name ?? '', lists, threads };
   }
 
