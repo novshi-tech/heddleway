@@ -116,6 +116,11 @@ describe("The topic index on", () => {
     const cookie = await sessionCookie(bob);
     const home = await (await call(on, "/", { headers: { cookie } })).text();
     expect(home).toContain('<a href="/features/topic-index">今やること・参加中のリストを見る</a>');
+    // Not a member of any list: the home page stays the connections, which also live at /connections (docs/adr/0011).
+    expect(home).toContain("<h1>つないだサービス</h1>");
+    const connections = await (await call(on, "/connections", { headers: { cookie } })).text();
+    expect(connections).toContain('<a href="/features/topic-index">今やること・参加中のリストを見る</a>');
+    expect(connections).toContain('<a href="/connections">つないだサービス</a>');
 
     const off = await (await call(on, "/features/topic-index", { headers: { cookie } })).text();
     expect(off).toContain("<title>今やること - トピック索引</title>");
@@ -223,7 +228,7 @@ describe("The topic index on", () => {
     const cookie = await sessionCookie(bob);
     expect(await (await call(on, "/", { headers: { cookie } })).text()).toContain("このゲートウェイの機能");
     const res = await call(on, "/features/topic-index/disable", { method: "POST", headers: { cookie, origin } });
-    expect(res.headers.get("location")).toBe("/?disabled=1");
+    expect(res.headers.get("location")).toBe("/connections?disabled=1");
     expect(await vaultFor(env, bob).consented("topic-index")).toBe(false);
   });
 });

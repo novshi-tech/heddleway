@@ -47,7 +47,7 @@ export function featurePort(env: Env, opts: FeaturePortOptions): GatewayPort {
   };
 
   return {
-    homeUrl: `${base}/`,
+    homeUrl: `${base}/connections`,
 
     // Admins are listed by user ID in ADMINS, as for the gateway's own admin pages.
     async isAdmin(userId) {
@@ -72,7 +72,7 @@ export function featurePort(env: Env, opts: FeaturePortOptions): GatewayPort {
       const { service, scope } = kinds[kind];
       const info = await vault(userId).get(credentialId);
       if (!info || info.service !== service) throw new GatewayAuthError(`unknown credential: ${credentialId}`);
-      if (info.needsReconnect) throw new GatewayAuthError(`credential ${credentialId} must be reconnected by the user at ${base}/`);
+      if (info.needsReconnect) throw new GatewayAuthError(`credential ${credentialId} must be reconnected by the user at ${base}/connections`);
       const target = await getUpstream(env, service);
       if (!target) throw new GatewayAuthError(`unknown service: ${service}`);
 
@@ -84,7 +84,7 @@ export function featurePort(env: Env, opts: FeaturePortOptions): GatewayPort {
         const result = await vault(userId).headers(credentialId, target);
         if ("error" in result) {
           if (result.error === "missing") return denied(403, "credential no longer exists");
-          if (result.error === "reconnect") return denied(403, `credential must be reconnected by the user at ${base}/`);
+          if (result.error === "reconnect") return denied(403, `credential must be reconnected by the user at ${base}/connections`);
           if (result.error === "no_value") return denied(502, `credential has no value for ${result.field}`);
           return denied(502, "could not refresh the upstream access token; try again later");
         }

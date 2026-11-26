@@ -90,6 +90,8 @@ export interface TopicIndexHandlers {
    * 読むのはトピック索引の中だけで、上流は呼ばない。ない経路・見えないトピックは null
    */
   userPage(userId: string, page: { path: string; base: string }, ctx: ExecutionContext): Promise<{ title: string; body: string } | null>;
+  /** 本人の画面を Heddleway のトップにするか（どれかのリストのメンバーなら。ゲートウェイの docs/adr/0011）。User を作らない */
+  isHome(userId: string): Promise<boolean>;
 }
 
 const CHANNELS = ['email', 'slack', 'line', 'jira', 'bitbucket'] as const;
@@ -326,6 +328,11 @@ export function createTopicIndex(config: TopicIndexConfig, authenticate: Gateway
         connectors: () => (shell === undefined ? (shell = buildConnectors(config, service, (p) => ctx.waitUntil(p))) : shell),
       });
       return app.fetch(request);
+    },
+
+    async isHome(userId) {
+      const { viewer } = await build(config).viewer(userId);
+      return viewer.dataSourceIds.length > 0;
     },
 
     async userPage(userId, { path, base }, ctx) {

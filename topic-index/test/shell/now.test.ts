@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { drizzle } from 'drizzle-orm/d1';
+import { afterAll, describe, expect, it } from 'vitest';
+import { localD1Raw } from '../../scripts/lib/d1';
+import { createTopicIndex } from '../../src/feature';
+import { D1MasterStore, type Db } from '../../src/store/d1';
 import type { ThreadItem } from '../../src/domain';
 import { renderNow, renderSection, renderThread, sortNow, type NowInput, type NowThread, type PageList } from '../../src/http/now';
 import { makeService } from '../helpers/service';
@@ -175,5 +179,21 @@ describe('トピックの詳細（0051）', () => {
 
     const lists = await service.myLists('u_alice');
     expect(lists.threads.map((t) => t.id)).toContain(threadId);
+  });
+});
+
+describe('Heddleway のトップ（ゲートウェイの 0011）', () => {
+  let close: (() => Promise<void>) | undefined;
+  afterAll(() => close?.());
+
+  it('H3 isHome は、どれかのリストのメンバーなら true。知らない人の User は作らない', async () => {
+    const local = await localD1Raw();
+    close = local.close;
+    await new D1MasterStore(drizzle(local.d1) as Db).replaceSeed(seed);
+    const handlers = createTopicIndex({ db: local.d1, anthropicApiKey: 'k', claudeModel: 'm' }, async () => null);
+    expect(await handlers.isHome('u_alice')).toBe(true);
+    expect(await handlers.isHome('u_mallory')).toBe(false);
+    expect(await handlers.isHome('entra_t_nobody')).toBe(false);
+    expect((await new D1MasterStore(drizzle(local.d1) as Db).loadSeed()).users.map((u) => u.id)).not.toContain('entra_t_nobody');
   });
 });

@@ -98,7 +98,7 @@ export function buildServer(env: Env, props: McpProps, ctx: ExecutionContext): M
       const info = await vault.get(id);
       if (!info) return { error: `unknown credential: ${id}` };
       if (!reaches(current.app, info.service)) return { error: `the app may not use service: ${info.service}` };
-      if (info.needsReconnect) return { error: `credential ${id} must be reconnected by the user at ${base}/` };
+      if (info.needsReconnect) return { error: `credential ${id} must be reconnected by the user at ${base}/connections` };
       if (creds[info.service]) return { error: `more than one credential for service: ${info.service}` };
       creds[info.service] = id;
     }
@@ -147,7 +147,7 @@ export function buildServer(env: Env, props: McpProps, ctx: ExecutionContext): M
         gateway,
         services: services.filter((s) => reaches(app, s)),
         credentials: credentials.filter((c) => reaches(app, c.service)),
-        register_url: `${base}/`,
+        register_url: `${base}/connections`,
       });
     },
   );
