@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ThreadItem } from '../../src/domain';
-import { renderNow, renderThread, sortNow, type NowInput, type NowThread, type PageList } from '../../src/http/now';
+import { renderNow, renderSection, renderThread, sortNow, type NowInput, type NowThread, type PageList } from '../../src/http/now';
 import { makeService } from '../helpers/service';
 import { answer, email, seed } from '../helpers/world';
 
@@ -43,71 +43,87 @@ function thread(id: string, dataSourceId: string, over: Partial<NowThread> = {})
     derivedBall: null,
     linkedActiveSinceDismissed: false,
     linkCandidates: [],
-    counterparts: [],
     ...over,
   } as NowThread;
 }
 
 const base: NowInput = { base: '/features/topic-index', name: '野瀬', lists, threads: [], now: NOW };
 
-describe('今やることの画面（0051）', () => {
-  it('H3 担当・タスク・アテンション・返事待ち・割当待ちに分け、1 つのトピックは最初の区分にだけ出す', () => {
+describe('今やることの画面（0051・0052）', () => {
+  it('H3 自分がやるもの（担当とタスク）・アテンション・返事待ち・割当待ちに分け、1 つのトピックは最初の区分にだけ出す', () => {
     const threads = [
       thread('t_jira', 'ds_bo', { myTurn: ['assignee', 'named'], source: { key: 'BO-12', closed: false, holders: [], title: 'x', statusLabel: '進行中', due: null } as never }),
       thread('t_task', 'ds_todo', { source: { key: 'task1', closed: false, holders: [], title: 'x', statusLabel: 'タスク', due: '2026-11-24' } as never }),
       thread('t_list', 'ds_ch', { myTurn: ['list'], lastActivityAt: '2026-11-25T02:00:00Z' }),
-      thread('t_named', 'ds_mail', { myTurn: ['named'], counterparts: ['Carol（顧客）'] }),
+      thread('t_named', 'ds_mail', { myTurn: ['named'] }),
       thread('t_wait', 'ds_mail', { awaiting: true, overdue: true, replyExpectedBy: '2026-11-24T09:00:00Z' }),
       thread('t_triage', 'ds_ch', { triage: true }),
       thread('t_none', 'ds_mail'),
     ];
     const s = sortNow({ lists, threads });
-    expect(s.assigned.map((t) => t.id)).toEqual(['t_jira']);
-    expect(s.tasks.map((t) => t.id)).toEqual(['t_task']);
+    expect(s.mine.map((t) => t.id)).toEqual(['t_task', 't_jira']);
     expect(s.attention.map((t) => t.id)).toEqual(['t_named', 't_list']);
     expect(s.awaiting.map((t) => t.id)).toEqual(['t_wait']);
     expect(s.triage.map((t) => t.id)).toEqual(['t_triage']);
 
     const html = renderNow({ ...base, threads });
     expect(html).toContain('<a class="tab" href="/features/topic-index" aria-current="page">今やること</a>');
-    expect(html).toContain('<a href="#assigned">担当 <b>1</b></a><a href="#tasks">タスク <b>1</b></a><a href="#attention">アテンション <b>2</b></a><a href="#awaiting">返事待ち <b>1</b></a><a href="#triage">割当待ち <b>1</b></a>');
-    expect(html).toContain('<details class="sec" id="assigned" open>');
-    expect(html).toContain('<details class="sec" id="triage">');
+    expect(html).toContain('<a class="alert broken" href="/features/topic-index/mine">期限切れ <b>1</b></a>');
     expect(html).toContain('href="/features/topic-index/threads/t_jira"');
     expect(html).toContain('バックオフィス · 進行中');
     expect(html).toContain('<span class="badge broken">期限切れ 11/24</span>');
-    expect(html).toContain('<span class="badge broken">返事の期限切れ 11/24</span>');
-    expect(html).toContain('野瀬 の Outlook · Carol（顧客）');
-    expect(html).toContain('<span class="badge">あなた宛て</span>');
-    expect(html).toContain('<span class="badge">リスト宛て</span>');
-    expect(html).toContain('今日 11:00 · 全社チャネル');
-    
+    // アテンションはリストごとの件数だけ。新しく動いたリストが上
+    expect(html).not.toContain('件名 t_named');
+    expect(html.indexOf('href="/features/topic-index/attention/ds_ch"')).toBeLessThan(html.indexOf('href="/features/topic-index/attention/ds_mail"'));
+    expect(html).toContain('<span class="badge">あなた宛て 1</span><span class="count">1</span>');
+    // 返事待ちと割当待ちは件数の 1 行
+    expect(html).toContain('<a href="/features/topic-index/awaiting">返事待ち <b>1</b> <span class="badge broken">期限切れ 1</span></a>');
+    expect(html).toContain('<a href="/features/topic-index/triage">割当待ち <b>1</b></a>');
+    expect(html).not.toContain('件名 t_wait');
     expect(html).not.toContain('件名 t_none');
   });
 
-  it('H3 タスクのリストがなければタスクの区分を出さず、リストがなければつなぎ方を出す', () => {
-    const noTasks = renderNow({ ...base, lists: lists.filter((l) => l.kind !== 'todo') });
-    expect(noTasks).not.toContain('自分のタスク');
-    expect(noTasks).toContain('<a href="#assigned">担当 <b>0</b></a><a href="#attention">');
-    expect(noTasks).toContain('<details class="sec" id="assigned"><summary>');
-    expect(noTasks).toContain('担当のトピックはありません');
+  it('H3 自分がやるものは上位 5 件だけ出し、残りは区分の画面で見る', () => {
+    const many = Array.from({ length: 8 }, (_, i) => thread(`t${i}`, 'ds_bo', { myTurn: ['assignee'], lastActivityAt: `2026-11-2${i}T00:00:00Z` }));
+    const html = renderNow({ ...base, threads: many });
+    expect(html.match(/class="item"/g)).toHaveLength(5);
+    expect(html).toContain('<a class="more" href="/features/topic-index/mine">8 件すべて見る</a>');
+    expect(html).not.toContain('class="alert');
+    const page = renderSection({ ...base, threads: many }, 'mine');
+    expect(page?.title).toBe('自分がやるもの');
+    expect(page?.body.match(/class="item"/g)).toHaveLength(8);
+    expect(page?.body).toContain('<a class="back" href="/features/topic-index">← 今やること</a>');
+  });
+
+  it('H3 アテンションの画面はリストで絞れて、本人宛てが先。知らないリストは null', () => {
+    const threads = [
+      thread('t_list', 'ds_ch', { myTurn: ['list'], lastActivityAt: '2026-11-25T02:00:00Z' }),
+      thread('t_named', 'ds_ch', { myTurn: ['named'] }),
+      thread('t_mail', 'ds_mail', { myTurn: ['named'] }),
+    ];
+    const one = renderSection({ ...base, threads }, 'attention', 'ds_ch');
+    expect(one?.title).toBe('全社チャネル');
+    expect(one!.body.indexOf('件名 t_named')).toBeLessThan(one!.body.indexOf('件名 t_list'));
+    expect(one?.body).not.toContain('件名 t_mail');
+    expect(renderSection({ ...base, threads }, 'attention', 'ds_nope')).toBeNull();
+    const all = renderSection({ ...base, threads }, 'attention');
+    expect(all?.body).toContain('<h2 class="group-head">全社チャネル <span class="count">2</span></h2>');
+  });
+
+  it('H3 何もなければ空の案内を出し、リストがなければつなぎ方を出す', () => {
+    const html = renderNow(base);
+    expect(html).toContain('担当・タスクはありません');
+    expect(html).toContain('残っているアテンションはありません');
+    expect(html).not.toContain('割当待ち');
+    expect(renderSection(base, 'triage')?.body).toContain('割当待ちはありません');
     const empty = renderNow({ ...base, lists: [] });
     expect(empty).toContain('まだどのリストのメンバーにもなっていません');
   });
 
-  it('H3 1 つの区分に多いときは、15 件を出して残りを「ほか n 件」に畳む', () => {
-    const many = Array.from({ length: 20 }, (_, i) => thread(`t${String(i).padStart(2, '0')}`, 'ds_mail', { myTurn: ['named'] }));
-    const html = renderNow({ ...base, threads: many });
-    const [shown, rest] = html.split('<details class="rest"><summary>ほか 5 件</summary>');
-    expect(shown!.match(/class="item"/g)).toHaveLength(15);
-    expect(rest!.match(/class="item"/g)).toHaveLength(5);
-  });
-
   it('H3 表示する値はエスケープする', () => {
-    const html = renderNow({ ...base, name: '<i>', threads: [thread('t1', 'ds_mail', { myTurn: ['named'], title: '<script>x</script>' })] });
+    const html = renderNow({ ...base, threads: [thread('t1', 'ds_bo', { myTurn: ['assignee'], title: '<script>x</script>' })] });
     expect(html).not.toContain('<script>');
     expect(html).toContain('&lt;script&gt;');
-    expect(html).toContain('&lt;i&gt;さんの');
   });
 });
 
@@ -158,6 +174,6 @@ describe('トピックの詳細（0051）', () => {
     expect((await service.directory()).user('entra_t_nobody')).toBeUndefined();
 
     const lists = await service.myLists('u_alice');
-    expect(lists.threads.find((t) => t.id === threadId)?.counterparts).toEqual(['Carol（顧客）']);
+    expect(lists.threads.map((t) => t.id)).toContain(threadId);
   });
 });

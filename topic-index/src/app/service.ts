@@ -607,12 +607,7 @@ export class TopicIndexService {
       const ds = dir.dataSource(l.dataSource.id);
       return { ...l, readers: l.readers.map((r) => ({ ...r, name: displayName(r) })), shared: ds?.kind === 'service' && !!ds.shared };
     });
-    const open = lists.length > 0 ? await this.listThreads(userId, { filter: 'open' }) : [];
-    // 相手の名前（今やることの画面。0051）。Contact の名前か、解決できなかったアドレスそのまま
-    const threads = open.map((t) => ({
-      ...t,
-      counterparts: [...t.counterpartContactIds.map((id) => contactName(dir, id)).filter((n) => n !== ''), ...t.counterpartAddresses.map((a) => a.value)],
-    }));
+    const threads = lists.length > 0 ? await this.listThreads(userId, { filter: 'open' }) : [];
     return { name: dir.user(userId)?.name ?? '', lists, threads };
   }
 
