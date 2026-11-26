@@ -195,13 +195,13 @@ describe("apps the user allowed", () => {
     const grantId = home.match(/href="\/grants\/([^/"]+)\/revoke"/)![1];
 
     // Someone else can neither see nor revoke it.
-    expect((await asUser("someone-else", `/grants/${grantId}/revoke`)).headers.get("location")).toBe("/");
+    expect((await asUser("someone-else", `/grants/${grantId}/revoke`)).headers.get("location")).toBe("/connections");
     await asUser("someone-else", `/grants/${grantId}/revoke`, "POST");
     expect((await refresh(token.body.refresh_token, client_id)).status).toBe(200);
 
     expect(await (await asUser(userId, `/grants/${grantId}/revoke`)).text()).toContain("「Test」のアクセスを取り消しますか?");
     const revoked = await asUser(userId, `/grants/${grantId}/revoke`, "POST");
-    expect(revoked.headers.get("location")).toBe("/?revoked=1");
+    expect(revoked.headers.get("location")).toBe("/connections?revoked=1");
     expect((await refresh(token.body.refresh_token, client_id)).status).toBe(400);
     const mcp = await SELF.fetch(`${BASE}/mcp`, { method: "POST", headers: { authorization: `Bearer ${token.body.access_token}` } });
     expect(mcp.status).toBe(401);

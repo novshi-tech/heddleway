@@ -60,7 +60,7 @@ export async function disableFeature(request: Request, env: Env, name: string): 
   if (!user) return redirect("/login");
   await vaultFor(env, user.sub).setConsent(f.name, false, f.formerNames);
   console.log(JSON.stringify({ type: "feature_disabled", user: user.sub, feature: f.name }));
-  return redirect("/?disabled=1");
+  return redirect("/connections?disabled=1");
 }
 
 // A feature's page for the signed-in user (Feature.userPage). The feature renders the body for
@@ -86,7 +86,6 @@ export async function userPage(request: Request, env: Env, name: string, sub: st
   return page(
     result.title === f.displayName ? f.displayName : `${result.title} - ${f.displayName}`,
     html`${masthead(env, user)}
-${sub === "" && html`<a class="back" href="/">← つないだサービス</a>`}
 ${!on && html`<p class="notice" role="status">${f.displayName}は無効になっています。新しいやりとりは取り込まれません。エージェント(Claude など)に頼んでつなぐと、有効にする画面に案内されます。</p>`}
 ${new Html(result.body)}`,
   );

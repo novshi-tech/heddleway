@@ -540,7 +540,7 @@ describe("web ui", () => {
     });
     expect(res.status).toBe(303);
     const [cred] = await vaultFor(env, carol).list();
-    expect(res.headers.get("location")).toBe(`/?added=${cred.id}`);
+    expect(res.headers.get("location")).toBe(`/connections?added=${cred.id}`);
     expect(cred).toMatchObject({ service: "board", label: "board" });
     expect(await vaultFor(env, carol).headers(cred.id, await upstream("board"))).toEqual({ headers: { "x-api-key": "k", authorization: "Bearer t" } });
 
@@ -631,10 +631,10 @@ describe("web ui", () => {
       headers: { cookie, origin: new URL(BASE).origin },
       redirect: "manual",
     });
-    expect(res.headers.get("location")).toBe("/?deleted=1");
+    expect(res.headers.get("location")).toBe("/connections?deleted=1");
     expect(await vaultFor(env, carol).list()).toEqual([]);
     const gone = await SELF.fetch(`${BASE}/connections/${cred.id}/delete`, { headers: { cookie }, redirect: "manual" });
-    expect(gone.headers.get("location")).toBe("/");
+    expect(gone.headers.get("location")).toBe("/connections");
   });
 
   it("serves the picker script and lets pages load it", async () => {

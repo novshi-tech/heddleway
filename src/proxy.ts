@@ -107,11 +107,11 @@ export async function handleProxy(request: Request, env: Env, ctx: ExecutionCont
       return denied(
         502,
         `credential has no value for ${result.field}: the service's definition changed. ` +
-          `An admin can restore the definition, or the user can delete the credential and add it again at ${publicUrl(env)}/`,
+          `An admin can restore the definition, or the user can delete the credential and add it again at ${publicUrl(env)}/connections`,
       );
     }
     if (result.error === "reconnect") {
-      return denied(403, `credential must be reconnected by the user at ${publicUrl(env)}/`);
+      return denied(403, `credential must be reconnected by the user at ${publicUrl(env)}/connections`);
     }
     return denied(502, "could not refresh the upstream access token; try again later");
   }

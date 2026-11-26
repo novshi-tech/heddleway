@@ -152,7 +152,7 @@ describe("pairing", () => {
     expect(text).toContain(started.thumbprint);
 
     const approved = await ownerPost("/pair", { code: started.code, name: "boid", decision: "approve" }, owner);
-    expect(approved.headers.get("location")).toMatch(/^\/\?paired=/);
+    expect(approved.headers.get("location")).toMatch(/^\/connections\?paired=/);
     const polled = await poll(started.pairing_id);
     expect(polled.body).toMatchObject({ status: "approved", name: "boid", connect_url: `${BASE.replace(/^http/, "ws")}/tunnel/connect` });
     // Told once, then forgotten; the code cannot be used again.
@@ -177,7 +177,7 @@ describe("pairing", () => {
   it("can be denied", async () => {
     const started = await startPairing(await newKey(), "boid");
     const denied = await ownerPost("/pair", { code: started.code, name: "boid", decision: "deny" }, user());
-    expect(denied.headers.get("location")).toBe("/?pairing_denied=1");
+    expect(denied.headers.get("location")).toBe("/connections?pairing_denied=1");
     expect((await poll(started.pairing_id)).body.status).toBe("denied");
   });
 
@@ -223,7 +223,7 @@ describe("pairing", () => {
 
     const form = new URLSearchParams({ code: started.code, name: "legacy", decision: "approve", callback: "board", replace: old.id });
     const approved = await SELF.fetch(`${BASE}/pair`, { method: "POST", headers: { cookie: await cookie(owner), origin: ORIGIN }, body: form, redirect: "manual" });
-    expect(approved.headers.get("location")).toBe(`/?paired=${old.id}`);
+    expect(approved.headers.get("location")).toBe(`/connections?paired=${old.id}`);
     expect((await poll(started.pairing_id)).body.service_id).toBe(old.id);
 
     // The old connection is cut and the old key no longer opens one; the new key does.
@@ -332,7 +332,7 @@ describe("relaying", () => {
 
     const conn = await connect(local, id);
     expect((await call(owner, id, "boid", "/jobs")).status).toBe(200);
-    expect((await ownerPost(`/local-services/${id}/delete`, {}, owner)).headers.get("location")).toBe("/?local_removed=1");
+    expect((await ownerPost(`/local-services/${id}/delete`, {}, owner)).headers.get("location")).toBe("/connections?local_removed=1");
     await until(() => conn.closed() !== null);
     expect(conn.closed()!.code).toBe(4003);
     expect((await call(owner, id, "boid", "/jobs")).status).toBe(403);
@@ -342,7 +342,7 @@ describe("relaying", () => {
   it("lets only the owner or an admin remove a service", async () => {
     const owner = user();
     const { id } = await pair(owner, "boid");
-    expect((await ownerPost(`/local-services/${id}/delete`, {}, user())).headers.get("location")).toBe("/?local_removed=1");
+    expect((await ownerPost(`/local-services/${id}/delete`, {}, user())).headers.get("location")).toBe("/connections?local_removed=1");
     const listed = await SELF.fetch(`${BASE}/`, { headers: { cookie: await cookie(owner) } });
     expect(await listed.text()).toContain(`id="r-${id}"`);
     const admin = await SELF.fetch(`${BASE}/admin/local-services`, { headers: { cookie: await cookie("admin-user") } });
@@ -454,7 +454,7 @@ describe("calling back", () => {
     expect((await ownerPost(`/local-services/${id}`, { callback: "board" }, owner)).status).toBe(303);
     expect((await callBack(conn, { method: "GET", service: "board", path: "/v1/projects" })).status).toBe(200);
     // Another user cannot change it.
-    expect((await ownerPost(`/local-services/${id}`, { callback: "board" }, user())).headers.get("location")).toBe("/");
+    expect((await ownerPost(`/local-services/${id}`, { callback: "board" }, user())).headers.get("location")).toBe("/connections");
 
     const form = new URLSearchParams();
     await SELF.fetch(`${BASE}/local-services/${id}`, { method: "POST", headers: { cookie: await cookie(owner), origin: ORIGIN }, body: form, redirect: "manual" });
