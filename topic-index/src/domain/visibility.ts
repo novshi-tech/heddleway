@@ -190,7 +190,7 @@ export function listThreads(
   dir: Directory,
   viewer: Viewer,
   p: Projections,
-  opts: { filter?: ThreadFilter; dataSourceId?: string; since?: string } = {},
+  opts: { filter?: ThreadFilter; dataSourceId?: string; since?: string; limit?: number } = {},
 ): ThreadItem[] {
   const filter = opts.filter ?? 'open';
   const out: ThreadItem[] = [];
@@ -206,7 +206,8 @@ export function listThreads(
     if (opts.since !== undefined && !movedSince(viewer, p, t, opts.since)) continue;
     out.push(threadItem(dir, viewer, p, t));
   }
-  return out.sort((a, b) => (a.lastActivityAt < b.lastActivityAt ? 1 : a.lastActivityAt > b.lastActivityAt ? -1 : a.id < b.id ? -1 : 1));
+  out.sort((a, b) => (a.lastActivityAt < b.lastActivityAt ? 1 : a.lastActivityAt > b.lastActivityAt ? -1 : a.id < b.id ? -1 : 1));
+  return opts.limit === undefined ? out : out.slice(0, opts.limit);
 }
 
 /**

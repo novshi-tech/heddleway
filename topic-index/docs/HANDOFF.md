@@ -4,6 +4,8 @@
 
 ## いまの状態
 
+**2026-11-26: `GET /threads` に `limit`（1〜500、新しい順の先頭から）を足した。** それまでは件数の指定がなく、知らないクエリ（`limit` など）は黙って無視されて全件が返っていた（UBS の `my_turn` で 1 回 約 78KB。MCP の `api_get` の上限 10 万字に近い）。スキル heddleway 0.34.1。ページ送り（cursor）はまだない。差分は `since` で取る
+
 **2026-11-25: 内部の名前 Murmur を `topic-index` にそろえた（ゲートウェイの `docs/adr/0009`）。** モジュールは `topic-index/`、画面は `/features/topic-index`、API は `/api/topic-index/...`、認証情報は `identity:topic-index`。古い名前（`/features/murmur` はリダイレクト、`/api/murmur`・`/murmur/webhooks`・`identity:murmur`・同意・アプリの口）は互換で受け続ける。Graph・Jira の購読は次の見回りで新しい通知先に作り直される。デプロイの設定の `MURMUR_*`（D1・キュー・シークレット・vars）は今回は変えていない。過去の ADR の本文は Murmur のまま
 
 **2026-11-24: AI を使わないデプロイの区切りを `docs/adr/0050` を採用・実装した。** ほかの組織にデプロイするとき Anthropic の API キーを用意してもらう手間を省くため、デプロイ全体の設定で AI を使わない区切りに切り替えられるようにする。区切りはソースのスレッド（Outlook の conversationId・Gmail の threadId・Teams のチャネルと Google Chat のスペースのスレッド・課題やタスクの ID）だけで決め、区切れないリスト（Teams のチャット・Google Chat の DM とグループ・スレッドを使わないスペース・LINE）はつながない。設定はデプロイの vars の `MURMUR_THREADING: "source"`。件名は `POST /threads/:id/title`（`ThreadRetitled`）で人とエージェントが直す（スキル heddleway 0.32.0）。残り: Outlook の送信済みと共有メールボックスで `conversationId` が取れるかを実物で確かめる（0050 の未決 3）。AI を使うデプロイの挙動は変わらない（`conversationId`・`threadId` はシグナルに残るだけ）

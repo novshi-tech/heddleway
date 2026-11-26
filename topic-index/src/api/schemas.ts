@@ -12,6 +12,8 @@ export const ListThreadsQuery = z.object({
   data_source: z.string().optional(),
   /** 前回見た時刻。それより後に動いたスレッドだけ */
   since: Instant.optional(),
+  /** 返す件数の上限。新しい順（lastActivityAt）の先頭から。省略すれば全部 */
+  limit: z.coerce.number().int().min(1).max(500).optional(),
 });
 
 export const GetThreadQuery = z.object({ since: Instant.optional() });

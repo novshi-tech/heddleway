@@ -127,6 +127,12 @@ describe('HTTP API', () => {
 
     const moved = await call('POST', `/api/signals/${r2.signalId}/move`, 'u_alice', { new_thread_title: '別件', reason: '別の話題' });
     expect(moved.body.thread).toMatchObject({ title: '別件', signalCount: 1 });
+    // limit は新しい順の先頭から。範囲の外は 400
+    const all = (await call('GET', '/api/threads?filter=all', 'u_alice')).body as { id: string }[];
+    expect(all).toHaveLength(2);
+    expect((await call('GET', '/api/threads?filter=all&limit=1', 'u_alice')).body.map((t: { id: string }) => t.id)).toEqual([all[0]!.id]);
+    expect((await call('GET', '/api/threads?limit=0', 'u_alice')).status).toBe(400);
+    expect((await call('GET', '/api/threads?limit=abc', 'u_alice')).status).toBe(400);
     const back = await call('POST', `/api/signals/${r2.signalId}/move`, 'u_alice', { thread_id: threadId, reason: '戻す' });
     expect(back.body.thread.signalCount).toBe(2);
     expect((await call('POST', `/api/signals/${r2.signalId}/move`, 'u_eve', { thread_id: threadId, reason: 'x' })).status).toBe(404);
