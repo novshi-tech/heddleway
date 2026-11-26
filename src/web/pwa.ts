@@ -81,6 +81,10 @@ self.addEventListener("message", (event) => {
 `;
 
 const PWA_JS = `
+// The top bar's menu closes when the user taps elsewhere.
+document.addEventListener("click", (event) => {
+  for (const menu of document.querySelectorAll("details.menu[open]")) if (!menu.contains(event.target)) menu.open = false;
+});
 if ("serviceWorker" in navigator) {
   const here = () => location.href.split("#")[0];
   // The first visit is not served by the worker yet: ask it to keep this page, so the next open is instant.
