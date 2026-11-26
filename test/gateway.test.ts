@@ -700,6 +700,8 @@ describe("web ui", () => {
     });
     expect(res.status).toBe(200);
     expect(res.headers.get("set-cookie")).toMatch(/^__Host-gw-session=; .*Max-Age=0/);
+    // The pages the app kept on the device go too (docs/adr/0010).
+    expect(res.headers.get("clear-site-data")).toBe('"cache", "storage"');
   });
 
   it("rejects cross-site form posts", async () => {

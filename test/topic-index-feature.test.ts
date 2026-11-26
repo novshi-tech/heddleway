@@ -138,6 +138,31 @@ describe("The topic index on", () => {
     expect((await call(on, "/features/nothing", { headers: { cookie } })).status).toBe(404);
   });
 
+  it("installs as an app that opens on the topic index's now page, and keeps only feature pages (docs/adr/0010)", async () => {
+    const manifest = (await (await call(on, "/manifest.webmanifest")).json()) as { start_url: string; scope: string; display: string; icons: { src: string }[] };
+    expect(manifest).toMatchObject({ start_url: "/features/topic-index", scope: "/", display: "standalone" });
+    for (const { src } of manifest.icons) {
+      const icon = await call(on, src);
+      expect(icon.headers.get("content-type")).toBe("image/png");
+      expect(new Uint8Array(await icon.arrayBuffer()).slice(1, 4)).toEqual(new TextEncoder().encode("PNG"));
+    }
+    // Without the topic index the app opens on the home page.
+    expect(((await (await call(env, "/manifest.webmanifest")).json()) as { start_url: string }).start_url).toBe("/");
+
+    const sw = await call(on, "/sw.js");
+    expect(sw.headers.get("content-type")).toContain("text/javascript");
+    expect(sw.headers.get("cache-control")).toBe("no-cache");
+    const code = await sw.text();
+    expect(code).toContain('redirect: "manual"');
+    // Every page links the manifest and registers the worker, and the page's policy lets them load.
+    const page = await call(on, "/features/topic-index", { headers: { cookie: await sessionCookie(bob) } });
+    const text = await page.text();
+    expect(text).toContain('<link rel="manifest" href="/manifest.webmanifest">');
+    expect(text).toContain('<script src="/assets/pwa.js" defer></script>');
+    expect(page.headers.get("content-security-policy")).toContain("manifest-src 'self'; worker-src 'self'");
+    expect((await (await call(on, "/assets/pwa.js")).text())).toContain('register("/sw.js", { scope: "/" })');
+  });
+
   it("asks the user to turn the topic index on at the gateway, and returns to the topic index with a code for that user", async () => {
     const token = await apiToken(bob, { "topic-index": "identity" });
     const asked = await call(on, "/api/topic-index/connections/outlook", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: "{}" });
