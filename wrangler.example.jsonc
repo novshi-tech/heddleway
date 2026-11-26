@@ -5,7 +5,7 @@
   "compatibility_date": "2026-08-20",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "observability": { "enabled": true },
-  // "0 18 * * *" purges expired OAuth grants and tokens (src/index.ts PURGE_CRON). With Murmur,
+  // "0 18 * * *" purges expired OAuth grants and tokens (src/index.ts PURGE_CRON). With the topic index,
   // add its tick: ["0 18 * * *", "*/5 * * * *"].
   "triggers": { "crons": ["0 18 * * *"] },
   "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "REPLACE_WITH_KV_NAMESPACE_ID" }],
@@ -68,20 +68,20 @@
   // Services whose auth type is "client_credentials" are reached only by other Workers on this
   // account, through the named entrypoint "Background": the caller adds
   // { "binding": "GATEWAY", "service": "<this worker's name>", "entrypoint": "Background" }.
-  // Murmur (docs/adr/0005): the team's work memory, a feature of this Worker. Leave it out and the
+  // The topic index (docs/adr/0005): the team's work memory, a feature of this Worker. Leave it out and the
   // gateway works as before. To turn it on, add:
-  //   "d1_databases": [{ "binding": "MURMUR_DB", "database_name": "<name>-murmur", "database_id": "...", "migrations_dir": "murmur/drizzle" }],
+  //   "d1_databases": [{ "binding": "MURMUR_DB", "database_name": "<name>-topic-index", "database_id": "...", "migrations_dir": "topic-index/drizzle" }],
   //   "queues": {
-  //     "producers": [{ "binding": "MURMUR_QUEUE", "queue": "<name>-murmur-sync" }],
-  //     "consumers": [{ "queue": "<name>-murmur-sync", "max_batch_size": 10, "max_batch_timeout": 1, "max_concurrency": 1, "max_retries": 5 }]
+  //     "producers": [{ "binding": "MURMUR_QUEUE", "queue": "<name>-topic-index-sync" }],
+  //     "consumers": [{ "queue": "<name>-topic-index-sync", "max_batch_size": 10, "max_batch_timeout": 1, "max_concurrency": 1, "max_retries": 5 }]
   //   },
   // the "*/5 * * * *" cron above, and the secrets ANTHROPIC_API_KEY and MURMUR_WEBHOOK_SECRET
   // (openssl rand -base64 32; Graph and Jira webhooks), optionally MURMUR_TIMELINE_TOKEN (its operator pages).
   // Optional vars: MURMUR_CLAUDE_MODEL, MURMUR_GRAPH_SERVICE (default graph), MURMUR_JIRA_SERVICE (default jira),
   // MURMUR_GMAIL_SERVICE (default gmail), MURMUR_TASKS_SERVICE (default tasks), MURMUR_CHAT_SERVICE (default chat),
-  // MURMUR_BM_NEXT_SERVICE (default bm-next; the front system that keeps the LINE Official Account. Murmur's 0049),
-  // MURMUR_TASKS_POLL_MINUTES (patrol interval of the Google Tasks connector in minutes; unset = every cron tick. Murmur's 0041),
-  // MURMUR_SHARED_SERVICES (services whose spaces may become shared lists, e.g. "jira,teams,shared-mailbox,google-chat,line"; none by default. Murmur's 0037・0042・0045・0049).
-  // Create the database and queue with `npx wrangler d1 create <name>-murmur` and `npx wrangler queues create <name>-murmur-sync`,
+  // MURMUR_BM_NEXT_SERVICE (default bm-next; the front system that keeps the LINE Official Account. The topic index's 0049),
+  // MURMUR_TASKS_POLL_MINUTES (patrol interval of the Google Tasks connector in minutes; unset = every cron tick. The topic index's 0041),
+  // MURMUR_SHARED_SERVICES (services whose spaces may become shared lists, e.g. "jira,teams,shared-mailbox,google-chat,line"; none by default. The topic index's 0037・0042・0045・0049).
+  // Create the database and queue with `npx wrangler d1 create <name>-topic-index` and `npx wrangler queues create <name>-topic-index-sync`,
   // then `npm run d1-migrate -- <name>` before deploying.
 }

@@ -28,11 +28,11 @@ const GRAPH_SCOPE = [
   "Chat.ReadWrite",
   "ChannelMessage.Send",
   "ChannelMessage.Read.All",
-  // Members of a channel: Murmur's Teams shared lists copy their readers from it (Murmur's 0036・0037).
+  // Members of a channel: the topic index's Teams shared lists copy their readers from it (the topic index's 0036・0037).
   "ChannelMember.Read.All",
   "Team.ReadBasic.All",
   "Channel.ReadBasic.All",
-  // To Do: Murmur reads a task list as a personal list, and the stand creates and updates tasks (Murmur's 0039).
+  // To Do: The topic index reads a task list as a personal list, and the stand creates and updates tasks (the topic index's 0039).
   "Tasks.ReadWrite",
 ].join(" ");
 
@@ -129,15 +129,15 @@ export function catalog(env: Env): Services {
       "https://analyticsadmin.googleapis.com",
       "https://www.googleapis.com/auth/analytics.readonly",
     ),
-    // Read and write: Murmur reads a task list as a personal list, and the stand creates and completes tasks (Murmur's 0041).
-    // The Tasks API is also served from www.googleapis.com (/tasks/v1/...), which lets Murmur read the connected account's
+    // Read and write: The topic index reads a task list as a personal list, and the stand creates and completes tasks (the topic index's 0041).
+    // The Tasks API is also served from www.googleapis.com (/tasks/v1/...), which lets the topic index read the connected account's
     // address from /oauth2/v3/userinfo with the same credential (the Tasks API has no profile endpoint).
     tasks: google(
       "Google Tasks",
       "https://www.googleapis.com",
       "https://www.googleapis.com/auth/tasks https://www.googleapis.com/auth/userinfo.email",
     ),
-    // Read spaces, members and messages, and post messages (Murmur's 0045). The Chat API asks for a Chat app
+    // Read spaces, members and messages, and post messages (the topic index's 0045). The Chat API asks for a Chat app
     // configuration in the Google Cloud project even when it is called with user credentials.
     chat: google(
       "Google Chat",

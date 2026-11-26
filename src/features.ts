@@ -1,4 +1,4 @@
-// Features: apps that run inside this Worker (Murmur, docs/adr/0005) instead of behind a
+// Features: apps that run inside this Worker (the topic index, docs/adr/0005) instead of behind a
 // Service Binding. The gateway core knows only this interface; the Worker's entry registers
 // the features, and nothing else imports their code. A feature is off unless the
 // deployment configures it, and each user turns it on for themselves (consent).
@@ -10,12 +10,17 @@ export interface Feature {
   // Also the pseudo service name: the stand calls `/api/<name>/...` with a gateway token
   // that covers `identity:<name>`, and public routes live under `/<name>/...`.
   name: string;
+  // Names the feature went by before (docs/adr/0009). Requests, tokens, consent and app ports that
+  // still carry one reach the feature as if they named it: `/api/<old>/...` and `/<old>/...` are
+  // served (webhooks registered upstream keep their URL until they are renewed), and
+  // `/features/<old>/...` redirects to `/features/<name>/...`. Nothing new is issued under an old name.
+  formerNames?: string[];
   displayName: string;
   // What turning the feature on lets it do, shown on the consent page.
   consentText: string;
   // Where the consent page sends the user back to, under `/<name>`.
   consentCallbackPath: string;
-  // Pages for the signed-in user at `/features/<name>` and below (Murmur's 0048 and 0051), linked
+  // Pages for the signed-in user at `/features/<name>` and below (the topic index's 0048 and 0051), linked
   // from the home page. The gateway checks the session and passes the user's ID, the path under
   // the page's root ('' for the root itself) and the root (`/features/<name>`, for links); the
   // feature returns the page's title and body as HTML (escaping what it shows itself; it may use
@@ -44,8 +49,19 @@ export function features(env: Env): Feature[] {
   return factory(env);
 }
 
+// By its name or a former one.
 export function feature(env: Env, name: string): Feature | undefined {
-  return features(env).find((f) => f.name === name);
+  return features(env).find((f) => namesOf(f).includes(name));
+}
+
+// The feature's name first, then its former names.
+export function namesOf(f: Feature): string[] {
+  return [f.name, ...(f.formerNames ?? [])];
+}
+
+// The service a name stands for now: a feature's former name becomes its name; anything else is itself.
+export function currentName(env: Env, name: string): string {
+  return feature(env, name)?.name ?? name;
 }
 
 // Rewrites the request's path, keeping method, headers and body.

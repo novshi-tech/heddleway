@@ -1,6 +1,6 @@
-import { appAllows, getApp } from "./apps";
+import { appAllows, getApp, withCurrentNames } from "./apps";
 import { publicUrl, type ServiceConfig } from "./config";
-import { feature, withPath } from "./features";
+import { currentName, feature, namesOf, withPath } from "./features";
 import { IDENTITY_CREDENTIAL, signIdentity } from "./identity";
 import { relayToLocal, serviceIdOfTunnelCredential } from "./tunnel";
 import { getUpstream } from "./services";
@@ -50,7 +50,8 @@ export async function handleProxy(request: Request, env: Env, ctx: ExecutionCont
   const url = new URL(request.url);
   const rest = url.pathname.slice(API_PREFIX.length);
   const slash = rest.indexOf("/");
-  const service = slash === -1 ? rest : rest.slice(0, slash);
+  // A feature's former name (docs/adr/0009) reaches the feature under its name.
+  const service = currentName(env, slash === -1 ? rest : rest.slice(0, slash));
   const upstreamPath = slash === -1 ? "" : rest.slice(slash);
 
   const token = bearer(request);
@@ -67,7 +68,7 @@ export async function handleProxy(request: Request, env: Env, ctx: ExecutionCont
       return denied(status, message);
     };
     if (!entry) return refuse("unregistered", 403, `the app "${claims.app}" is no longer registered at this gateway`);
-    if (!appAllows(entry.definition, service, request.method, upstreamPath)) {
+    if (!appAllows(withCurrentNames(env, entry.definition), service, request.method, upstreamPath)) {
       return refuse("outside_ports", 403, `not allowed for the app "${claims.app}": ${request.method} ${service} ${upstreamPath || "/"}`);
     }
   }
@@ -83,7 +84,7 @@ export async function handleProxy(request: Request, env: Env, ctx: ExecutionCont
   // request keeps the gateway token: the feature checks it again through the gateway's port.
   const f = feature(env, service);
   if (f) {
-    if (claims.creds?.[service] !== IDENTITY_CREDENTIAL) return denied(403, `token does not cover service: ${service}`);
+    if (!namesOf(f).some((name) => claims.creds?.[name] === IDENTITY_CREDENTIAL)) return denied(403, `token does not cover service: ${service}`);
     return f.fetch(withPath(request, `/api${upstreamPath}`), ctx);
   }
 

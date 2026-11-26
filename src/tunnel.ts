@@ -1,7 +1,7 @@
 import { calculateJwkThumbprint, decodeJwt, importJWK, jwtVerify, type JWK } from "jose";
 import { publicUrl } from "./config";
 import { randomToken } from "./crypto";
-import { features } from "./features";
+import { features, namesOf } from "./features";
 import { IDENTITY_CREDENTIAL } from "./identity";
 import { denied, DROP_RESPONSE_HEADERS, forwardHeaders, handleProxy } from "./proxy";
 import { registryFor } from "./registry";
@@ -173,7 +173,7 @@ export function validName(name: string): boolean {
 
 // A name must not be one that the proxy resolves to something else.
 export async function nameInUse(env: Env, name: string): Promise<boolean> {
-  if (features(env).some((f) => f.name === name)) return true;
+  if (features(env).some((f) => namesOf(f).includes(name))) return true;
   return Object.hasOwn((await getDirectory(env)).services, name);
 }
 

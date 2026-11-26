@@ -10,7 +10,7 @@
     "secret": "node tools/wrangler.mjs secret",
     "tail": "node tools/wrangler.mjs tail",
     "d1-migrate": "node tools/wrangler.mjs d1-migrate",
-    "postinstall": "npm ci --prefix murmur --no-audit --no-fund",
+    "postinstall": "npm ci --prefix topic-index --no-audit --no-fund",
     "typecheck": "python3 tools/build-plugin-zip.py --bundle && tsc --noEmit",
     "test": "vitest run && python3 -m unittest discover -s test/scripts",
     "cf-typegen": "wrangler types -c wrangler.example.jsonc",

@@ -51,12 +51,12 @@ async function register(variant: string, name: string): Promise<string> {
 }
 
 async function appToken(app: string, userId = "app-user") {
-  const { token } = await signToken(env.SIGNING_KEY, BASE, "api", userId, { creds: { murmur: IDENTITY_CREDENTIAL }, app }, 60);
+  const { token } = await signToken(env.SIGNING_KEY, BASE, "api", userId, { creds: { "topic-index": IDENTITY_CREDENTIAL }, app }, 60);
   return token;
 }
 
 function call(token: string, method: string, path: string) {
-  return SELF.fetch(`${BASE}/api/murmur${path}`, { method, headers: { authorization: `Bearer ${token}` } });
+  return SELF.fetch(`${BASE}/api/topic-index${path}`, { method, headers: { authorization: `Bearer ${token}` } });
 }
 
 const definition = (ports: AppDefinition["ports"]): AppDefinition => ({
@@ -70,26 +70,26 @@ const definition = (ports: AppDefinition["ports"]): AppDefinition => ({
 
 describe("app definitions", () => {
   it("allow only whole matches of a port's path, and refuse path tricks", () => {
-    const app = definition([{ service: "murmur", method: "GET", path: "^/threads$" }]);
-    expect(appAllows(app, "murmur", "GET", "/threads")).toBe(true);
-    expect(appAllows(app, "murmur", "GET", "/threads?since=x")).toBe(true);
-    expect(appAllows(app, "murmur", "POST", "/threads")).toBe(false);
+    const app = definition([{ service: "topic-index", method: "GET", path: "^/threads$" }]);
+    expect(appAllows(app, "topic-index", "GET", "/threads")).toBe(true);
+    expect(appAllows(app, "topic-index", "GET", "/threads?since=x")).toBe(true);
+    expect(appAllows(app, "topic-index", "POST", "/threads")).toBe(false);
     expect(appAllows(app, "graph", "GET", "/threads")).toBe(false);
-    expect(appAllows(app, "murmur", "GET", "/threads/1")).toBe(false);
-    expect(appAllows(app, "murmur", "GET", "/x/../threads")).toBe(false);
-    expect(appAllows(app, "murmur", "GET", "/threads%2f..")).toBe(false);
+    expect(appAllows(app, "topic-index", "GET", "/threads/1")).toBe(false);
+    expect(appAllows(app, "topic-index", "GET", "/x/../threads")).toBe(false);
+    expect(appAllows(app, "topic-index", "GET", "/threads%2f..")).toBe(false);
   });
 
   it("are read from the metadata document, refusing unanchored paths and a wrong client ID", () => {
-    const base = { client_id: "https://x.example/c.json", heddleway_app: { name: "x", description: "d", ports: [{ service: "murmur", method: "GET", path: "^/threads$" }] } };
+    const base = { client_id: "https://x.example/c.json", heddleway_app: { name: "x", description: "d", ports: [{ service: "topic-index", method: "GET", path: "^/threads$" }] } };
     expect(parseAppDefinition(base, "https://x.example/c.json").ports).toHaveLength(1);
     expect(() => parseAppDefinition(base, "https://y.example/c.json")).toThrow(/client_id/);
-    const loose = { ...base, heddleway_app: { ...base.heddleway_app, ports: [{ service: "murmur", method: "GET", path: "/threads" }] } };
+    const loose = { ...base, heddleway_app: { ...base.heddleway_app, ports: [{ service: "topic-index", method: "GET", path: "/threads" }] } };
     expect(() => parseAppDefinition(loose, "https://x.example/c.json")).toThrow(/全体一致/);
   });
 
   it("check their examples", () => {
-    const app = { ...definition([{ service: "murmur", method: "GET", path: "^/threads$" }]), examples: { allow: ["GET murmur /threads"], deny: ["GET murmur /threads"] } };
+    const app = { ...definition([{ service: "topic-index", method: "GET", path: "^/threads$" }]), examples: { allow: ["GET topic-index /threads"], deny: ["GET topic-index /threads"] } };
     expect(checkExamples(app).map((r) => r.expected === r.actual)).toEqual([true, false]);
   });
 });
@@ -251,12 +251,12 @@ describe("authorizing an app", () => {
       return ((await res.json()) as { result: { content: { text: string }[]; isError?: boolean } }).result;
     };
     const listed = JSON.parse((await tool("list_credentials")).content[0].text);
-    expect(listed.services).toEqual(["murmur"]);
-    expect(listed.credentials.map((c: { id: string }) => c.id)).toEqual(["identity:murmur"]);
+    expect(listed.services).toEqual(["topic-index"]);
+    expect(listed.credentials.map((c: { id: string }) => c.id)).toEqual(["identity:topic-index"]);
     expect((await tool("issue_token", { credential_ids: ["identity:board"] })).isError).toBe(true);
-    const ok = JSON.parse((await tool("api_get", { credential_id: "identity:murmur", path: "/threads" })).content[0].text);
+    const ok = JSON.parse((await tool("api_get", { credential_id: "identity:topic-index", path: "/threads" })).content[0].text);
     expect(ok.status).toBe(200);
-    const refused = await tool("api_request", { method: "POST", credential_id: "identity:murmur", path: "/sent", json: {} });
+    const refused = await tool("api_request", { method: "POST", credential_id: "identity:topic-index", path: "/sent", json: {} });
     expect(refused.isError).toBe(true);
   });
 });

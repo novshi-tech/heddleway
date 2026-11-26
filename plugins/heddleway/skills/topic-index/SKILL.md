@@ -5,7 +5,7 @@ description: Heddleway のトピック索引(メール(Outlook・Gmail)・Teams�
 
 # トピック索引
 
-トピック索引は Heddleway(API ゲートウェイ)の機能で、ゲートウェイの上流サービス `murmur` として登録されている(`murmur` は内部の名前。ユーザーには「トピック索引」と言う)。デプロイによっては無効になっている。トークンの発行とスクリプトの基本的な使い方は、同じプラグインの `heddleway` スキルに従う。
+トピック索引は Heddleway(API ゲートウェイ)の機能で、ゲートウェイの上流サービス `topic-index` として登録されている。古いゲートウェイでは同じものが `murmur`(以前の内部の名前)で出る。`list_credentials` に `identity:topic-index` がなく `identity:murmur` があれば、以下の `topic-index` を `murmur` に読み替える(画面の URL も `/features/murmur`。新しいゲートウェイでは古い名前も同じものとして通る)。デプロイによっては無効になっている。トークンの発行とスクリプトの基本的な使い方は、同じプラグインの `heddleway` スキルに従う。
 
 トピック索引は、メール(Outlook・Gmail)・Teams・Slack・LINE・Jira・To Do・Google Tasks などのやりとりを**トピック**にまとめて、**担当**と**アテンション**を追う索引。トピックの中身はソース(メールボックス・チャネル・課題など)にあり、索引は写しを持つだけで、管理はしない。アテンションには、タスクのものと FYI のものが区別されずに入っている。どちらかを決めるのは読んだ本人とあなた(エージェント)で、トピック索引は決めない。自分の**タスク**は、自分が担当のトピックと自分の To Do / Google Tasks のタスク、それと、アテンションのうち読んでタスクと分かったもの。
 
@@ -37,16 +37,16 @@ description: Heddleway のトピック索引(メール(Outlook・Gmail)・Teams�
 
 ## 手順
 
-1. 作業する組織のコネクタを選ぶ(`heddleway` スキルの「コネクタの選び方」)。トピック索引は組織(チーム)ごとに 1 つで、その組織のゲートウェイの上流になっている。組織の分からない「自分のタスク」は、`identity:murmur` を持つコネクタが 2 つ以上あれば、どの組織のものかを聞くか、組織ごとに分けて見せる。
-2. そのコネクタの `list_credentials` に `identity:murmur` があることを確かめる(表示名は「トピック索引(サインイン中のユーザー)」)。ユーザーが登録するものはない。ゲートウェイが、サインイン中のユーザーとして本体に伝える。
-3. 同じコネクタの `issue_token` に `identity:murmur` を渡してトークンを発行し、`GW_TOKEN` と `GW_BASE_URL` を設定する。送信に使うサービスの認証情報と一緒に発行してよい(同じ組織のコネクタのものだけ)。
-4. `scripts/gw_request.py`(`heddleway` スキルのものと同じ)で呼ぶ。サービス名は `murmur`。パスは下の表のとおり(先頭に `/api` は付けない)。
+1. 作業する組織のコネクタを選ぶ(`heddleway` スキルの「コネクタの選び方」)。トピック索引は組織(チーム)ごとに 1 つで、その組織のゲートウェイの上流になっている。組織の分からない「自分のタスク」は、`identity:topic-index` を持つコネクタが 2 つ以上あれば、どの組織のものかを聞くか、組織ごとに分けて見せる。
+2. そのコネクタの `list_credentials` に `identity:topic-index` があることを確かめる(表示名は「トピック索引(サインイン中のユーザー)」)。ユーザーが登録するものはない。ゲートウェイが、サインイン中のユーザーとして本体に伝える。
+3. 同じコネクタの `issue_token` に `identity:topic-index` を渡してトークンを発行し、`GW_TOKEN` と `GW_BASE_URL` を設定する。送信に使うサービスの認証情報と一緒に発行してよい(同じ組織のコネクタのものだけ)。
+4. `scripts/gw_request.py`(`heddleway` スキルのものと同じ)で呼ぶ。サービス名は `topic-index`。パスは下の表のとおり(先頭に `/api` は付けない)。
 
 ```sh
-python3 ${CLAUDE_SKILL_DIR}/scripts/gw_request.py GET murmur /me
-python3 ${CLAUDE_SKILL_DIR}/scripts/gw_request.py GET murmur /threads -q filter=my_turn
-python3 ${CLAUDE_SKILL_DIR}/scripts/gw_request.py GET murmur /threads/thr_12 -q since=2026-10-21T09:00:00+09:00
-python3 ${CLAUDE_SKILL_DIR}/scripts/gw_request.py POST murmur /sent --json '{"data_source":"ds_support","reply_to_thread_id":"thr_12","to":["owner@example.com"],"body":"...","sent_ref":"<...@mail>"}'
+python3 ${CLAUDE_SKILL_DIR}/scripts/gw_request.py GET topic-index /me
+python3 ${CLAUDE_SKILL_DIR}/scripts/gw_request.py GET topic-index /threads -q filter=my_turn
+python3 ${CLAUDE_SKILL_DIR}/scripts/gw_request.py GET topic-index /threads/thr_12 -q since=2026-10-21T09:00:00+09:00
+python3 ${CLAUDE_SKILL_DIR}/scripts/gw_request.py POST topic-index /sent --json '{"data_source":"ds_support","reply_to_thread_id":"thr_12","to":["owner@example.com"],"body":"...","sent_ref":"<...@mail>"}'
 ```
 
 (`${CLAUDE_SKILL_DIR}` はこのスキルのディレクトリ。Claude 以外のエージェントでは、このスキルの置き場所に読み替える)
@@ -64,7 +64,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/gw_request.py POST murmur /sent --json '{"da
    - `merge_candidate`: そのアドレスは別の仮の連絡先(`ghostContactId`)に付いている。同じ人なら、ユーザーに確かめてから `POST /contacts/{自分の contactId}/merge` で `from` に仮の連絡先を渡してまとめる
 4. **共有リスト**(Jira のプロジェクト、Teams のチャネル、Google Chat のスペース、これから Slack のチャネル)は、スペースに 1 つ。そのスペースを読める人なら誰でもつなげ、メンバーはソースから自動で写る(Jira はプロジェクトを閲覧できる人のうち、自分の Jira をゲートウェイにつないでトピック索引を有効にした人。Teams はチャネルのメンバーのうち、Google Chat はスペースのメンバーのうち、このゲートウェイにサインインしたことのある人)。共有メールボックス・LINE 公式アカウントは、読める人がそれぞれ自分でつなぐとメンバーになる。メンバーになったリストで自分のアカウントを登録するなら `POST /lists/{list_id}/identity`
 5. タスクで追うなら、タスクのサービスのリストをつなぐ(下の「To Do をつなぐ」「Google Tasks をつなぐ」)。メモ(`add_note`)は個人リストのトピックに書くので、メール(Outlook・Gmail)かタスクのサービスをつないでから使える
-6. 終わったら、ユーザーに `<ゲートウェイ>/features/murmur/lists`(ホームの「今やること・参加中のリストを見る」の「参加中のリスト」のタブ)を案内する。自分がメンバーのリストと取り込みの状態、まだつないでいないものを、ユーザーが自分で確かめられる。「どのリストに入っている?」と聞かれたときも、`GET /connections` で答えたうえでこの画面を案内してよい
+6. 終わったら、ユーザーに `<ゲートウェイ>/features/topic-index/lists`(ホームの「今やること・参加中のリストを見る」の「参加中のリスト」のタブ)を案内する。自分がメンバーのリストと取り込みの状態、まだつないでいないものを、ユーザーが自分で確かめられる。「どのリストに入っている?」と聞かれたときも、`GET /connections` で答えたうえでこの画面を案内してよい
 
 ### Outlook をつなぐ
 
@@ -342,7 +342,7 @@ LINE 公式アカウントは、アカウント 1 つを 1 つの**共有リス�
 
 ## よくある流れ
 
-1. 「今日やることは?」「自分のタスクを見せて」: `GET /threads -q filter=my_turn`(自分の担当とアテンション)と `filter=mine`(自分の To Do / Google Tasks のタスク)。`myTurn` で理由(担当・アテンション・リスト宛て)を添えて見せる。アテンションだけのものは本文を読んで、タスクか FYI かを分けて伝え、FYI と決まったものはユーザーに確かめて `acknowledge` で外す。タスクと決まったものは、担当するか To Do / Google Tasks のタスクにするかをユーザーと決める。割当待ちは `filter=triage`、返事待ちは `filter=awaiting`、期限超過は `filter=overdue`。前回から何が動いたかは `-q since=<前回見た時刻>`。一覧は会話の中で流れていくので、答えの終わりに、いつでも見返せる画面 `<ゲートウェイ>/features/murmur`(「今やること」。担当・タスク・アテンション・返事待ち・割当待ちと、各トピックの経過を本人の目線で見られる。参照だけ)を一言添える
+1. 「今日やることは?」「自分のタスクを見せて」: `GET /threads -q filter=my_turn`(自分の担当とアテンション)と `filter=mine`(自分の To Do / Google Tasks のタスク)。`myTurn` で理由(担当・アテンション・リスト宛て)を添えて見せる。アテンションだけのものは本文を読んで、タスクか FYI かを分けて伝え、FYI と決まったものはユーザーに確かめて `acknowledge` で外す。タスクと決まったものは、担当するか To Do / Google Tasks のタスクにするかをユーザーと決める。割当待ちは `filter=triage`、返事待ちは `filter=awaiting`、期限超過は `filter=overdue`。前回から何が動いたかは `-q since=<前回見た時刻>`。一覧は会話の中で流れていくので、答えの終わりに、いつでも見返せる画面 `<ゲートウェイ>/features/topic-index`(「今やること」。担当・タスク・アテンション・返事待ち・割当待ちと、各トピックの経過を本人の目線で見られる。参照だけ)を一言添える
 2. 「この件は私が担当する」: `POST /threads/{id}/claim`(Jira などはソースで担当者を変える)。引き継ぐなら `{"user_id": "..."}`、手放すなら `{"user_id": null}`
 3. 「この課題に着手する」: 上の「To Do / Google Tasks のタスクで追う」。To Do / Google Tasks のタスクを作る → `POST /sent` で記録して元のトピックと結ぶ → (チームに見せるなら)元のトピックを `claim`。以後、外に出したものは `source_thread_id` に To Do / Google Tasks のタスクのトピックを入れて記録し、経過はそのトピックにメモする
 4. 「この件をまとめて追いたい」: To Do / Google Tasks のタスクを作って `POST /sent` で記録する → `GET /threads/{id}` の `linkCandidates`(結ぶ候補)と、ユーザーの話から関係するトピックを選ぶ → `POST /threads/{タスクのトピックの id}/links`。LINE のトピック 1 つだけで済むなら、To Do に作らず担当するだけでよい。自分のメールのトピック 1 つなら、そこにメモを書くだけでよい

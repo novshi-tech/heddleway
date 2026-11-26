@@ -1,6 +1,6 @@
 # Heddleway
 
-エージェントのための、チームのゲートウェイです(a team gateway for agents。名前は [docs/adr/0006](docs/adr/0006-name-heddleway.md))。Claude から、既存のコネクタではできない API 呼び出しを行うための汎用の API ゲートウェイで、通り抜けるやりとりを、トピック索引(内部の名前は Murmur)がトピックとして整理します。Cloudflare Workers で動くリモート MCP サーバーとして、自分の組織の Cloudflare アカウントにデプロイします。
+エージェントのための、チームのゲートウェイです(a team gateway for agents。名前は [docs/adr/0006](docs/adr/0006-name-heddleway.md))。Claude から、既存のコネクタではできない API 呼び出しを行うための汎用の API ゲートウェイで、通り抜けるやりとりを、トピック索引(以前の内部の名前は Murmur。[docs/adr/0009](docs/adr/0009-rename-murmur-to-topic-index.md))がトピックとして整理します。Cloudflare Workers で動くリモート MCP サーバーとして、自分の組織の Cloudflare アカウントにデプロイします。
 
 Claude(Cowork など)のコード実行のサンドボックスから、freee や Microsoft 365 などの API を、スクリプトで直接呼べるようになります。一覧の全件取得や集計、ファイルのダウンロード・アップロードのように、コネクタのツールでは手間のかかる作業を、Claude がスクリプトを書いて進めます。1 件の取得や登録のような小さい呼び出しは、コネクタのツール `api_get` / `api_request` から、スクリプトなしで呼べます([docs/adr/0007](docs/adr/0007-call-apis-from-mcp-tools.md))。
 
@@ -21,15 +21,15 @@ Claude ──MCP(OAuth でサインイン)──▶ ゲートウェイ ─┐
 
 Claude の Cowork で動作を確認しています。MCP の OAuth に従っているので、ほかの Claude のクライアントや ChatGPT のコネクタにも対応する設計ですが、まだ確認していません。設計の詳細は [docs/concept.md](docs/concept.md) と [docs/auth-design.md](docs/auth-design.md) にあります。
 
-## トピック索引(Murmur)
+## トピック索引
 
-[`murmur/`](murmur/) は、ゲートウェイの機能の 1 つ「トピック索引」です(内部の名前は Murmur)。メール(Outlook・Gmail)・Teams(チャネルとチャット)・Google Chat(スペースとチャット)・Jira・To Do・Google Tasks などのやりとりをトピック(アクションアイテムの候補になる会話)にまとめ、担当とアテンションを追います。アテンションにはタスクと FYI が区別されずに入っていて、どちらかはエージェントが読んで決めます。利用者は意識せず、エージェント(Claude など)が裏で読んで「いまやるべきこと」に答えるための索引です([docs/adr/0005](docs/adr/0005-murmur-as-a-feature.md))。
+[`topic-index/`](topic-index/) は、ゲートウェイの機能の 1 つ「トピック索引」です(以前の内部の名前は Murmur。[docs/adr/0009](docs/adr/0009-rename-murmur-to-topic-index.md))。メール(Outlook・Gmail)・Teams(チャネルとチャット)・Google Chat(スペースとチャット)・Jira・To Do・Google Tasks などのやりとりをトピック(アクションアイテムの候補になる会話)にまとめ、担当とアテンションを追います。アテンションにはタスクと FYI が区別されずに入っていて、どちらかはエージェントが読んで決めます。利用者は意識せず、エージェント(Claude など)が裏で読んで「いまやるべきこと」に答えるための索引です([docs/adr/0005](docs/adr/0005-murmur-as-a-feature.md))。
 
-- ゲートウェイの Worker に入っていて、デプロイの設定に Murmur の D1 を足すと有効になります(`wrangler.example.jsonc` の末尾)。足さなければ、ゲートウェイはトピック索引なしで今までどおり動きます
+- ゲートウェイの Worker に入っていて、デプロイの設定にトピック索引の D1 を足すと有効になります(`wrangler.example.jsonc` の末尾)。足さなければ、ゲートウェイはトピック索引なしで今までどおり動きます
 - 利用者ごとに、ゲートウェイの画面で有効にします(エージェントにトピック索引への接続を頼むと、有効にする画面に案内されます)。有効にした人の接続だけを、読み取りだけで使います。「つないだサービス」の画面でいつでも無効にできます
-- 自分がメンバーになっているリスト(取り込みの状態、担当とアテンション・割当待ちの件数、共有リストのメンバー)と、リストの増やし方は、ホームの「参加中のリストを見る」(`/features/murmur`)で見られます。メンバーでない共有リストは出しません(Murmur の [0048](murmur/docs/adr/0048-my-lists-page.md))
+- 自分がメンバーになっているリスト(取り込みの状態、担当とアテンション・割当待ちの件数、共有リストのメンバー)と、リストの増やし方は、ホームの「参加中のリストを見る」(`/features/topic-index`)で見られます。メンバーでない共有リストは出しません(トピック索引の [0048](topic-index/docs/adr/0048-my-lists-page.md))
 - 個人のメールとタスクは、組織のデプロイにあるサービスで決まります。Microsoft 365 の組織は Outlook と To Do(`graph`)、Google Workspace の組織は Gmail と Google Tasks(`gmail`・`tasks`)と Google Chat のチャット(`chat`)です。Google の準備と設定は [docs/deploy.md](docs/deploy.md) の「Google」にあります
-- エージェントからは、ほかのサービスと同じく `issue_token`(`identity:murmur`)と REST(`/api/murmur/...`)で使います。使い方はプラグイン `heddleway` の `topic-index` スキルです
+- エージェントからは、ほかのサービスと同じく `issue_token`(`identity:topic-index`)と REST(`/api/topic-index/...`)で使います。使い方はプラグイン `heddleway` の `topic-index` スキルです
 
 ## 前提
 
@@ -86,10 +86,10 @@ Claude のようなエージェント(スタンド)のほかに、決まった�
        "name": "dispatcher",
        "description": "トピック索引のエージェント用のリストを見張り、エージェントを起動します",
        "ports": [
-         { "service": "murmur", "method": "GET", "path": "^/threads$" },
-         { "service": "murmur", "method": "POST", "path": "^/notes$" }
+         { "service": "topic-index", "method": "GET", "path": "^/threads$" },
+         { "service": "topic-index", "method": "POST", "path": "^/notes$" }
        ],
-       "examples": { "allow": ["GET murmur /threads?since=2026-11-01T00:00:00Z"], "deny": ["POST murmur /sent"] }
+       "examples": { "allow": ["GET topic-index /threads?since=2026-11-01T00:00:00Z"], "deny": ["POST topic-index /sent"] }
      }
    }
    ```
@@ -122,7 +122,7 @@ Claude のようなエージェント(スタンド)のほかに、決まった�
 | | `gbizinfo` | `gbizinfo` | 経済産業省の法人情報(gBizINFO)の検索 |
 | | `serper` | `serper` | Serper 経由の Google 検索(ウェブ・画像・ニュース・地図・論文など) |
 | | `x` | `x` | X(旧 Twitter)のポストの検索・取得、投稿・返信・画像の添付、いいね・リポスト・ブックマーク(ユーザー本人として) |
-| | `topic-index` | `murmur` | トピック索引(このゲートウェイの機能)のトピック・担当とアテンション・To Do / Google Tasks のタスクでの追跡と経過のメモ・送信の記録。有効にする手順は上の「トピック索引(Murmur)」 |
+| | `topic-index` | `topic-index` | トピック索引(このゲートウェイの機能)のトピック・担当とアテンション・To Do / Google Tasks のタスクでの追跡と経過のメモ・送信の記録。有効にする手順は上の「トピック索引」 |
 | `heddleway-microsoft` | `microsoft-graph` | `graph` | Outlook メール、OneDrive / SharePoint、Teams、予定表 |
 | `heddleway-google` | `gmail` | `gmail` | メールの検索・送信・返信・下書き、添付ファイル |
 | | `google-drive` | `drive` | ファイルの検索・ダウンロード・エクスポート・アップロード、共有ドライブ |
@@ -168,7 +168,7 @@ npm run typecheck
 npm test          # Worker のテストと、スキルのスクリプトのテスト
 ```
 
-Murmur は `murmur/` の中で別のパッケージになっています。ルートの `npm install` が `murmur/` の依存も入れます(Worker が Murmur を一緒にバンドルするため)。Murmur のテストは `cd murmur && npm test`(詳しくは [murmur/CLAUDE.md](murmur/CLAUDE.md))。
+トピック索引は `topic-index/` の中で別のパッケージになっています。ルートの `npm install` が `topic-index/` の依存も入れます(Worker がトピック索引を一緒にバンドルするため)。トピック索引のテストは `cd topic-index && npm test`(詳しくは [topic-index/CLAUDE.md](topic-index/CLAUDE.md))。
 
 ## License
 

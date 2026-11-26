@@ -1,5 +1,5 @@
-import { scopeTarget, type ReadScope, type UpstreamMethod } from "../murmur/src/ports/gateway";
-import { features } from "./features";
+import { scopeTarget, type ReadScope, type UpstreamMethod } from "../topic-index/src/ports/gateway";
+import { currentName, feature } from "./features";
 import { registryFor } from "./registry";
 import { getDirectory } from "./services";
 
@@ -107,6 +107,12 @@ export function appAllows(app: AppDefinition, service: string, method: string, p
   return scopeTarget(scopeOf(app, service), method as UpstreamMethod, path || "/") !== null;
 }
 
+// The app's ports with each service under the name it has now: ports registered under a feature's
+// former name (src/features.ts, docs/adr/0009) reach the feature.
+export function withCurrentNames(env: Env, app: AppDefinition): AppDefinition {
+  return { ...app, ports: app.ports.map((p) => ({ ...p, service: currentName(env, p.service) })) };
+}
+
 export function appServices(app: AppDefinition): string[] {
   return [...new Set(app.ports.map((p) => p.service))];
 }
@@ -148,8 +154,7 @@ export async function listApps(env: Env): Promise<AppEntry[]> {
 // Display names of services, for the consent and admin pages; a feature takes its name over a service.
 export async function serviceNames(env: Env, services: string[]): Promise<string[]> {
   const directory = await getDirectory(env);
-  const own = features(env);
   return services.map(
-    (s) => own.find((f) => f.name === s)?.displayName ?? (Object.hasOwn(directory.services, s) ? (directory.services[s].display_name ?? s) : s),
+    (s) => feature(env, s)?.displayName ?? (Object.hasOwn(directory.services, s) ? (directory.services[s].display_name ?? s) : s),
   );
 }

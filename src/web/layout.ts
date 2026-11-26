@@ -175,7 +175,7 @@ input[type=file] { display: block; margin-top: .4rem; font: inherit; color: var(
 a.row-title { color: var(--ink); text-decoration: none; }
 a.row-title:hover { text-decoration: underline; }
 
-/* A dense list of items (Murmur's "now" page): one tappable row per item, title up to two lines, one line of meta. */
+/* A dense list of items (the topic index's "now" page): one tappable row per item, title up to two lines, one line of meta. */
 .now .tabs { margin-bottom: 1rem; }
 .now-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .75rem; margin-bottom: .5rem; }
 .now-head h1 { font-size: 1.375rem; margin: 0; }

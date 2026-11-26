@@ -95,12 +95,12 @@ npm run secret -- <名前> put OAUTH_<CLIENT>_CLIENT_SECRET
 ゲートウェイのサインインを信頼する自社の API(`auth.type` が `identity`)は、ユーザーが何も登録しません。ゲートウェイがサインイン中のユーザーの ID(`sub`)を Ed25519 で署名し、`Authorization: Bearer <JWT>` として送ります。JWT は `iss` がゲートウェイの URL、`aud` が設定の `audience`、寿命は 5 分です。上流は `https://<ゲートウェイ>/.well-known/jwks.json` の公開鍵で検証します。Claude からは、`list_credentials` に `identity:<サービス名>` という認証情報として見えます。
 
 ```jsonc
-"murmur": {
-  "display_name": "トピック索引",
-  "base_url": "https://murmur.internal/api",
+"my-app": {
+  "display_name": "自社のアプリ",
+  "base_url": "https://my-app.internal/api",
   // 公開ルートを持たない Worker には、Service Binding で中継する
-  "binding": "MURMUR",
-  "auth": { "type": "identity", "audience": "murmur" }
+  "binding": "MY_APP",
+  "auth": { "type": "identity", "audience": "my-app" }
 }
 ```
 
@@ -109,13 +109,13 @@ npm run secret -- <名前> put OAUTH_<CLIENT>_CLIENT_SECRET
 node -e "crypto.subtle.generateKey({name:'Ed25519'},true,['sign','verify']).then(k=>crypto.subtle.exportKey('jwk',k.privateKey)).then(j=>console.log(JSON.stringify(j)))" | npm run secret -- <名前> put IDENTITY_SIGNING_KEY
 ```
 
-`binding` を書いたサービスは、公開のインターネットではなく、デプロイの設定の `services` に書いた Service Binding(`{ "binding": "MURMUR", "service": "murmur" }`)で上流を呼びます。`base_url` のホスト名は使われず、パスだけが意味を持ちます。
+`binding` を書いたサービスは、公開のインターネットではなく、デプロイの設定の `services` に書いた Service Binding(`{ "binding": "MY_APP", "service": "my-app" }`)で上流を呼びます。`base_url` のホスト名は使われず、パスだけが意味を持ちます。
 
 ### 人がいないときに Worker が使う接続先(`client_credentials`)
 
-Murmur のように、夜中の通知や定期の見回りでユーザーがいないときにも上流を呼ぶ Worker のために、OAuth 2.0 の client credentials でゲートウェイ自身がトークンを取る接続先を置けます(設計は [docs/background-access.md](background-access.md))。持ち主はユーザーではなくデプロイで、Web 画面にも `list_credentials` にも出ず、REST(`/api/`)からも使えません。
+夜中の通知や定期の見回りでユーザーがいないときにも上流を呼ぶ Worker のために、OAuth 2.0 の client credentials でゲートウェイ自身がトークンを取る接続先を置けます(設計は [docs/background-access.md](background-access.md))。持ち主はユーザーではなくデプロイで、Web 画面にも `list_credentials` にも出ず、REST(`/api/`)からも使えません。
 
-> トピック索引(Murmur)の共有メールボックスは、この接続先を使いません。メンバーの委任(`Mail.Read.Shared`)で見回りで読みます(Murmur の [0042](../murmur/docs/adr/0042-shared-mailbox-by-polling.md))。デプロイの設定 `MURMUR_SHARED_SERVICES` に `shared-mailbox` を足し、Entra のアプリの API のアクセス許可(委任)に `Mail.Read.Shared`(か `Mail.ReadWrite.Shared`)を足して組織で同意すると使えます。ゲートウェイの要求するスコープには足さないでください(リフレッシュで未同意のスコープを求めて、接続が切れることがあります)。
+> トピック索引の共有メールボックスは、この接続先を使いません。メンバーの委任(`Mail.Read.Shared`)で見回りで読みます(トピック索引の [0042](../topic-index/docs/adr/0042-shared-mailbox-by-polling.md))。デプロイの設定 `MURMUR_SHARED_SERVICES` に `shared-mailbox` を足し、Entra のアプリの API のアクセス許可(委任)に `Mail.Read.Shared`(か `Mail.ReadWrite.Shared`)を足して組織で同意すると使えます。ゲートウェイの要求するスコープには足さないでください(リフレッシュで未同意のスコープを求めて、接続が切れることがあります)。
 
 - 管理画面の「接続先を追加」で認証方式に「OAuth 2.0(client credentials)」を選び、トークンの URL・スコープ・クライアント ID・シークレットを入れます。設定ファイルに書くこともできます(クライアントは `OAUTH_<CLIENT>_CLIENT_ID` / `_CLIENT_SECRET`)。
 - 呼べるのは、同じ Cloudflare アカウントの Worker が名前付きのエントリポイント `Background` に張った Service Binding からだけです。名前付きのエントリポイントはインターネットに出ないので、呼び出し元との間のシークレットは要りません。そのアカウントに Worker をデプロイできる人は使える、という信頼の置き方です。
@@ -147,7 +147,7 @@ Test-ServicePrincipalAuthorization -Identity <クライアント ID> -Resource s
   "base_url": "https://graph.microsoft.com",
   "auth": {
     "type": "client_credentials",
-    "client": "murmur-app",
+    "client": "my-app",
     "token_url": "https://login.microsoftonline.com/<テナント ID>/oauth2/v2.0/token",
     "scope": "https://graph.microsoft.com/.default"
   }
@@ -155,7 +155,7 @@ Test-ServicePrincipalAuthorization -Identity <クライアント ID> -Resource s
 ```
 
 ```jsonc
-// 呼び出す側(Murmur)の wrangler の設定
+// 呼び出す側の Worker の wrangler の設定
 "services": [{ "binding": "GATEWAY", "service": "<ゲートウェイの Worker 名>", "entrypoint": "Background" }]
 // コード: await env.GATEWAY.fetch("https://gateway/graph-app/v1.0/users/shared@example.com/mailFolders/inbox/messages/delta")
 ```
@@ -166,7 +166,7 @@ freee のアプリ管理でアプリを作成し、コールバック URL を設
 
 ### Microsoft Graph(`graph`)
 
-サインイン用とは別の Entra アプリを登録します。プラットフォームは「Web」で、`src/catalog.ts` の `GRAPH_SCOPE` にある委任のアクセス許可を付けて、管理者の同意を与えます。`GRAPH_SCOPE` に許可が増えたとき(例: Murmur の Teams のための `ChannelMember.Read.All`)は、Entra のアプリにも足して管理者の同意をやり直し、利用者は「つないだサービス」で Microsoft Graph をつなぎ直します。デプロイの設定の `MICROSOFT_TENANT_ID` にテナント ID を書きます。シークレットは `OAUTH_MICROSOFT_CLIENT_ID` / `OAUTH_MICROSOFT_CLIENT_SECRET` です。
+サインイン用とは別の Entra アプリを登録します。プラットフォームは「Web」で、`src/catalog.ts` の `GRAPH_SCOPE` にある委任のアクセス許可を付けて、管理者の同意を与えます。`GRAPH_SCOPE` に許可が増えたとき(例: トピック索引の Teams のための `ChannelMember.Read.All`)は、Entra のアプリにも足して管理者の同意をやり直し、利用者は「つないだサービス」で Microsoft Graph をつなぎ直します。デプロイの設定の `MICROSOFT_TENANT_ID` にテナント ID を書きます。シークレットは `OAUTH_MICROSOFT_CLIENT_ID` / `OAUTH_MICROSOFT_CLIENT_SECRET` です。
 
 ### Google(`gmail`・`drive`・`calendar`・`docs`・`tasks`・`chat`・`analytics`・`analytics-admin`)
 
@@ -180,8 +180,8 @@ npm run secret -- <名前> put OAUTH_GOOGLE_CLIENT_SECRET
 - スコープ: Gmail の `gmail.modify` はメールの読み書きと送信、Drive の `drive` は既存のファイルを含む全ファイルの閲覧と管理、Calendar の 3 つは予定の読み書き、カレンダー一覧の参照、空き時間の参照、Docs の `documents` はドキュメントの本文の読み書き、Tasks の `tasks` はタスクのリストとタスクの読み書き(トピック索引がタスクを読み取ります)、`userinfo.email` はつないだアカウントのメールアドレスの参照(トピック索引がタスクの持ち主を知るために使います。Tasks のサービスは Calendar や Drive と同じ `www.googleapis.com` を向き、Tasks の API は `/tasks/v1/` の下にあります)、Chat の 4 つはスペース・メンバー・メッセージの読み取りとメッセージの投稿(トピック索引がスペースとチャットを読み取り、エージェントが投稿します)、Analytics の `analytics.readonly` は GA4 のレポートとプロパティの読み取りに使います(Data API と Admin API はホストが別なので、サービスも 2 つに分けています)。読み取り専用にするなら、`SERVICES` に同じ名前でサービスを書いて、スコープを `gmail.readonly` / `drive.readonly` / `documents.readonly` などに変えます。詳細は [Gmail](https://developers.google.com/workspace/gmail/api/auth/scopes)、[Drive](https://developers.google.com/workspace/drive/api/guides/api-specific-auth)、[Calendar](https://developers.google.com/workspace/calendar/api/auth)、[Docs](https://developers.google.com/workspace/docs/api/auth) の公式ドキュメントにあります。
 - `authorize_params` の `access_type: offline` と `prompt: consent` は、リフレッシュトークンを受け取るための設定です。
 - トピック索引で Gmail と Google Tasks を使うなら、Gmail API と Google Tasks API を有効にし、`tasks` のサービスの OAuth の同意のスコープ(`tasks` と `userinfo.email`)を足します。Google は変更の通知を使わず、5 分ごとの見回りで取り込むので、Outlook より最大 5 分ほど遅れます。Google Tasks の見回りの間隔は設定の `MURMUR_TASKS_POLL_MINUTES`(分。省くと毎回)で延ばせ、サービス名を変えているときは `MURMUR_GMAIL_SERVICE`・`MURMUR_TASKS_SERVICE` で指定します(`wrangler.example.jsonc` の末尾)。使う人は、ゲートウェイで Gmail と Google Tasks をつないでから、エージェントにトピック索引へのつなぎを頼みます
-- トピック索引で Google Chat を使うなら、上の Chat アプリの構成を作ります。本人の DM・グループのチャット(個人リスト)はそれだけで使え、スペースを共有リストにするには、デプロイの設定 `MURMUR_SHARED_SERVICES` に `google-chat` を足します(Murmur の [0045](../murmur/docs/adr/0045-google-chat-spaces-and-chats.md))。どちらも 5 分ごとの見回りで取り込みます。Google でサインインするゲートウェイだけで使えます(スペースのメンバーを、Google のアカウントの ID でゲートウェイのユーザーに対応させるため)。サービス名を変えているときは `MURMUR_CHAT_SERVICE` で指定します。使う人は、ゲートウェイで Google Chat をつないでから、エージェントにトピック索引へのつなぎを頼みます
-- トピック索引で LINE 公式アカウントを使うなら、公式アカウントの Webhook を受けて保存する業務システム(ビルメンNEXT)をゲートウェイのサービス(既定の名前 `bm-next`。変えているときは `MURMUR_BM_NEXT_SERVICE`)として登録し、デプロイの設定 `MURMUR_SHARED_SERVICES` に `line` を足します(Murmur の [0049](../murmur/docs/adr/0049-line-official-account-via-front-system.md))。取り込みは 5 分ごとの見回りです。使う人は、業務システムで LINE のメッセージを読めるロールの API キーをゲートウェイに登録してから、エージェントにトピック索引へのつなぎを頼みます
+- トピック索引で Google Chat を使うなら、上の Chat アプリの構成を作ります。本人の DM・グループのチャット(個人リスト)はそれだけで使え、スペースを共有リストにするには、デプロイの設定 `MURMUR_SHARED_SERVICES` に `google-chat` を足します(トピック索引の [0045](../topic-index/docs/adr/0045-google-chat-spaces-and-chats.md))。どちらも 5 分ごとの見回りで取り込みます。Google でサインインするゲートウェイだけで使えます(スペースのメンバーを、Google のアカウントの ID でゲートウェイのユーザーに対応させるため)。サービス名を変えているときは `MURMUR_CHAT_SERVICE` で指定します。使う人は、ゲートウェイで Google Chat をつないでから、エージェントにトピック索引へのつなぎを頼みます
+- トピック索引で LINE 公式アカウントを使うなら、公式アカウントの Webhook を受けて保存する業務システム(ビルメンNEXT)をゲートウェイのサービス(既定の名前 `bm-next`。変えているときは `MURMUR_BM_NEXT_SERVICE`)として登録し、デプロイの設定 `MURMUR_SHARED_SERVICES` に `line` を足します(トピック索引の [0049](../topic-index/docs/adr/0049-line-official-account-via-front-system.md))。取り込みは 5 分ごとの見回りです。使う人は、業務システムで LINE のメッセージを読めるロールの API キーをゲートウェイに登録してから、エージェントにトピック索引へのつなぎを頼みます
 - **Google Chat を使うなら、Google Chat API を有効にしたうえで、Chat アプリの構成を作ります。** Google Cloud のコンソールで「Google Chat API」の「構成」を開き、アプリの名前・アバターの URL・説明を入れて保存します(インタラクティブ機能は無効のままでかまいません)。Chat API は、ユーザーの認証で呼ぶときもこの構成を求め、ないと 404 などで断ります。構成はプロジェクトに 1 つで、ゲートウェイの OAuth クライアントと同じプロジェクトに作ります。詳細は [Chat API の認証](https://developers.google.com/workspace/chat/authenticate-authorize-chat-user)と [Chat アプリの構成](https://developers.google.com/workspace/chat/configure-chat-api)にあります
 - REST の呼び出し先の例: `/api/gmail/gmail/v1/users/me/messages`、`/api/drive/drive/v3/files`(アップロードは `/api/drive/upload/drive/v3/files`)、`/api/calendar/calendar/v3/calendars/primary/events`、`/api/docs/v1/documents/{id}`、`/api/tasks/tasks/v1/users/@me/lists`、`/api/chat/v1/spaces`、`/api/analytics/v1beta/properties/{id}:runReport`、`/api/analytics-admin/v1beta/accountSummaries`
 

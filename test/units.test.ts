@@ -89,13 +89,13 @@ describe("parseServices", () => {
 
   it("accepts identity upstreams with an audience and a Service Binding", () => {
     const parsed = parseServices({
-      murmur: { base_url: "https://murmur.internal/api", binding: "MURMUR", auth: { type: "identity", audience: "murmur" } },
+      "topic-index": { base_url: "https://topic-index.internal/api", binding: "TOPIC_INDEX", auth: { type: "identity", audience: "topic-index" } },
     });
-    expect(parsed.murmur).toEqual({
-      display_name: "murmur",
-      base_url: "https://murmur.internal/api",
-      binding: "MURMUR",
-      auth: { type: "identity", audience: "murmur" },
+    expect(parsed["topic-index"]).toEqual({
+      display_name: "topic-index",
+      base_url: "https://topic-index.internal/api",
+      binding: "TOPIC_INDEX",
+      auth: { type: "identity", audience: "topic-index" },
     });
     expect(parseServices({ board: { base_url: "https://a.example", auth } }).board).not.toHaveProperty("binding");
   });

@@ -9,7 +9,7 @@ import { vaultFor } from "../src/vault";
 
 const BASE = publicUrl(env);
 const ADMIN = "admin-user";
-const APP_CLIENT = { id: "murmur-app-client", secret: "murmur-app-secret" };
+const APP_CLIENT = { id: "topic-index-app-client", secret: "topic-index-app-secret" };
 
 // What a Worker with `{ "binding": "GATEWAY", "entrypoint": "Background" }` sees. The host is ignored.
 const background = (exports as unknown as { Background: Fetcher }).Background;
@@ -70,7 +70,7 @@ describe("background entrypoint", () => {
   });
 
   it("reaches only client_credentials services", async () => {
-    for (const service of ["gmail", "board", "murmur", "no-such-service", ""]) {
+    for (const service of ["gmail", "board", "topic-index", "no-such-service", ""]) {
       const res = await call(`/${service}/anything`);
       expect(res.status, service).toBe(404);
     }

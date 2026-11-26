@@ -139,7 +139,7 @@ describe("MCP authorization flow", () => {
     const listed = await callTool(token.body.access_token, "list_credentials");
     expect(listed.credentials).toEqual([
       expect.objectContaining({ id: (added as { id: string }).id }),
-      expect.objectContaining({ id: "identity:murmur" }),
+      expect.objectContaining({ id: "identity:topic-index" }),
     ]);
   });
 
