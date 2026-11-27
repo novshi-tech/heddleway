@@ -168,7 +168,7 @@ export function createApp(opts: HttpOptions) {
 
   api.get('/threads', async (c) => {
     const q = ListThreadsQuery.parse(c.req.query());
-    return c.json(await c.var.service.listThreads(c.var.userId, { filter: q.filter, dataSourceId: q.data_source, since: q.since }));
+    return c.json(await c.var.service.listThreads(c.var.userId, { filter: q.filter, dataSourceId: q.data_source, since: q.since, limit: q.limit }));
   });
 
   api.get('/threads/:id', async (c) => {

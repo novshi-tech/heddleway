@@ -457,7 +457,7 @@ export class TopicIndexService {
     return this.getContact(userId, contactId);
   }
 
-  async listThreads(userId: string, opts: { filter?: ThreadFilter; dataSourceId?: string; since?: string; candidates?: boolean } = {}) {
+  async listThreads(userId: string, opts: { filter?: ThreadFilter; dataSourceId?: string; since?: string; limit?: number; candidates?: boolean } = {}) {
     const { viewer, dir } = await this.viewer(userId);
     // 見えるリストのスレッドの行だけ。open 系の絞り込みは開いているものだけ（0047 の決定 2）
     const filter = opts.filter ?? 'open';
