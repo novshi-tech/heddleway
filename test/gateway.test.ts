@@ -540,7 +540,7 @@ describe("web ui", () => {
     });
     expect(res.status).toBe(303);
     const [cred] = await vaultFor(env, carol).list();
-    expect(res.headers.get("location")).toBe(`/?added=${cred.id}`);
+    expect(res.headers.get("location")).toBe(`/connections?added=${cred.id}`);
     expect(cred).toMatchObject({ service: "board", label: "board" });
     expect(await vaultFor(env, carol).headers(cred.id, await upstream("board"))).toEqual({ headers: { "x-api-key": "k", authorization: "Bearer t" } });
 
@@ -631,10 +631,10 @@ describe("web ui", () => {
       headers: { cookie, origin: new URL(BASE).origin },
       redirect: "manual",
     });
-    expect(res.headers.get("location")).toBe("/?deleted=1");
+    expect(res.headers.get("location")).toBe("/connections?deleted=1");
     expect(await vaultFor(env, carol).list()).toEqual([]);
     const gone = await SELF.fetch(`${BASE}/connections/${cred.id}/delete`, { headers: { cookie }, redirect: "manual" });
-    expect(gone.headers.get("location")).toBe("/");
+    expect(gone.headers.get("location")).toBe("/connections");
   });
 
   it("serves the picker script and lets pages load it", async () => {
@@ -700,6 +700,8 @@ describe("web ui", () => {
     });
     expect(res.status).toBe(200);
     expect(res.headers.get("set-cookie")).toMatch(/^__Host-gw-session=; .*Max-Age=0/);
+    // The pages the app kept on the device go too (docs/adr/0010).
+    expect(res.headers.get("clear-site-data")).toBe('"cache", "storage"');
   });
 
   it("rejects cross-site form posts", async () => {

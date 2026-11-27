@@ -5,6 +5,7 @@ import { signToken, verifyToken } from "../tokens";
 import { exchangeCode, upstreamAuthorizationUrl, UpstreamOAuthError } from "../upstream-oauth";
 import { ALREADY_CONNECTED, vaultFor, type CredentialInfo } from "../vault";
 import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
+import { features } from "../features";
 import { featureRows } from "./features";
 import { grantRows, listGrants } from "./grants";
 import { tunnelEnabled } from "../tunnel";
@@ -36,9 +37,12 @@ function addable(directory: Directory): [string, ServiceConfig][] {
   return Object.entries(directory.services).filter(([name, config]) => config.auth.type !== "identity" && directory.available(name));
 }
 
+// The top bar: the home link and one menu (the user's name) with everything else, so the bar stays one short line on a phone.
 export function masthead(env: Env, user: Session): Html {
   return html`<header class="masthead"><a class="home" href="/">Heddleway · ${organizationName(env)}</a>
-<div class="who"><a href="/setup">Claude につなぐ</a>${isAdmin(env, user) && html`<a href="/admin/services">接続先の管理</a><a href="/admin/apps">アプリの管理</a>${tunnelEnabled(env) && html`<a href="/admin/local-services">ローカルサービスの管理</a>`}<a href="/admin/plugins">プラグインの配布</a>`}<span>${user.name}</span><form method="post" action="/logout"><button class="quiet">サインアウト</button></form></div></header>`;
+<details class="menu"><summary>${user.name}</summary>
+<nav class="menu-list"><a href="/connections">つないだサービス</a><a href="/setup">Claude につなぐ</a>${isAdmin(env, user) && html`<p class="menu-head">管理者</p><a href="/admin/services">接続先の管理</a><a href="/admin/apps">アプリの管理</a>${tunnelEnabled(env) && html`<a href="/admin/local-services">ローカルサービスの管理</a>`}<a href="/admin/plugins">プラグインの配布</a>`}<form method="post" action="/logout"><button>サインアウト</button></form></nav>
+</details></header>`;
 }
 
 function notice(url: URL, credentials: CredentialInfo[], services: Services): Html | false {
@@ -88,7 +92,18 @@ function identityRow(config: ServiceConfig): Html {
 </li>`;
 }
 
+// The home page: a feature page the user lives in (the topic index's "now", docs/adr/0011), otherwise the connections.
 export async function home(request: Request, env: Env & { OAUTH_PROVIDER: OAuthHelpers }): Promise<Response> {
+  const user = await session(request, env);
+  if (!user) return redirect("/login");
+  for (const f of features(env)) {
+    if (f.userPage?.isHome && (await f.userPage.isHome(user.sub).catch(() => false))) return redirect(`/features/${f.name}`);
+  }
+  return connections(request, env);
+}
+
+// The connections the user registered, the features and the apps they allowed. Also the home page for users no feature claims.
+export async function connections(request: Request, env: Env & { OAUTH_PROVIDER: OAuthHelpers }): Promise<Response> {
   const user = await session(request, env);
   if (!user) return redirect("/login");
   const services = await getServices(env);
@@ -144,7 +159,7 @@ export async function chooseService(request: Request, env: Env): Promise<Respons
   return page(
     "接続を追加",
     html`${masthead(env, user)}
-<a class="back" href="/">‹ つないだサービスに戻る</a>
+<a class="back" href="/connections">‹ つないだサービスに戻る</a>
 <h1>接続を追加</h1>
 <p>つなぐサービスを選んでください。1 つのサービスにつなげるアカウントは 1 つです。別の組織のアカウントは、その組織のゲートウェイでつなぎます。</p>
 <label class="filter" hidden>サービスを絞り込む<input type="search" id="filter" autocomplete="off" placeholder="例: Gmail、freee"></label>
@@ -215,7 +230,7 @@ function alreadyConnectedPage(env: Env, user: Session, services: Services, crede
 <div class="card">
 <p>1 つのサービスにつなげるアカウントは 1 つです。${oauth ? "別のアカウントに替えるときは、つなぎ直して、そのアカウントで許可してください。" : "別のキーに替えるときは、いまの接続を削除してから追加してください。"}</p>
 <p>別の組織のアカウントは、その組織のゲートウェイでつなぎます。</p>
-<div class="actions">${action}<a class="button quiet" href="/">つないだサービスに戻る</a></div>
+<div class="actions">${action}<a class="button quiet" href="/connections">つないだサービスに戻る</a></div>
 </div>`,
   );
 }
@@ -237,23 +252,23 @@ export async function addCredential(request: Request, env: Env): Promise<Respons
     if (result.error === ALREADY_CONNECTED) return redirect(`/connections/new/${service}`);
     return errorPage("保存できませんでした", result.error, 400, [`/connections/new/${service}`, "入力に戻る"]);
   }
-  return redirect(`/?added=${result.id}`);
+  return redirect(`/connections?added=${result.id}`);
 }
 
 export async function confirmDelete(request: Request, env: Env, id: string): Promise<Response> {
   const user = await session(request, env);
   if (!user) return redirect("/login");
   const credential = await vaultFor(env, user.sub).get(id);
-  if (!credential) return redirect("/");
+  if (!credential) return redirect("/connections");
   const services = await getServices(env);
   return page(
     "接続の削除",
     html`${masthead(env, user)}
-<a class="back" href="/">‹ つないだサービスに戻る</a>
+<a class="back" href="/connections">‹ つないだサービスに戻る</a>
 <h1>「${credential.label}」を削除しますか?</h1>
 <form method="post" action="/credentials/${credential.id}/delete" class="card">
 <p>${displayName(services, credential.service)} の接続です。削除すると、Claude からこの接続を使えなくなります。使うときは、もう一度つなぎ直してください。</p>
-<div class="actions"><button class="danger">削除する</button><a class="button quiet" href="/">やめる</a></div>
+<div class="actions"><button class="danger">削除する</button><a class="button quiet" href="/connections">やめる</a></div>
 </form>`,
   );
 }
@@ -263,7 +278,7 @@ export async function deleteCredential(request: Request, env: Env, id: string): 
   const user = await session(request, env);
   if (!user) return redirect("/login");
   await vaultFor(env, user.sub).remove(id);
-  return redirect("/?deleted=1");
+  return redirect("/connections?deleted=1");
 }
 
 function errorPage(title: string, message: string, status: number, [href, text] = ["/", "つないだサービスに戻る"]): Response {
@@ -336,7 +351,7 @@ export async function connectCallback(request: Request, env: Env): Promise<Respo
     }
     if ("error" in result) return errorPage("つなげませんでした", result.error, 400);
     const notice = pending.credential ? `reconnected=${result.id}` : `added=${result.id}`;
-    return redirect(`/?${notice}`, new Headers({ "set-cookie": cookie(CONNECT_COOKIE, "", 0) }));
+    return redirect(`/connections?${notice}`, new Headers({ "set-cookie": cookie(CONNECT_COOKIE, "", 0) }));
   } catch (error) {
     if (!(error instanceof UpstreamOAuthError)) throw error;
     console.warn(JSON.stringify({ type: "connect_failed", service: pending.service, reason: error.message }));

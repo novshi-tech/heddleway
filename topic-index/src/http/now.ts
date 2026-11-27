@@ -16,10 +16,8 @@ export interface PageList {
   jiraSite: string | null;
 }
 
-export type NowThread = ThreadItem & {
-  /** 相手の名前（Contact の名前か、解決できなかったアドレス） */
-  counterparts: string[];
-};
+/** 一覧の行。相手の名前は一覧に出さず、詳細だけに出す（0052） */
+export type NowThread = ThreadItem;
 
 export interface NowInput {
   /** 画面の根の経路（例: /features/topic-index）。トピックの詳細は <base>/threads/<id>、リストは <base>/lists */
@@ -39,10 +37,12 @@ export const esc = (s: unknown) =>
 
 const TASK_KINDS: readonly (ListKind | null)[] = ['todo', 'google-tasks'];
 
-export function tabs(base: string, current: 'now' | 'lists'): string {
+/** 今やること・参加中のリストのタブ。タブが見出しを兼ねる（見出しは読み上げ用にだけ置く）。note はタブの右に添える一言 */
+export function tabs(base: string, current: 'now' | 'lists', note?: string): string {
   const tab = (href: string, label: string, on: boolean) =>
     on ? `<a class="tab" href="${esc(href)}" aria-current="page">${esc(label)}</a>` : `<a class="tab" href="${esc(href)}">${esc(label)}</a>`;
-  return `<nav class="tabs">${tab(base, '今やること', current === 'now')}${tab(`${base}/lists`, '参加中のリスト', current === 'lists')}</nav>`;
+  const heading = current === 'now' ? '今やること' : '参加中のリスト';
+  return `<nav class="tabs">${tab(base, '今やること', current === 'now')}${tab(`${base}/lists`, '参加中のリスト', current === 'lists')}${note ? `<span class="tabs-note">${esc(note)}</span>` : ''}</nav>\n<h1 class="sr-only">${heading}</h1>`;
 }
 
 /** 日付（YYYY-MM-DD）をそのタイムゾーンで */
@@ -92,18 +92,17 @@ export function jiraUrl(list: PageList | undefined, key: string | null | undefin
   return `${list.jiraSite.replace(/\/+$/, '')}/browse/${encodeURIComponent(key)}`;
 }
 
-/** 1 行。行全体がトピックの詳細へのリンク。件名は 2 行まで、補足は 1 行で、はみ出したら省く（0051） */
-function row(input: NowInput, t: NowThread, list: PageList | undefined, badges: string[], timeZone: string): string {
+/** 1 行。行全体がトピックの詳細へのリンク。件名は 2 行まで、補足（いつ・どのリスト・状態）は 1 行で、はみ出したら省く（0051・0052） */
+function row(input: Pick<NowInput, 'base' | 'now'>, t: NowThread, list: PageList | undefined, badges: string[], timeZone: string): string {
   const when = formatWhen(t.lastActivityAt, input.now, timeZone);
   const status = t.source?.statusLabel && !TASK_KINDS.includes(list?.kind ?? null) ? t.source.statusLabel : null;
-  const who = t.counterparts.length > 0 ? `${t.counterparts.slice(0, 2).join('、')}${t.counterparts.length > 2 ? ` ほか ${t.counterparts.length - 2}` : ''}` : null;
-  const meta = [when, list?.name ?? null, status, who].filter((s): s is string => !!s).map(esc).join(' · ');
+  const meta = [when, list?.name ?? null, status].filter((s): s is string => !!s).map(esc).join(' · ');
   const tags = [dueBadge(t, input.now, timeZone), ...badges].filter(Boolean).join('');
   return `<li><a class="item" href="${esc(`${input.base}/threads/${encodeURIComponent(t.id)}`)}"><span class="item-title">${esc(t.title)}</span>${tags ? `<span class="item-tags">${tags}</span>` : ''}<span class="item-meta">${meta}</span></a></li>`;
 }
 
-/** 1 つの区分に最初から出す行の数。残りは「ほか n 件」で畳む */
-const SHOWN = 15;
+/** ファーストビューに出す「自分の担当」の数（0052） */
+export const TOP = 5;
 
 /** 期限の近いものを先に（期限のないものは後ろで、最後の動きの新しい順） */
 function byDue(a: NowThread, b: NowThread): number {
@@ -112,10 +111,17 @@ function byDue(a: NowThread, b: NowThread): number {
   if (da && db && da !== db) return da < db ? -1 : 1;
   if (da && !db) return -1;
   if (!da && db) return 1;
+  return byActivity(a, b);
+}
+
+function byActivity(a: NowThread, b: NowThread): number {
   return a.lastActivityAt < b.lastActivityAt ? 1 : a.lastActivityAt > b.lastActivityAt ? -1 : 0;
 }
 
-/** 区分け。1 つのトピックは最初に当てはまった区分にだけ出す */
+/**
+ * 区分け（0052）。1 つのトピックは最初に当てはまった区分にだけ出す。
+ * 自分の担当（担当と、個人リストのタスク）は 1 つにまとめて期限順。アテンションは本人宛てを先に
+ */
 export function sortNow(input: Pick<NowInput, 'lists' | 'threads'>) {
   const listOf = new Map(input.lists.map((l) => [l.id, l]));
   const seen = new Set<string>();
@@ -125,64 +131,168 @@ export function sortNow(input: Pick<NowInput, 'lists' | 'threads'>) {
       seen.add(t.id);
       return true;
     });
-  const assigned = take((t) => t.myTurn.includes('assignee')).sort(byDue);
-  const tasks = take((t) => {
+  const mine = take((t) => {
+    if (t.myTurn.includes('assignee')) return true;
     const l = listOf.get(t.dataSourceId);
     return !!l && !l.shared && TASK_KINDS.includes(l.kind);
   }).sort(byDue);
-  const named = take((t) => t.myTurn.includes('named'));
-  const list = take((t) => t.myTurn.includes('list'));
+  const named = take((t) => t.myTurn.includes('named')).sort(byActivity);
+  const list = take((t) => t.myTurn.includes('list')).sort(byActivity);
   const awaiting = take((t) => t.awaiting).sort((a, b) => (a.overdue === b.overdue ? byDue(a, b) : a.overdue ? -1 : 1));
-  const triage = take((t) => t.triage);
-  return { assigned, tasks, attention: [...named, ...list], awaiting, triage };
+  const triage = take((t) => t.triage).sort(byActivity);
+  return { mine, attention: [...named, ...list], awaiting, triage };
 }
 
+type DueState = 'overdue' | 'today' | null;
+
+/** 期限が過ぎたか今日までか（タスクの期限か、送ったときに決めた返事の期限） */
+export function dueState(t: NowThread, now: string, timeZone: string): DueState {
+  if (t.replyExpectedBy) {
+    if (t.overdue) return 'overdue';
+    return dayOf(t.replyExpectedBy, timeZone) === dayOf(now, timeZone) ? 'today' : null;
+  }
+  const due = t.source?.due;
+  if (!due) return null;
+  const day = dayOf(due, timeZone);
+  const today = dayOf(now, timeZone);
+  if (!day || !today) return null;
+  return day < today ? 'overdue' : day === today ? 'today' : null;
+}
+
+/** アテンションのリストごとのまとまり。新しく動いたリストが上 */
+export interface AttentionGroup {
+  list: PageList | undefined;
+  listId: string;
+  threads: NowThread[];
+  named: number;
+}
+
+export function attentionGroups(input: Pick<NowInput, 'lists'>, attention: NowThread[]): AttentionGroup[] {
+  const listOf = new Map(input.lists.map((l) => [l.id, l]));
+  const groups = new Map<string, AttentionGroup>();
+  for (const t of attention) {
+    const g = groups.get(t.dataSourceId) ?? { list: listOf.get(t.dataSourceId), listId: t.dataSourceId, threads: [], named: 0 };
+    g.threads.push(t);
+    if (t.myTurn.includes('named')) g.named += 1;
+    groups.set(t.dataSourceId, g);
+  }
+  const latest = (g: AttentionGroup) => g.threads.reduce((m, t) => (t.lastActivityAt > m ? t.lastActivityAt : m), '');
+  return [...groups.values()].sort((a, b) => (latest(a) < latest(b) ? 1 : latest(a) > latest(b) ? -1 : 0));
+}
+
+const EMPTY_LISTS =
+  '<p class="empty">まだどのリストのメンバーにもなっていません。エージェント(Claude など)に「トピック索引に Outlook をつないで」のように頼むと、ここに出るようになります。</p>';
+
+/** 一覧の区分（0052）。ファーストビューから開く先 */
+export type NowSection = 'mine' | 'attention' | 'awaiting' | 'triage';
+
+const SECTION: Record<NowSection, { title: string; note: string; empty: string }> = {
+  mine: { title: '自分の担当', note: '担当と、To Do・Google Tasks のタスク。期限の近い順', empty: '担当・タスクはありません。' },
+  attention: { title: 'アテンション', note: '見てほしいと届いたもの。リストごと', empty: '残っているアテンションはありません。' },
+  awaiting: { title: '返事待ち', note: '送って返事がまだのもの', empty: '返事待ちはありません。' },
+  triage: { title: '割当待ち', note: '共有のリストで担当が決まっていないもの', empty: '割当待ちはありません。' },
+};
+
+const namedBadge = (t: NowThread) => (t.myTurn.includes('named') ? [`<span class="badge">${REASON_LABEL.named}</span>`] : []);
+
+/**
+ * 「今やること」のファーストビュー（0052）。スマホの 1 画面に収める:
+ * 期限切れ・今日までの数、自分の担当（期限順の上位 5 件）、アテンション（リストごとの件数）、返事待ち・割当待ち（件数だけ）。
+ * 中身はそれぞれの区分の画面（renderSection）で見る
+ */
 export function renderNow(input: NowInput): string {
   const timeZone = input.timeZone ?? 'Asia/Tokyo';
   const listOf = new Map(input.lists.map((l) => [l.id, l]));
-  const s = sortNow(input);
-  const items = (ts: NowThread[], badges: (t: NowThread) => string[]) => {
-    const li = (t: NowThread) => row(input, t, listOf.get(t.dataSourceId), badges(t), timeZone);
-    const head = `<ul class="items">${ts.slice(0, SHOWN).map(li).join('\n')}</ul>`;
-    if (ts.length <= SHOWN) return head;
-    return `${head}\n<details class="rest"><summary>ほか ${ts.length - SHOWN} 件</summary><ul class="items">${ts.slice(SHOWN).map(li).join('\n')}</ul></details>`;
-  };
-  const none = () => [] as string[];
-  const reasonBadges = (t: NowThread) => t.myTurn.filter((r) => r !== 'assignee').map((r) => `<span class="badge">${REASON_LABEL[r]}</span>`);
-  /** 区分は畳める。0 件の区分と割当待ちは畳んでおく */
-  const section = (id: string, title: string, ts: NowThread[], empty: string, opts: { badges?: (t: NowThread) => string[]; note?: string; closed?: boolean } = {}) =>
-    `<details class="sec" id="${id}"${ts.length > 0 && !opts.closed ? ' open' : ''}><summary><h2>${esc(title)}</h2><span class="count">${ts.length}</span>${opts.note ? `<span class="sec-note">${esc(opts.note)}</span>` : ''}</summary>
-${ts.length > 0 ? items(ts, opts.badges ?? none) : `<p class="sec-empty">${esc(empty)}</p>`}</details>`;
-
-  const hasTasks = input.lists.some((l) => !l.shared && TASK_KINDS.includes(l.kind));
-  const parts = [tabs(input.base, 'now')];
   if (input.lists.length === 0) {
-    parts.push(
-      '<h1>今やること</h1>',
-      '<p class="empty">まだどのリストのメンバーにもなっていません。エージェント(Claude など)に「トピック索引に Outlook をつないで」のように頼むと、ここに出るようになります。</p>',
-    );
+    const parts = [tabs(input.base, 'now')];
+    parts.push(EMPTY_LISTS);
     return `<div class="now">${parts.join('\n')}</div>`;
   }
-  const chips = [
-    ['assigned', '担当', s.assigned.length],
-    ...(hasTasks ? [['tasks', 'タスク', s.tasks.length] as const] : []),
-    ['attention', 'アテンション', s.attention.length],
-    ['awaiting', '返事待ち', s.awaiting.length],
-    ...(s.triage.length > 0 ? [['triage', '割当待ち', s.triage.length] as const] : []),
-  ] as const;
+  const s = sortNow(input);
+  const states = s.mine.map((t) => dueState(t, input.now, timeZone));
+  const overdue = states.filter((x) => x === 'overdue').length;
+  const today = states.filter((x) => x === 'today').length;
+  const at = new Date(input.now).toLocaleTimeString('ja-JP', { timeZone, hour: '2-digit', minute: '2-digit' });
+  const link = (path: string) => esc(`${input.base}/${path}`);
+  const more = (path: string, n: number) => `<a class="more" href="${link(path)}">${n} 件すべて見る</a>`;
+
+  const parts = [tabs(input.base, 'now', `${at} 時点`)];
+  if (overdue + today > 0) {
+    const bits = [overdue > 0 ? `期限切れ <b>${overdue}</b>` : '', today > 0 ? `今日まで <b>${today}</b>` : ''].filter(Boolean).join(' · ');
+    parts.push(`<a class="alert${overdue > 0 ? ' broken' : ''}" href="${link('mine')}">${bits}</a>`);
+  }
+
+  const head = (title: string, n: number) => `<div class="block-head"><h2>${esc(title)}</h2><span class="count">${n}</span></div>`;
   parts.push(
-    `<div class="now-head"><h1>今やること</h1><p class="now-sub">${input.name ? `${esc(input.name)}さんの担当とアテンション · ` : ''}再読み込みで最新に</p></div>`,
-    `<nav class="chips">${chips.map(([id, label, n]) => `<a href="#${id}">${esc(label)} <b>${n}</b></a>`).join('')}</nav>`,
-    section('assigned', '自分の担当', s.assigned, '担当のトピックはありません。'),
+    `<section class="block" id="mine">${head(SECTION.mine.title, s.mine.length)}${
+      s.mine.length > 0
+        ? `<ul class="items">${s.mine
+            .slice(0, TOP)
+            .map((t) => row(input, t, listOf.get(t.dataSourceId), [], timeZone))
+            .join('\n')}</ul>${s.mine.length > TOP ? more('mine', s.mine.length) : ''}`
+        : `<p class="sec-empty">${SECTION.mine.empty}</p>`
+    }</section>`,
   );
-  if (hasTasks) parts.push(section('tasks', '自分のタスク', s.tasks, '終わっていないタスクはありません。', { note: 'To Do・Google Tasks' }));
+
+  const groups = attentionGroups(input, s.attention);
   parts.push(
-    section('attention', 'アテンション', s.attention, '残っているアテンションはありません。', { badges: reasonBadges, note: '見てほしいと届いたもの' }),
-    section('awaiting', '返事待ち', s.awaiting, '返事待ちはありません。', { note: '送って返事がまだのもの' }),
+    `<section class="block" id="attention">${head(SECTION.attention.title, s.attention.length)}${
+      groups.length > 0
+        ? `<ul class="items">${groups
+            .map(
+              (g) =>
+                `<li><a class="item group" href="${link(`attention/${encodeURIComponent(g.listId)}`)}"><span class="item-title">${esc(g.list?.name ?? g.listId)}</span><span class="item-tags">${
+                  g.named > 0 ? `<span class="badge">あなた宛て ${g.named}</span>` : ''
+                }<span class="count">${g.threads.length}</span></span></a></li>`,
+            )
+            .join('\n')}</ul>`
+        : `<p class="sec-empty">${SECTION.attention.empty}</p>`
+    }</section>`,
   );
-  if (s.triage.length > 0) parts.push(section('triage', '割当待ち', s.triage, '', { note: '共有のリストで担当が決まっていないもの', closed: true }));
-  parts.push('<p class="hint">担当する・目を通した(アテンションを外す)などは、エージェント(Claude など)に頼みます。</p>');
+
+  const awaitingOverdue = s.awaiting.filter((t) => t.overdue).length;
+  const line = (path: string, label: string, n: number, extra = '') => `<a href="${link(path)}">${esc(label)} <b>${n}</b>${extra}</a>`;
+  parts.push(
+    `<nav class="now-more">${line('awaiting', '返事待ち', s.awaiting.length, awaitingOverdue > 0 ? ` <span class="badge broken">期限切れ ${awaitingOverdue}</span>` : '')}${
+      s.triage.length > 0 ? line('triage', '割当待ち', s.triage.length) : ''
+    }</nav>`,
+    '<p class="hint">担当する・目を通した(アテンションを外す)などは、エージェント(Claude など)に頼みます。</p>',
+  );
   return `<div class="now">${parts.join('\n')}</div>`;
+}
+
+/** 区分の画面（0052）。attention は listId でリストを 1 つに絞れる（なければリストごとに見出しを付けて全部）。知らないリストは null */
+export function renderSection(input: NowInput, section: NowSection, listId?: string): { title: string; body: string } | null {
+  const timeZone = input.timeZone ?? 'Asia/Tokyo';
+  const listOf = new Map(input.lists.map((l) => [l.id, l]));
+  const s = sortNow(input);
+  const def = SECTION[section];
+  const back = `<a class="back" href="${esc(input.base)}">← 今やること</a>`;
+  const items = (ts: NowThread[], badges: (t: NowThread) => string[]) =>
+    `<ul class="items">${ts.map((t) => row(input, t, listOf.get(t.dataSourceId), badges(t), timeZone)).join('\n')}</ul>`;
+  const page = (title: string, n: number, note: string, inner: string) => ({
+    title,
+    body: `<div class="now">${back}\n<div class="now-head"><h1>${esc(title)}</h1><span class="count">${n}</span></div>\n<p class="now-sub">${esc(note)}</p>\n${inner}</div>`,
+  });
+  if (input.lists.length === 0) return page(def.title, 0, def.note, EMPTY_LISTS);
+
+  if (section === 'attention') {
+    const groups = attentionGroups(input, s.attention);
+    if (listId !== undefined) {
+      const list = listOf.get(listId);
+      if (!list) return null;
+      const g = groups.find((x) => x.listId === listId);
+      const ts = g?.threads ?? [];
+      return page(list.name, ts.length, 'アテンション · あなた宛てが先、新しい順', ts.length > 0 ? items(ts, namedBadge) : `<p class="sec-empty">${def.empty}</p>`);
+    }
+    const inner =
+      groups.length > 0
+        ? groups.map((g) => `<h2 class="group-head">${esc(g.list?.name ?? g.listId)} <span class="count">${g.threads.length}</span></h2>\n${items(g.threads, namedBadge)}`).join('\n')
+        : `<p class="sec-empty">${def.empty}</p>`;
+    return page(def.title, s.attention.length, def.note, inner);
+  }
+  const ts = s[section];
+  return page(def.title, ts.length, def.note, ts.length > 0 ? items(ts, () => []) : `<p class="sec-empty">${def.empty}</p>`);
 }
 
 /** トピックの詳細の 1 行（タイムライン） */

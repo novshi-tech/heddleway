@@ -321,15 +321,38 @@ export interface LinkCandidate {
 /**
  * 結び候補: Viewer に見えるスレッドのうち、アンカーのキーが t と一致して、まだ結ばれていないもの（0014 の未決 3: 見えるものに限る）
  */
-export function linkCandidates(viewer: Viewer, p: Projections, t: Thread): LinkCandidate[] {
+export function linkCandidates(viewer: Viewer, p: Projections, t: Thread, index?: CandidateIndex): LinkCandidate[] {
   const mine = new Set(crossKeys(p, t));
   if (mine.size === 0) return [];
   const linked = new Set(t.links.map((l) => l.threadId));
+  // 一覧では全部のスレッドについて呼ぶので、キーの逆引き（candidateIndex）で一致するものだけを見る。結果は総当たりと同じ
+  const others = index ? new Set([...mine].flatMap((k) => index.byKey.get(k) ?? [])) : Object.values(p.threads);
   const out: LinkCandidate[] = [];
-  for (const u of Object.values(p.threads)) {
+  for (const u of others) {
     if (u.id === t.id || linked.has(u.id) || !canReadDataSource(viewer, u.dataSourceId)) continue;
-    const keys = crossKeys(p, u).filter((k) => mine.has(k));
+    const keys = (index?.keysOf.get(u.id) ?? crossKeys(p, u)).filter((k) => mine.has(k));
     if (keys.length > 0) out.push({ threadId: u.id, dataSourceId: u.dataSourceId, title: u.title, keys });
   }
   return out.sort((a, b) => (a.threadId < b.threadId ? -1 : a.threadId > b.threadId ? 1 : 0));
+}
+
+/** 結び候補のキーの逆引き（キー → そのキーを持つスレッド）。一覧で 1 回だけ作る */
+export interface CandidateIndex {
+  byKey: Map<string, Thread[]>;
+  keysOf: Map<string, string[]>;
+}
+
+export function candidateIndex(p: Projections): CandidateIndex {
+  const byKey = new Map<string, Thread[]>();
+  const keysOf = new Map<string, string[]>();
+  for (const u of Object.values(p.threads)) {
+    const keys = crossKeys(p, u);
+    keysOf.set(u.id, keys);
+    for (const k of keys) {
+      const list = byKey.get(k);
+      if (list) list.push(u);
+      else byKey.set(k, [u]);
+    }
+  }
+  return { byKey, keysOf };
 }

@@ -88,7 +88,7 @@ function codeForm(env: Env, user: Session, code = "", error?: string, status = 2
   return page(
     "ローカルサービスをペアリング",
     html`${masthead(env, user)}
-<a class="back" href="/">‹ つないだサービスに戻る</a>
+<a class="back" href="/connections">‹ つないだサービスに戻る</a>
 <h1>ローカルサービスをペアリング</h1>
 ${error && html`<p class="error" role="alert">${error}</p>`}
 <form method="get" action="${OWNER_PAIR_PATH}" class="card">
@@ -140,7 +140,7 @@ ${existing && html`<fieldset><p>あなたのローカルサービス「${existin
 function closedPage(env: Env, user: Session): Response {
   return page(
     "ローカルサービスをペアリング",
-    html`${masthead(env, user)}<div class="card"><h1>ペアリングはできません</h1><p>このゲートウェイでは、管理者がローカルサービスのペアリングを止めています。</p><p><a href="/">つないだサービスに戻る</a></p></div>`,
+    html`${masthead(env, user)}<div class="card"><h1>ペアリングはできません</h1><p>このゲートウェイでは、管理者がローカルサービスのペアリングを止めています。</p><p><a href="/connections">つないだサービスに戻る</a></p></div>`,
     undefined,
     403,
   );
@@ -175,7 +175,7 @@ export async function pairSubmit(request: Request, env: Env): Promise<Response> 
   if (form.get("decision") !== "approve") {
     await registry.decidePairing(codeHash, "deny", POLL_TTL_MS);
     console.log(JSON.stringify({ type: "tunnel_pairing_denied", user: user.sub }));
-    return redirect("/?pairing_denied=1");
+    return redirect("/connections?pairing_denied=1");
   }
   const name = String(form.get("name") ?? "").trim();
   const wanted = form.getAll("callback").map(String);
@@ -207,7 +207,7 @@ export async function pairSubmit(request: Request, env: Env): Promise<Response> 
   // so the old one is refused even before this.
   if (result.replaced) await connectionFor(env, service.id).reset(service.thumbprint);
   console.log(JSON.stringify({ type: "tunnel_paired", user: user.sub, service: service.id, name, ...(result.replaced ? { replaced: true } : {}) }));
-  return redirect(`/?paired=${service.id}`);
+  return redirect(`/connections?paired=${service.id}`);
 }
 
 // GET /local-services/<id>: the owner chooses what the service may call back.
@@ -215,14 +215,14 @@ export async function settingsPage(request: Request, env: Env, id: string): Prom
   const user = await session(request, env);
   if (!user) return redirect("/login");
   const service = await getOwned(env, user.sub, id);
-  if (!service) return redirect("/");
+  if (!service) return redirect("/connections");
   const fieldset = await callbackFieldset(env, user.sub, service.callback ?? []);
   const saved = new URL(request.url).searchParams.has("saved");
   return page(
     `${service.name} の呼び返し`,
     html`${masthead(env, user)}
 ${saved && html`<p class="notice" role="status">保存しました。</p>`}
-<a class="back" href="/">‹ つないだサービスに戻る</a>
+<a class="back" href="/connections">‹ つないだサービスに戻る</a>
 <h1>「${service.name}」から呼び返せるサービス</h1>
 ${fieldset
   ? html`<form method="post" action="/local-services/${service.id}" class="card">${fieldset}<div class="actions"><button>保存する</button></div></form>`
@@ -237,7 +237,7 @@ export async function settingsSubmit(request: Request, env: Env, id: string): Pr
   if (!callbackAllowed(env)) return redirect(`/local-services/${id}`);
   const form = await request.formData();
   const saved = await setCallback(env, user.sub, id, form.getAll("callback").map(String));
-  if (!saved) return redirect("/");
+  if (!saved) return redirect("/connections");
   console.log(JSON.stringify({ type: "tunnel_callback_set", user: user.sub, service: id, callback: saved.callback }));
   return redirect(`/local-services/${id}?saved=1`);
 }
@@ -252,7 +252,7 @@ export async function confirmRemove(request: Request, env: Env, id: string): Pro
   const user = await session(request, env);
   if (!user) return redirect("/login");
   const service = await findForRemoval(env, user, id);
-  if (!service) return redirect("/");
+  if (!service) return redirect("/connections");
   const others = service.owner !== user.sub;
   return page(
     "ローカルサービスの削除",
@@ -276,7 +276,7 @@ export async function remove(request: Request, env: Env, id: string): Promise<Re
     console.log(JSON.stringify({ type: "tunnel_removed", user: user.sub, owner: service.owner, service: service.id }));
     if (service.owner !== user.sub) return redirect("/admin/local-services?removed=1");
   }
-  return redirect("/?local_removed=1");
+  return redirect("/connections?local_removed=1");
 }
 
 // GET /admin/local-services: every local service of the deployment.

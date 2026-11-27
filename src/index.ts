@@ -8,6 +8,7 @@ import { API_PREFIX, handleProxy } from "./proxy";
 import { challenge, CHALLENGE_PATH, CONNECT_PATH, OWNER_PAIR_PATH, PAIR_PATH, PAIR_STATUS_PATH, pairingStatus, tunnelConnect, startPairing } from "./tunnel";
 import { confirmDeleteService, deleteService, editService, listServices, newService, saveService } from "./web/admin";
 import { APP_JS_PATH, appJs } from "./web/assets";
+import { icon, ICON_PATH, manifest, MANIFEST_PATH, PWA_JS_PATH, pwaJs, SW_PATH, swJs } from "./web/pwa";
 import {
   addCredential,
   chooseService,
@@ -18,6 +19,7 @@ import {
   connectStart,
   deleteCredential,
   home,
+  connections,
 } from "./web/connections";
 import { deleteClient, editClient, saveClient } from "./web/admin-clients";
 import { confirmDeleteApp, deleteApp, listAppsPage, previewApp, saveApp } from "./web/admin-apps";
@@ -53,7 +55,12 @@ const ROUTES: Route[] = [
   ["POST", "/authorize", authorizePost],
   ["GET", MCP_CALLBACK_PATH, authorizeCallback],
   ["GET", APP_JS_PATH, () => appJs()],
+  ["GET", PWA_JS_PATH, () => pwaJs()],
+  ["GET", SW_PATH, () => swJs()],
+  ["GET", MANIFEST_PATH, (_, env) => manifest(env)],
+  ["GET", ICON_PATH, (_, __, [size]) => icon(size)],
   ["GET", "/", home],
+  ["GET", "/connections", connections],
   ["GET", SETUP_PATH, setup],
   ["GET", /^\/plugins\/([a-z0-9][a-z0-9-]*)\.zip$/, (request, env, [name]) => downloadPlugin(request, env, name)],
   ["GET", "/connections/new", chooseService],

@@ -29,6 +29,9 @@ export interface Feature {
   userPage?: {
     linkText: string;
     render(userId: string, page: { path: string; base: string }, ctx: ExecutionContext): Promise<{ title: string; body: string } | null>;
+    // Whether the page's root is the user's home (docs/adr/0011): `/` sends them there, and the
+    // connections move to `/connections`. Absent or false keeps the connections at `/`.
+    isHome?(userId: string): Promise<boolean>;
   };
   // Requests under `/api/<name>` arrive as `/api/...`, public ones under `/<name>` with the prefix removed.
   fetch(request: Request, ctx: ExecutionContext): Promise<Response>;

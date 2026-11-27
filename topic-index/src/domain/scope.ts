@@ -25,6 +25,8 @@ export interface ThreadScopeRequest {
 export interface ListScopeRequest {
   dataSourceIds: string[];
   openOnly: boolean;
+  /** false なら結び候補のキーを読まない（どのスレッドのキーも空。本人の画面の一覧。0052）。既定は読む */
+  candidates?: boolean;
 }
 
 /** 一覧の open 系の絞り込みは、開いているスレッドしか出さない */
@@ -74,6 +76,10 @@ export function selectListScope(full: Projections, req: ListScopeRequest): Proje
   const listed = Object.values(full.threads).filter((t) => ds.has(t.dataSourceId) && (!req.openOnly || isOpenThread(t)));
   for (const t of listed) out.threads[t.id] = t;
   for (const t of listed) for (const l of t.links) if (full.threads[l.threadId]) out.threads[l.threadId] = full.threads[l.threadId]!;
+  if (req.candidates === false) {
+    for (const id of Object.keys(out.threads)) out.keys[id] = [];
+    return out;
+  }
   // 一覧のスレッドのキーは全部、結び候補のキーはそのうち一覧のキーと重なるものだけ（結び候補の計算にはそれで足りる）
   const mine = new Set<string>();
   for (const t of listed) {

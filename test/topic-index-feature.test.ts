@@ -116,15 +116,20 @@ describe("The topic index on", () => {
     const cookie = await sessionCookie(bob);
     const home = await (await call(on, "/", { headers: { cookie } })).text();
     expect(home).toContain('<a href="/features/topic-index">今やること・参加中のリストを見る</a>');
+    // Not a member of any list: the home page stays the connections, which also live at /connections (docs/adr/0011).
+    expect(home).toContain("<h1>つないだサービス</h1>");
+    const connections = await (await call(on, "/connections", { headers: { cookie } })).text();
+    expect(connections).toContain('<a href="/features/topic-index">今やること・参加中のリストを見る</a>');
+    expect(connections).toContain('<a href="/connections">つないだサービス</a>');
 
     const off = await (await call(on, "/features/topic-index", { headers: { cookie } })).text();
     expect(off).toContain("<title>今やること - トピック索引</title>");
-    expect(off).toContain("<h1>今やること</h1>");
+    expect(off).toContain("<h1 class=\"sr-only\">今やること</h1>");
     expect(off).toContain("まだどのリストのメンバーにもなっていません");
     expect(off).toContain("トピック索引は無効になっています");
 
     const lists = await (await call(on, "/features/topic-index/lists", { headers: { cookie } })).text();
-    expect(lists).toContain("<h1>参加中のリスト</h1>");
+    expect(lists).toContain("<h1 class=\"sr-only\">参加中のリスト</h1>");
     expect(lists).toContain('<a class="tab" href="/features/topic-index/lists" aria-current="page">参加中のリスト</a>');
     expect(lists).toContain("まだどの共有リストのメンバーにもなっていません");
 
@@ -136,6 +141,31 @@ describe("The topic index on", () => {
     expect((await call(on, "/features/topic-index/elsewhere", { headers: { cookie } })).status).toBe(404);
     // Only features with a page have one.
     expect((await call(on, "/features/nothing", { headers: { cookie } })).status).toBe(404);
+  });
+
+  it("installs as an app that opens on the topic index's now page, and keeps only feature pages (docs/adr/0010)", async () => {
+    const manifest = (await (await call(on, "/manifest.webmanifest")).json()) as { start_url: string; scope: string; display: string; icons: { src: string }[] };
+    expect(manifest).toMatchObject({ start_url: "/features/topic-index", scope: "/", display: "standalone" });
+    for (const { src } of manifest.icons) {
+      const icon = await call(on, src);
+      expect(icon.headers.get("content-type")).toBe("image/png");
+      expect(new Uint8Array(await icon.arrayBuffer()).slice(1, 4)).toEqual(new TextEncoder().encode("PNG"));
+    }
+    // Without the topic index the app opens on the home page.
+    expect(((await (await call(env, "/manifest.webmanifest")).json()) as { start_url: string }).start_url).toBe("/");
+
+    const sw = await call(on, "/sw.js");
+    expect(sw.headers.get("content-type")).toContain("text/javascript");
+    expect(sw.headers.get("cache-control")).toBe("no-cache");
+    const code = await sw.text();
+    expect(code).toContain('redirect: "manual"');
+    // Every page links the manifest and registers the worker, and the page's policy lets them load.
+    const page = await call(on, "/features/topic-index", { headers: { cookie: await sessionCookie(bob) } });
+    const text = await page.text();
+    expect(text).toContain('<link rel="manifest" href="/manifest.webmanifest">');
+    expect(text).toContain('<script src="/assets/pwa.js" defer></script>');
+    expect(page.headers.get("content-security-policy")).toContain("manifest-src 'self'; worker-src 'self'");
+    expect((await (await call(on, "/assets/pwa.js")).text())).toContain('register("/sw.js", { scope: "/" })');
   });
 
   it("asks the user to turn the topic index on at the gateway, and returns to the topic index with a code for that user", async () => {
@@ -198,7 +228,7 @@ describe("The topic index on", () => {
     const cookie = await sessionCookie(bob);
     expect(await (await call(on, "/", { headers: { cookie } })).text()).toContain("このゲートウェイの機能");
     const res = await call(on, "/features/topic-index/disable", { method: "POST", headers: { cookie, origin } });
-    expect(res.headers.get("location")).toBe("/?disabled=1");
+    expect(res.headers.get("location")).toBe("/connections?disabled=1");
     expect(await vaultFor(env, bob).consented("topic-index")).toBe(false);
   });
 });

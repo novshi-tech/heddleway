@@ -9,7 +9,7 @@ import { AiDecider } from './ingest/deciders';
 import { AnthropicLlm } from './ingest/llm';
 import { createApp, type ConnectorHttp } from './http/app';
 import { kindOf, renderMyLists } from './http/my-lists';
-import { renderNow, renderThread, tabs, type PageList } from './http/now';
+import { renderNow, renderSection, renderThread, tabs, type NowSection, type PageList } from './http/now';
 import type { ConnectionView } from './app/connections';
 import type { ListView } from './domain';
 import { d1Repo, type Db } from './store/d1';
@@ -90,6 +90,8 @@ export interface TopicIndexHandlers {
    * 読むのはトピック索引の中だけで、上流は呼ばない。ない経路・見えないトピックは null
    */
   userPage(userId: string, page: { path: string; base: string }, ctx: ExecutionContext): Promise<{ title: string; body: string } | null>;
+  /** 本人の画面を Heddleway のトップにするか（どれかのリストのメンバーなら。ゲートウェイの docs/adr/0011）。User を作らない */
+  isHome(userId: string): Promise<boolean>;
 }
 
 const CHANNELS = ['email', 'slack', 'line', 'jira', 'bitbucket'] as const;
@@ -328,18 +330,27 @@ export function createTopicIndex(config: TopicIndexConfig, authenticate: Gateway
       return app.fetch(request);
     },
 
+    async isHome(userId) {
+      const { viewer } = await build(config).viewer(userId);
+      return viewer.dataSourceIds.length > 0;
+    },
+
     async userPage(userId, { path, base }, ctx) {
       const service = build(config);
       const now = systemClock.now();
-      if (path === '' || path === 'lists') {
+      if (path === 'lists') {
         const shell = buildConnectors(config, service, (p) => ctx.waitUntil(p));
         const [data, connections] = await Promise.all([service.myLists(userId), shell ? shell.connections.list(userId) : Promise.resolve([])]);
-        if (path === 'lists') {
-          return { title: '参加中のリスト', body: `${tabs(base, 'lists')}\n${renderMyLists({ ...data, userId, connections, sharedServices: config.sharedServices ?? [] })}` };
-        }
-        const byDs = new Map(connections.map((c) => [c.data_source, c]));
-        const lists = data.lists.map((l) => pageList(l.dataSource, l.shared, byDs.get(l.dataSource.id)));
-        return { title: '今やること', body: renderNow({ base, name: data.name, lists, threads: data.threads, now }) };
+        return { title: '参加中のリスト', body: `${tabs(base, 'lists')}\n${renderMyLists({ ...data, userId, connections, sharedServices: config.sharedServices ?? [] })}` };
+      }
+      // 今やることと区分の画面（0052）。リストの種類はデータソースの出所で決まるので、接続の状態は読まない
+      const section = /^(?:(mine|awaiting|triage)|attention(?:\/([A-Za-z0-9_-]{1,128}))?)$/.exec(path);
+      if (path === '' || section) {
+        const data = await service.myLists(userId);
+        const lists = data.lists.map((l) => pageList(l.dataSource, l.shared));
+        const input = { base, name: data.name, lists, threads: data.threads, now };
+        if (path === '') return { title: '今やること', body: renderNow(input) };
+        return renderSection(input, (section![1] as NowSection | undefined) ?? 'attention', section![2]);
       }
       const m = /^threads\/([A-Za-z0-9_-]{1,128})$/.exec(path);
       if (!m) return null;

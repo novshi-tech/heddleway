@@ -63,7 +63,7 @@ async function connected(userId: string, tokens: Tokens, service = "freee") {
   expect(res.status).toBe(303);
   const credentials = await vaultFor(env, userId).list();
   const added = credentials[credentials.length - 1];
-  expect(res.headers.get("location")).toBe(`/?added=${added.id}`);
+  expect(res.headers.get("location")).toBe(`/connections?added=${added.id}`);
   return added;
 }
 
@@ -209,7 +209,7 @@ describe("refreshing upstream tokens", () => {
 
     const res = await connect(alice, { access_token: "fresh", refresh_token: "rt-f", expires_in: 21600 }, { service: "freee", credential: cred.id });
     expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toBe(`/?reconnected=${cred.id}`);
+    expect(res.headers.get("location")).toBe(`/connections?reconnected=${cred.id}`);
     const list = await vaultFor(env, alice).list();
     expect(list).toEqual([{ id: cred.id, service: "freee", label: "freee", createdAt: cred.createdAt }]);
     expect(await upstreamAuthorization(await callFreee(alice, cred.id))).toBe("Bearer fresh");

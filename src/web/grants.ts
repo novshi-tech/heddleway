@@ -60,15 +60,15 @@ export async function confirmRevoke(request: Request, env: GrantEnv, id: string)
   const user = await session(request, env);
   if (!user) return redirect("/login");
   const grant = await findGrant(env, user, id);
-  if (!grant) return redirect("/");
+  if (!grant) return redirect("/connections");
   return page(
     "アクセスの取り消し",
     html`${masthead(env, user)}
-<a class="back" href="/">‹ つないだサービスに戻る</a>
+<a class="back" href="/connections">‹ つないだサービスに戻る</a>
 <h1>「${clientName(grant)}」のアクセスを取り消しますか?</h1>
 <form method="post" action="/grants/${grant.id}/revoke" class="card">
 <p>${grantedOn.format(grant.createdAt * 1000)}に許可したアクセスです${where(grant) && `(${where(grant)})`}。取り消すと、このアプリはゲートウェイを通してあなたの接続を使えなくなります。使うときは、アプリからもう一度つなぎ直してください。</p>
-<div class="actions"><button class="danger">取り消す</button><a class="button quiet" href="/">やめる</a></div>
+<div class="actions"><button class="danger">取り消す</button><a class="button quiet" href="/connections">やめる</a></div>
 </form>`,
   );
 }
@@ -82,5 +82,5 @@ export async function revoke(request: Request, env: GrantEnv, id: string): Promi
     await env.OAUTH_PROVIDER.revokeGrant(grant.id, user.sub);
     console.log(JSON.stringify({ type: "grant_revoked", user: user.sub, client: grant.clientId }));
   }
-  return redirect("/?revoked=1");
+  return redirect("/connections?revoked=1");
 }

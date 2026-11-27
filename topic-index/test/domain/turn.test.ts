@@ -11,6 +11,7 @@ import {
   isAwaiting,
   isTriage,
   linkCandidates,
+  candidateIndex,
   linkThreads,
   listThreads,
   myTurnOf,
@@ -181,6 +182,14 @@ describe('結び候補（linkCandidates）', () => {
     const p = log.state();
     expect(linkCandidates(alice, p, p.threads[shared]!).map((c) => c.threadId)).toContain(priv.outcome!.threadId);
     expect(linkCandidates(bob, p, p.threads[shared]!).map((c) => c.threadId)).not.toContain(priv.outcome!.threadId);
+  });
+
+  it('H3 キーの逆引き（candidateIndex）を使っても、総当たりと同じ候補を返す（一覧の速さ。0052）', () => {
+    const { log, ctx } = world();
+    ingestPure(log, ctx, email({ dataSourceId: 'ds_alice', from: 'info@dave.example', to: ['alice@ubs.example'], sourceRef: 'p1', anchors: { jiraKeys: ['UBS-7'] } }), () => answer());
+    const p = log.state();
+    const index = candidateIndex(p);
+    for (const viewer of [alice, bob]) for (const t of Object.values(p.threads)) expect(linkCandidates(viewer, p, t, index)).toEqual(linkCandidates(viewer, p, t));
   });
 });
 

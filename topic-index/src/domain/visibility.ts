@@ -13,6 +13,8 @@ import {
   isTaskSource,
   isTriage,
   linkCandidates,
+  candidateIndex,
+  type CandidateIndex,
   linkedActiveSinceDismissed,
   listKindOf,
   myTurnOf,
@@ -173,7 +175,7 @@ export function visibleLinks(viewer: Viewer, p: Projections, t: Thread): ThreadL
   });
 }
 
-export function threadItem(dir: Directory, viewer: Viewer, p: Projections, t: Thread): ThreadItem {
+export function threadItem(dir: Directory, viewer: Viewer, p: Projections, t: Thread, index?: CandidateIndex): ThreadItem {
   return {
     ...summarizeThread(dir, p, t),
     links: visibleLinks(viewer, p, t),
@@ -181,7 +183,7 @@ export function threadItem(dir: Directory, viewer: Viewer, p: Projections, t: Th
     myTurn: myTurnOf(dir, viewer, t),
     derivedBall: derivedBall(dir, viewer, p, t),
     linkedActiveSinceDismissed: linkedActiveSinceDismissed(viewer, p, t),
-    linkCandidates: linkCandidates(viewer, p, t),
+    linkCandidates: linkCandidates(viewer, p, t, index),
   };
 }
 
@@ -194,6 +196,8 @@ export function listThreads(
 ): ThreadItem[] {
   const filter = opts.filter ?? 'open';
   const out: ThreadItem[] = [];
+  // 結び候補の総当たりは件数の 2 乗になるので、キーの逆引きを 1 回だけ作る
+  let index: CandidateIndex | undefined;
   for (const t of Object.values(p.threads)) {
     if (!canReadDataSource(viewer, t.dataSourceId)) continue;
     if (opts.dataSourceId && t.dataSourceId !== opts.dataSourceId) continue;
@@ -204,7 +208,7 @@ export function listThreads(
     if (filter === 'my_turn' && !isMyTurn(dir, viewer, t)) continue;
     if (filter === 'mine' && !(isTaskSource(dir.dataSource(t.dataSourceId)) && listKindOf(dir, t.dataSourceId) === 'personal')) continue;
     if (opts.since !== undefined && !movedSince(viewer, p, t, opts.since)) continue;
-    out.push(threadItem(dir, viewer, p, t));
+    out.push(threadItem(dir, viewer, p, t, (index ??= candidateIndex(p))));
   }
   out.sort((a, b) => (a.lastActivityAt < b.lastActivityAt ? 1 : a.lastActivityAt > b.lastActivityAt ? -1 : a.id < b.id ? -1 : 1));
   return opts.limit === undefined ? out : out.slice(0, opts.limit);

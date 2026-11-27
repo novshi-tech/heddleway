@@ -48,7 +48,7 @@ export async function setup(request: Request, env: Env): Promise<Response> {
   return page(
     "Claude につなぐ",
     html`${masthead(env, user)}
-<a class="back" href="/">‹ つないだサービスに戻る</a>
+<a class="back" href="/connections">‹ つないだサービスに戻る</a>
 <h1>Claude につなぐ</h1>
 <p>${organization} のゲートウェイを Claude のコネクタとして追加し、使い方のスキル(プラグイン)を入れます。どちらも 1 回だけで済みます。</p>
 
@@ -74,7 +74,7 @@ ${plugins.length > 0
 ${claudeCode(plugins)}
 
 <h2>3. サービスをつなぐ</h2>
-<p>Claude が使うサービス(Google、Microsoft 365、freee など)のアカウントを、<a href="/">つないだサービス</a>で登録します。あとは Claude に頼むだけです。</p>
+<p>Claude が使うサービス(Google、Microsoft 365、freee など)のアカウントを、<a href="/connections">つないだサービス</a>で登録します。あとは Claude に頼むだけです。</p>
 <script src="/assets/app.js" defer></script>`,
   );
 }
