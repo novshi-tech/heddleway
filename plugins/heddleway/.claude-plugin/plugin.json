@@ -1,8 +1,8 @@
 {
   "name": "heddleway",
   "displayName": "Heddleway",
-  "version": "0.35.0",
-  "description": "API ゲートウェイの共通手順(認証情報の確認、MCP のツールでの呼び出し、トークンの発行、REST の呼び出し)と、git(clone・push)・board・gBizINFO・Serper・X・Heddleway Room(会議室のアジェンダ・会議の結果・録音)と トピック索引(Outlook・Gmail・To Do・Google Tasks などのやりとりをトピックにまとめ、担当とアテンションを追う Heddleway の機能)のスキル。ほかの heddleway-* プラグインの前提。コネクタ(Heddleway)はデプロイごとに別途追加する。",
+  "version": "0.35.1",
+  "description": "API ゲートウェイの共通手順(認証情報の確認、MCP のツールでの呼び出し、トークンの発行、REST の呼び出し)と、git(clone・push)・board・gBizINFO・Serper・Xと トピック索引(Outlook・Gmail・To Do・Google Tasks などのやりとりをトピックにまとめ、担当とアテンションを追う Heddleway の機能)のスキル。ほかの heddleway-* プラグインの前提。コネクタ(Heddleway)はデプロイごとに別途追加する。",
   "author": {
     "name": "novshi-tech"
   },
