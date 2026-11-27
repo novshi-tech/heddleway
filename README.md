@@ -123,6 +123,7 @@ Claude のようなエージェント(スタンド)のほかに、決まった�
 | | `serper` | `serper` | Serper 経由の Google 検索(ウェブ・画像・ニュース・地図・論文など) |
 | | `x` | `x` | X(旧 Twitter)のポストの検索・取得、投稿・返信・画像の添付、いいね・リポスト・ブックマーク(ユーザー本人として) |
 | | `topic-index` | `topic-index` | トピック索引(このゲートウェイの機能)のトピック・担当とアテンション・To Do / Google Tasks のタスクでの追跡と経過のメモ・送信の記録。有効にする手順は上の「トピック索引」 |
+| | `room` | `room` | Heddleway Room(別アプリの軽い会議室)のアジェンダの配置・添付・会議の結果・録音の受け取り。Room をデプロイした組織だけ |
 | `heddleway-microsoft` | `microsoft-graph` | `graph` | Outlook メール、OneDrive / SharePoint、Teams、予定表 |
 | `heddleway-google` | `gmail` | `gmail` | メールの検索・送信・返信・下書き、添付ファイル |
 | | `google-drive` | `drive` | ファイルの検索・ダウンロード・エクスポート・アップロード、共有ドライブ |
