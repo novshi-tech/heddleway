@@ -653,7 +653,12 @@ export class TopicIndexService {
     const dsName = (id: string) => dir.dataSource(id)?.name ?? id;
     const linked = view.linked.map((l) => ({ id: l.threadId, title: l.title, listName: dsName(l.dataSourceId), myTurn: l.myTurn, dismissed: l.dismissed }));
     const ds = dir.dataSource(t.dataSourceId);
-    return { view, shared: ds?.kind === 'service' && !!ds.shared, assigneeNames, counterparts, linked, entries };
+    // LINE のトピックは、受け口の会話の画面へのリンクに使う会話（0049 の conversationId。ADR 0055）
+    const lineConversation =
+      ds?.kind === 'service' && ds.connector?.kind === 'line'
+        ? (view.timeline.find((e) => e.threadId === t.id && e.signal?.anchors.conversationId)?.signal?.anchors.conversationId ?? null)
+        : null;
+    return { view, shared: ds?.kind === 'service' && !!ds.shared, assigneeNames, counterparts, linked, entries, lineConversation };
   }
 
   async getList(userId: string, listId: string) {

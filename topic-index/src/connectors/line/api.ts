@@ -4,6 +4,13 @@ import { GatewayAuthError, GatewayError, type UpstreamCall } from '../../ports/g
 // 受け口（業務システム）の LINE の原本を読む（ゲートウェイの GraphQL 経由。0049 の決定 2）。
 // 呼べる口は LINE_SCOPE（scope.ts。GET の /graphql だけ）。クエリはこのファイルの固定の文字列だけで、送信の mutation は持たない
 
+/** 受け口の会話の画面（トピックの詳細から開く。ADR 0055）。to は友だちの userId か、グループ・トークルームの ID */
+export const LINE_TALK_PAGE = 'https://platform.bm-next.ai/line/';
+
+export function lineTalkUrl(conversationId: string): string {
+  return `${LINE_TALK_PAGE}${encodeURIComponent(conversationId)}`;
+}
+
 /** 1 ページの件数（受け口の上限は 500） */
 export const LINE_PAGE_SIZE = 200;
 

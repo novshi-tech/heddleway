@@ -317,6 +317,8 @@ export interface ThreadPageInput {
   entries: PageEntry[];
   now: string;
   timeZone?: string;
+  /** 元のアプリで開くリンク（Jira 以外。LINE なら受け口の会話の画面。0054・0055） */
+  sourceLink?: { href: string; label: string } | null;
 }
 
 const BODY_SHOWN = 600;
@@ -330,7 +332,8 @@ function body(text: string): string {
 export function renderThread(input: ThreadPageInput): string {
   const timeZone = input.timeZone ?? 'Asia/Tokyo';
   const t = input.thread;
-  const link = input.list?.kind === 'jira' ? jiraUrl(input.list, t.source?.key) : null;
+  const jira = input.list?.kind === 'jira' ? jiraUrl(input.list, t.source?.key) : null;
+  const link = jira ? { href: jira, label: `Jira で ${t.source?.key ?? ''} を開く` } : (input.sourceLink ?? null);
   const facts: string[] = [];
   if (input.list) facts.push(`リスト: ${input.list.name}${input.list.kind ? `(${KIND_LABEL[input.list.kind]})` : ''}`);
   if (input.assigneeNames.length > 0) facts.push(`担当: ${input.assigneeNames.join('、')}`);
@@ -365,7 +368,7 @@ export function renderThread(input: ThreadPageInput): string {
     `<h1>${esc(t.title)}</h1>`,
     badges.length > 0 ? `<p class="badges">${badges.join(' ')}</p>` : '',
     `<ul class="facts">${facts.map((f) => `<li>${esc(f)}</li>`).join('')}</ul>`,
-    link ? `<p><a class="button quiet" href="${esc(link)}" rel="noopener noreferrer" target="_blank">Jira で ${esc(t.source?.key)} を開く</a></p>` : '',
+    link ? `<p><a class="button quiet" href="${esc(link.href)}" rel="noopener noreferrer" target="_blank">${esc(link.label)}</a></p>` : '',
     input.linked.length > 0
       ? `<h2>関連づけたトピック</h2>\n<ul class="list">${input.linked
           .map(

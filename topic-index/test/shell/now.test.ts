@@ -6,7 +6,8 @@ import { D1MasterStore, type Db } from '../../src/store/d1';
 import type { ThreadItem } from '../../src/domain';
 import { renderNow, renderSection, renderThread, sortNow, type NowInput, type NowThread, type PageList } from '../../src/http/now';
 import { makeService } from '../helpers/service';
-import { answer, email, seed } from '../helpers/world';
+import { answer, email, line, seed } from '../helpers/world';
+import { Seed } from '../../src/domain';
 
 // 本人の「今やること」の画面とトピックの詳細（0051）
 
@@ -159,6 +160,41 @@ describe('トピックの詳細（0051）', () => {
     expect(html.indexOf('野瀬が担当した')).toBeLessThan(html.indexOf('雨漏り'));
     expect(html).toContain('Carol → 野瀬');
     expect(html).toContain('<summary>続きを読む</summary>');
+  });
+
+  it('H3 Jira 以外は sourceLink を元のアプリへのリンクにする（LINE の会話の画面。0055）', () => {
+    const t = thread('t_line', 'ds_bo', {}) as ThreadItem;
+    const html = renderThread({
+      base: '/features/topic-index',
+      thread: t,
+      list: undefined,
+      assigneeNames: [],
+      counterparts: [],
+      linked: [],
+      entries: [],
+      now: NOW,
+      sourceLink: { href: 'https://platform.bm-next.ai/line/U1', label: 'LINE のトークを開く' },
+    });
+    expect(html).toContain('href="https://platform.bm-next.ai/line/U1"');
+    expect(html).toContain('LINE のトークを開く');
+  });
+
+  it('H3 service.threadPage は LINE のトピックの会話を返す（0055）', async () => {
+    const lineSeed = Seed.parse({
+      ...seed,
+      dataSources: seed.dataSources.map((d) => (d.id === 'ds_line' ? { ...d, connector: { kind: 'line', organizationId: 'org_1' } } : d)),
+    });
+    const { service } = await makeService(lineSeed, { decide: () => answer({ title: '休みの連絡' }) });
+    const r = await service.ingest(line({ from: 'U_carol', sourceRef: 'l1', anchors: { messageId: 'm1', conversationId: 'U_carol' } }));
+    expect(r.status).toBe('threaded');
+    const threadId = (r as { threadId: string }).threadId;
+    const readers = lineSeed.listMembers.filter((m) => lineSeed.lists.find((l) => l.id === m.listId)?.dataSourceId === 'ds_line').map((m) => m.userId);
+    const page = await service.threadPage(readers[0]!, threadId);
+    expect(page?.lineConversation).toBe('U_carol');
+
+    const { service: mail } = await makeService(seed, { decide: () => answer({ title: '雨漏り' }) });
+    const m = await mail.ingest(email({ from: 'carol@example.com', sourceRef: 'r1', subject: '雨漏りの件' }));
+    expect((await mail.threadPage('u_alice', (m as { threadId: string }).threadId))?.lineConversation).toBeNull();
   });
 
   it('H3 service.threadPage は見えるトピックだけを返し、名前を解決する', async () => {
