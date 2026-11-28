@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createExecutionContext, env, runInDurableObject, SELF } from "cloudflare:test";
-import { createLocalJWKSet, jwtVerify } from "jose";
+import { createLocalJWKSet, jwtVerify, SignJWT } from "jose";
 import { beforeEach, describe, expect, it } from "vitest";
 import { handleProxy } from "../src/proxy";
 import { publicUrl } from "../src/config";
@@ -523,6 +523,62 @@ describe("web ui", () => {
     const { token } = await signToken(env.SIGNING_KEY, BASE, "session", userId, { name: userId }, 60);
     return `__Host-gw-session=${token}`;
   }
+
+  // A session token as if it had been issued `ageSeconds` ago, by a sign-in `authAgeSeconds` ago.
+  async function agedSession(userId: string, ageSeconds: number, authAgeSeconds?: number) {
+    const now = Math.floor(Date.now() / 1000);
+    const claims = authAgeSeconds === undefined ? { name: userId } : { name: userId, auth: now - authAgeSeconds };
+    const token = await new SignJWT(claims)
+      .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+      .setIssuer(BASE)
+      .setAudience(`${BASE}/session`)
+      .setSubject(userId)
+      .setIssuedAt(now - ageSeconds)
+      .setExpirationTime(now + 60)
+      .sign(new TextEncoder().encode(env.SIGNING_KEY));
+    return `__Host-gw-session=${token}`;
+  }
+
+  function sessionFrom(setCookie: string | null) {
+    const match = setCookie?.match(/__Host-gw-session=([^;]+);.*Max-Age=(\d+)/);
+    return match ? { token: match[1], maxAge: Number(match[2]) } : null;
+  }
+
+  it("leaves a fresh session alone", async () => {
+    const res = await SELF.fetch(`${BASE}/`, { headers: { cookie: await agedSession(carol, 60, 60) } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("extends a session when a page is opened, keeping the sign-in time", async () => {
+    const hour = 60 * 60;
+    const res = await SELF.fetch(`${BASE}/`, { headers: { cookie: await agedSession(carol, 2 * hour, 3 * 24 * hour) } });
+    expect(res.status).toBe(200);
+    const renewed = sessionFrom(res.headers.get("set-cookie"));
+    expect(renewed?.maxAge).toBe(14 * 24 * hour);
+    const claims = await verifyToken<{ auth: number }>(env.SIGNING_KEY, BASE, "session", renewed!.token);
+    expect(claims?.sub).toBe(carol);
+    expect(Math.floor(Date.now() / 1000) - claims!.auth).toBeGreaterThanOrEqual(3 * 24 * hour - 5);
+  });
+
+  it("caps a session at a month after signing in", async () => {
+    const day = 24 * 60 * 60;
+    const near = await SELF.fetch(`${BASE}/`, { headers: { cookie: await agedSession(carol, 2 * 60 * 60, 25 * day) } });
+    const maxAge = sessionFrom(near.headers.get("set-cookie"))?.maxAge ?? 0;
+    expect(maxAge).toBeGreaterThan(5 * day - 10);
+    expect(maxAge).toBeLessThanOrEqual(5 * day);
+
+    const over = await SELF.fetch(`${BASE}/`, { headers: { cookie: await agedSession(carol, 60, 31 * day) }, redirect: "manual" });
+    expect(over.status).toBe(303);
+    expect(over.headers.get("location")).toBe("/login");
+  });
+
+  it("extends a session issued before sliding, counting from its issue", async () => {
+    const res = await SELF.fetch(`${BASE}/`, { headers: { cookie: await agedSession(carol, 2 * 60 * 60) } });
+    const renewed = sessionFrom(res.headers.get("set-cookie"));
+    const claims = await verifyToken<{ auth: number }>(env.SIGNING_KEY, BASE, "session", renewed!.token);
+    expect(Math.abs(Math.floor(Date.now() / 1000) - 2 * 60 * 60 - claims!.auth)).toBeLessThanOrEqual(5);
+  });
 
   it("redirects to sign-in without a session", async () => {
     const res = await SELF.fetch(`${BASE}/`, { redirect: "manual" });

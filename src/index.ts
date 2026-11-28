@@ -27,7 +27,7 @@ import { confirmDeletePlugin, deletePlugin, listPluginsPage, uploadPlugin } from
 import { consentPage, consentSubmit, disableFeature, userPage } from "./web/features";
 import { confirmRevoke, revoke } from "./web/grants";
 import { adminPage as adminLocalServices, confirmRemove as confirmRemoveLocal, pairPage, pairSubmit, remove as removeLocal, settingsPage, settingsSubmit } from "./web/tunnel";
-import { login, LOGIN_CALLBACK_PATH, loginCallback, logout } from "./web/session";
+import { login, LOGIN_CALLBACK_PATH, loginCallback, logout, renewedSessionCookie, SESSION_COOKIE } from "./web/session";
 import { downloadPlugin, setup, SETUP_PATH } from "./web/setup";
 
 import "./topic-index-feature";
@@ -149,9 +149,22 @@ const defaultHandler: ExportedHandler<Env> = {
     if (own) return own.feature.fetch(withPath(request, own.path), ctx);
     const found = route(request.method, pathname);
     if (!found) return new Response("not found", { status: 404 });
-    return found.route[2](request, env as RouteEnv, found.params, ctx);
+    const response = await found.route[2](request, env as RouteEnv, found.params, ctx);
+    return request.method === "GET" ? withRenewedSession(request, env, response) : response;
   },
 };
+
+// Opening a page extends the session (src/web/session.ts), so an installed app that is used
+// every few days does not keep going back to the sign-in.
+async function withRenewedSession(request: Request, env: Env, response: Response): Promise<Response> {
+  if (response.status === 101 || response.webSocket) return response;
+  if (response.headers.get("set-cookie")?.includes(`${SESSION_COOKIE}=`)) return response;
+  const renewed = await renewedSessionCookie(request, env);
+  if (!renewed) return response;
+  const copy = new Response(response.body, response);
+  copy.headers.append("set-cookie", renewed);
+  return copy;
+}
 
 // The provider's options depend on PUBLIC_URL, which is only known per request.
 let cached: { url: string; provider: OAuthProvider<Env> } | undefined;
