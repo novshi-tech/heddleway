@@ -33,7 +33,7 @@ import { GatewayGmailApi } from './connectors/gmail/api';
 import { GmailSync } from './connectors/gmail/sync';
 import { GatewayGoogleChatApi } from './connectors/google-chat/api';
 import { GoogleChatSync } from './connectors/google-chat/sync';
-import { GatewayLineApi } from './connectors/line/api';
+import { GatewayLineApi, lineTalkUrl } from './connectors/line/api';
 import { LineSync } from './connectors/line/sync';
 import { randomHex, sha256Hex } from './connectors/secrets';
 import { onceDirectory } from './connectors/directory-once';
@@ -359,7 +359,7 @@ export function createTopicIndex(config: TopicIndexConfig, authenticate: Gateway
       const list = pageList(data.view.dataSource, data.shared);
       return {
         title: data.view.thread.title,
-        body: renderThread({ base, thread: data.view.thread, list, assigneeNames: data.assigneeNames, counterparts: data.counterparts, linked: data.linked, entries: data.entries, now }),
+        body: renderThread({ base, thread: data.view.thread, list, assigneeNames: data.assigneeNames, counterparts: data.counterparts, linked: data.linked, entries: data.entries, now, sourceLink: data.lineConversation ? { href: lineTalkUrl(data.lineConversation), label: 'LINE のトークを開く' } : null }),
       };
     },
 
