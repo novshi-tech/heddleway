@@ -60,6 +60,16 @@ describe('fold', () => {
     expect((parseEvent(JSON.parse(JSON.stringify(log.events[0]))).payload as { anchors: object }).anchors).toMatchObject({ conversationId: 'chat_A', conversationGroup: true });
   });
 
+  it('H1 送り主の表示名（0054）はシグナルの記録に残り、保存した形から読み直しても落ちない。ないものには付かない', () => {
+    const log = new EventLog();
+    log.push([observed('s1', { fromName: 'Carol 工務店' }), intoNew('s1', 't1')], T0);
+    log.push([observed('s2'), into('s2', 't1')], T1);
+    const p = log.state();
+    expect(p.signals['s1']!.fromName).toBe('Carol 工務店');
+    expect('fromName' in p.signals['s2']!).toBe(false);
+    expect((parseEvent(JSON.parse(JSON.stringify(log.events[0]))).payload as { fromName?: string }).fromName).toBe('Carol 工務店');
+  });
+
   it('H1 SignalObserved + SignalThreaded(new) でスレッドができ、窓口宛て（リスト宛て）の名指しが読者に残る。担当はいないので仕分け待ち', () => {
     const log = new EventLog();
     log.push([observed('s1'), intoNew('s1', 't1')], T0);

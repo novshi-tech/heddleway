@@ -173,6 +173,14 @@ describe('トピックの詳細（0051）', () => {
     expect(first && 'signal' in first ? first.signal.from : null).toBe('Carol（顧客）');
     expect(alice?.counterparts).toEqual(['Carol（顧客）']);
 
+    // Contact のないアドレスは、ソースが添えた表示名で呼ぶ（0054）
+    const r2 = await service.ingest({ ...email({ from: 'dave@example.org', sourceRef: 'r2', subject: '雨漏りの件', anchors: { threadKey: 'x' } }), fromName: 'Dave 工務店' });
+    const t2 = (r2 as { threadId: string }).threadId;
+    const page2 = await service.threadPage('u_alice', t2);
+    const e2 = page2?.entries.find((e) => 'signal' in e && e.signal);
+    expect(e2 && 'signal' in e2 ? e2.signal!.from : null).toBe('Dave 工務店');
+    expect(page2?.counterparts).toContain('Dave 工務店');
+
     expect(await service.threadPage('u_eve', threadId)).toBeNull();
     expect(await service.threadPage('entra_t_nobody', threadId)).toBeNull();
     expect((await service.directory()).user('entra_t_nobody')).toBeUndefined();

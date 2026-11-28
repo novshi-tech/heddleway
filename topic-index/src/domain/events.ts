@@ -69,6 +69,8 @@ export const SignalObserved = z.object({
   dataSourceId: z.string(),
   channel: Channel,
   from: AddressRef,
+  /** ソースが添えた送り主の表示名（メールの From の名前・Teams や LINE の表示名）。名寄せには使わず、画面の呼び方の手がかりだけ（0054） */
+  fromName: z.string().max(200).optional(),
   to: z.array(AddressRef),
   subject: z.string().optional(),
   body: z.string(),

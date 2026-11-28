@@ -623,17 +623,20 @@ export class TopicIndexService {
     const view = getThreadView(dir, viewer, p, threadId);
     if (!view) return null;
     const userName = (id: string | null | undefined) => (id ? dir.user(id)?.name || '(呼び方なし)' : '');
+    // ソースが添えた送り主の表示名（0054）。Contact の呼び方がなければ、同じアドレスの一番新しい表示名で呼ぶ
+    const hints = new Map<string, string>();
+    for (const e of view.timeline) if (e.signal?.fromName) hints.set(`${e.signal.from.channel}:${e.signal.from.value.toLowerCase()}`, e.signal.fromName);
+    const hintOf = (ref: AddressRef) => hints.get(`${ref.channel}:${ref.value.toLowerCase()}`);
     const addressName = (ref: AddressRef) => {
       const cid = dir.contactIdOfAddress(ref);
-      const c = cid ? dir.contact(cid) : undefined;
-      if (!c) return ref.value;
-      return (c.userId ? dir.user(c.userId)?.name : '') || c.name || ref.value;
+      const own = cid ? contactName(dir, cid) : '';
+      return own || hintOf(ref) || ref.value;
     };
     const t = view.thread;
     const assigneeNames = t.assignee
-      ? [...t.assignee.userIds.map(userName), ...t.assignee.contactIds.map((id) => contactName(dir, id) || id), ...t.assignee.addresses.map((a) => a.value)]
+      ? [...t.assignee.userIds.map(userName), ...t.assignee.contactIds.map((id) => contactName(dir, id) || id), ...t.assignee.addresses.map((a) => hintOf(a) ?? a.value)]
       : [];
-    const counterparts = [...t.counterpartContactIds.map((id) => contactName(dir, id)).filter((n) => n !== ''), ...t.counterpartAddresses.map((a) => a.value)];
+    const counterparts = [...t.counterpartContactIds.map((id) => contactName(dir, id)).filter((n) => n !== ''), ...t.counterpartAddresses.map((a) => hintOf(a) ?? a.value)];
     const titleOf = (id: string) => (id === t.id ? null : (view.linked.find((l) => l.threadId === id)?.title ?? null));
     const entries = view.timeline.map((e) => {
       const base = { at: e.at, kind: e.kind, fromLinked: titleOf(e.threadId) };

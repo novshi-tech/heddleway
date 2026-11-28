@@ -48,6 +48,7 @@ export function normalizeChatMessage(ctx: ChatContext, msg: ChatMessage): Normal
       dataSourceId: ctx.dataSourceId,
       channel: 'google-chat',
       from: address(from),
+      ...(sender.displayName?.trim() ? { fromName: sender.displayName.trim() } : {}),
       to,
       body: (msg.text ?? '').trim(),
       anchors: {

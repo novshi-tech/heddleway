@@ -197,6 +197,7 @@ function addSignal(s: Projections, e: DomainEvent, p: NewSignal, c: Changes): vo
     dataSourceId: p.dataSourceId,
     channel: p.channel,
     from: p.from,
+    ...(p.fromName ? { fromName: p.fromName } : {}),
     to: p.to,
     subject: p.subject,
     body: p.body,
