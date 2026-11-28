@@ -21,6 +21,8 @@ export interface InboundSignal {
   dataSourceId: string;
   channel: Channel;
   from: AddressRef;
+  /** 送り主の表示名（ソースが添えていれば。0054） */
+  fromName?: string;
   to: AddressRef[];
   subject?: string;
   body: string;
@@ -65,6 +67,7 @@ export function prepareInbound(p: Projections, ctx: CoreContext, inbound: Inboun
     dataSourceId: ds.id,
     channel: inbound.channel,
     from: inbound.from,
+    ...(inbound.fromName?.trim() ? { fromName: inbound.fromName.trim().slice(0, 200) } : {}),
     to: inbound.to,
     subject: inbound.subject,
     body: inbound.body,

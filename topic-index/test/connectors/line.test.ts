@@ -125,6 +125,12 @@ describe('H8 LINE のイベントの写し方（0049 の決定 5）', () => {
     });
   });
 
+  it('受信には友だちの表示名を添える（0054）。送信には添えない', () => {
+    expect(normalizeLineEvent(ctx, ev({ lineUserId: CAROL, text: 'はい', displayName: ' 管野 ' }))).toMatchObject({ kind: 'signal', signal: { fromName: '管野' } });
+    const out = normalizeLineEvent(ctx, ev({ id: 'out:6002', direction: 'OUTBOUND', lineUserId: CAROL, messageId: '6002', text: 'x', displayName: '管野' }));
+    expect(out.kind === 'signal' && 'fromName' in out.signal).toBe(false);
+  });
+
   it('送信: 窓口から相手宛て。messageId は送ったメッセージの ID（record_sent の sent_ref）', () => {
     const n = normalizeLineEvent(ctx, ev({ id: 'out:6001', direction: 'OUTBOUND', lineUserId: CAROL, messageId: '6001', text: '10 時です' }));
     expect(n).toMatchObject({ kind: 'signal', signal: { from: OA, to: [{ channel: 'line', value: CAROL }], anchors: { messageId: '6001', conversationId: CAROL, conversationGroup: false } } });

@@ -59,6 +59,7 @@ describe('H8 Google Chat の正規化（0045 の決定 1〜3）', () => {
         dataSourceId: 'ds1',
         channel: 'google-chat',
         from: { channel: 'google-chat', value: ALICE },
+        fromName: '100',
         to: [{ channel: 'google-chat', value: BOB }],
         body: '@Bob 見積もりお願いします',
         anchors: { messageId: `${SPACE}/messages/m1`, threadTs: `${SPACE}/threads/T1`, quotedMessageId: `${SPACE}/messages/m0` },

@@ -60,6 +60,7 @@ export function commentSignal(dataSourceId: string, issue: JiraIssue, comment: J
     dataSourceId,
     channel: 'jira',
     from: account(author),
+    ...(comment.author.displayName?.trim() ? { fromName: comment.author.displayName.trim() } : {}),
     to: to.map(account),
     subject: `[${issue.key}] ${issue.fields.summary ?? ''}`.trim(),
     body,

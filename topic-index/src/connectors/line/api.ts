@@ -23,6 +23,8 @@ export const LineEvent = z.object({
   quotedMessageId: z.string().nullish(),
   postbackData: z.string().nullish(),
   fileName: z.string().nullish(),
+  /** 友だちの表示名（受け口が保存したもの。送信には付かない） */
+  displayName: z.string().nullish(),
   occurredAt: z.string(),
 });
 export type LineEvent = z.infer<typeof LineEvent>;
@@ -33,7 +35,7 @@ const LineEventsPage = z.object({
   hasMore: z.boolean(),
 });
 
-export const EVENT_FIELDS = 'id direction type sourceType lineUserId groupId messageId messageType text quotedMessageId postbackData fileName occurredAt';
+export const EVENT_FIELDS = 'id direction type sourceType lineUserId groupId messageId messageType text quotedMessageId postbackData fileName displayName occurredAt';
 
 /** 読めるかの確かめ（0049 の決定 4）: 接続の組織と、メッセージを読む権限 */
 export const PROBE_QUERY = 'query TopicIndexLineProbe { myOrganization { id name } lineEvents(first: 1) { hasMore } }';

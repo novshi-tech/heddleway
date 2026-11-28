@@ -26,6 +26,7 @@ export function normalizeMessage(dataSourceId: string, msg: GraphMessage): Norma
       dataSourceId,
       channel: 'email',
       from,
+      ...(nameOf(msg.from ?? msg.sender) ? { fromName: nameOf(msg.from ?? msg.sender) } : {}),
       to,
       ...(msg.subject ? { subject: msg.subject } : {}),
       body,
@@ -34,6 +35,12 @@ export function normalizeMessage(dataSourceId: string, msg: GraphMessage): Norma
       ...(occurredAt ? { occurredAt } : {}),
     },
   };
+}
+
+/** 送り主の表示名。アドレスそのままの名前は添えない */
+function nameOf(r: GraphMessage['from']): string | undefined {
+  const name = r?.emailAddress?.name?.trim();
+  return name && name.toLowerCase() !== r?.emailAddress?.address?.trim().toLowerCase() ? name : undefined;
 }
 
 function address(r: GraphMessage['from']): AddressRef | null {

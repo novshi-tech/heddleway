@@ -31,6 +31,7 @@ describe('H8 Teams のメッセージの正規化（0036 の決定 3・4）', ()
         dataSourceId: 'ds_t',
         channel: 'teams',
         from: { channel: 'teams', value: 'tenant-1/oid-alice' },
+        fromName: 'Alice',
         to: [{ channel: 'teams', value: 'tenant-1/oid-bob' }],
         subject: '空調の件',
         body: '@Bob さん、確認&対応お願いします\n明日まで',

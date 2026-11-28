@@ -54,6 +54,7 @@ export function normalizeChatMessage(ctx: ChatContext, msg: TeamsMessage): Norma
       dataSourceId: ctx.dataSourceId,
       channel: 'teams',
       from: { channel: 'teams', value: teamsAddress(fromTenant, user.id) },
+      ...(user.displayName?.trim() ? { fromName: user.displayName.trim() } : {}),
       to,
       ...(subject ? { subject } : {}),
       body: messageText(msg.body?.content ?? '', msg.body?.contentType),

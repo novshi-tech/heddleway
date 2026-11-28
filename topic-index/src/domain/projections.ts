@@ -144,6 +144,8 @@ export interface SignalRecord {
   dataSourceId: string;
   channel: Channel;
   from: AddressRef;
+  /** 送り主の表示名（0054） */
+  fromName?: string;
   to: AddressRef[];
   subject?: string;
   body: string;

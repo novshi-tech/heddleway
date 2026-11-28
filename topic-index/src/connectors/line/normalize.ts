@@ -34,6 +34,7 @@ export function normalizeLineEvent(ctx: LineContext, e: LineEvent): Normalized {
   if (!conversation) return { kind: 'skip', reason: 'no counterpart' };
 
   let from: AddressRef;
+  let fromName: string | undefined;
   let to: AddressRef[];
   if (e.direction === 'OUTBOUND') {
     from = oa;
@@ -42,6 +43,7 @@ export function normalizeLineEvent(ctx: LineContext, e: LineEvent): Normalized {
     // グループで userId が取れないメッセージ（友だちでない人）は、送り主が決まらないので取り込まない
     if (!e.lineUserId) return { kind: 'skip', reason: 'unknown sender' };
     from = address(e.lineUserId);
+    fromName = e.displayName?.trim() || undefined;
     to = group ? [] : [oa];
   }
 
@@ -53,6 +55,7 @@ export function normalizeLineEvent(ctx: LineContext, e: LineEvent): Normalized {
       dataSourceId: ctx.dataSourceId,
       channel: 'line',
       from,
+      ...(fromName ? { fromName } : {}),
       to,
       body,
       anchors: {

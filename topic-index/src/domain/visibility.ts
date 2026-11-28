@@ -237,7 +237,7 @@ function movedSince(viewer: Viewer, p: Projections, t: Thread, since: string): b
 
 export type SignalView = { direction: 'inbound' | 'outbound' } & Pick<
   SignalRecord,
-  'signalId' | 'channel' | 'from' | 'to' | 'subject' | 'body' | 'attachments' | 'anchors' | 'at' | 'threadedBy' | 'recorded'
+  'signalId' | 'channel' | 'from' | 'fromName' | 'to' | 'subject' | 'body' | 'attachments' | 'anchors' | 'at' | 'threadedBy' | 'recorded'
 >;
 
 function signalView(dir: Directory, s: SignalRecord): SignalView {
@@ -246,6 +246,7 @@ function signalView(dir: Directory, s: SignalRecord): SignalView {
     direction: directionOf(dir, s),
     channel: s.channel,
     from: s.from,
+    ...(s.fromName ? { fromName: s.fromName } : {}),
     to: s.to,
     subject: s.subject,
     body: s.body,
