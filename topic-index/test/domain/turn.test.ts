@@ -78,10 +78,24 @@ describe('担当と名指し（0038）', () => {
     ingestPure(log, ctx, email({ from: 'support@ubs.example', to: ['carol@example.com'], sourceRef: 'o1', anchors: { inReplyTo: '<m1>' } }));
     const p = log.state();
     expect(isAwaiting(dir, p.threads[shared]!)).toBe(true);
-    expect(listThreads(dir, alice, p, { filter: 'awaiting' }).map((t) => t.id)).toEqual([shared]);
+    // 返事待ちは本人が持っているものだけ（0053）。担当のいない共有のトピックは割当待ちで見る
+    expect(listThreads(dir, alice, p, { filter: 'awaiting' }).map((t) => t.id)).toEqual([]);
+    expect(listThreads(dir, alice, p, { filter: 'triage' }).map((t) => t.id)).toContain(shared);
     log.push(dismissThread(p, alice, dir, { threadId: shared, reason: 'x' }), '2026-10-16T10:00:00.000Z');
     const q = log.state();
     expect([isAwaiting(dir, q.threads[shared]!), isTriage(dir, q.threads[shared]!), myTurnOf(dir, bob, q.threads[shared]!)]).toEqual([false, false, []]);
+  });
+
+  it('H8 返事待ちは本人が持っているトピックだけ。担当した人には出て、ほかの読者には出ない（0053）', () => {
+    const { log, ctx, shared } = world();
+    ingestPure(log, ctx, email({ from: 'support@ubs.example', to: ['carol@example.com'], sourceRef: 'o1', anchors: { inReplyTo: '<m1>' } }));
+    log.push(claimThread(log.state(), bob, dir, { threadId: shared, userId: 'u_bob' }), '2026-10-16T10:00:00.000Z');
+    const p = log.state();
+    expect(isAwaiting(dir, p.threads[shared]!)).toBe(true);
+    expect(listThreads(dir, bob, p, { filter: 'awaiting' }).map((t) => t.id)).toEqual([shared]);
+    expect(listThreads(dir, alice, p, { filter: 'awaiting' }).map((t) => t.id)).toEqual([]);
+    expect(listThreads(dir, alice, p, { filter: 'all' }).find((t) => t.id === shared)?.awaiting).toBe(false);
+    expect(listThreads(dir, bob, p, { filter: 'all' }).find((t) => t.id === shared)?.awaiting).toBe(true);
   });
 
   it('H8 読者でないアドレスの名指しは読者なら誰でも外せる。読者のアドレスの名指しは本人だけ', () => {

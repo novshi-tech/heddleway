@@ -224,7 +224,8 @@ describe('HTTP API', () => {
       reply_expected_by: '2026-10-16T21:00:00+09:00',
     });
     expect(res.status).toBe(200);
-    expect(res.body.thread).toMatchObject({ id: threadId, replyExpectedBy: '2026-10-16T12:00:00.000Z', awaiting: true });
+    // 担当のいない共有のトピックなので、送った本人の返事待ちには出ない（0053）。期限の見回りは overdue で拾う
+    expect(res.body.thread).toMatchObject({ id: threadId, replyExpectedBy: '2026-10-16T12:00:00.000Z', awaiting: false });
     expect((await call('POST', '/api/sent', 'u_eve', { data_source: 'ds_support', to: ['x'], body: 'b', sent_ref: 's' })).status).toBe(404);
     expect((await call('POST', '/api/sent', 'u_alice', { data_source: 'ds_support', body: 'b', sent_ref: 's' })).status).toBe(400);
     expect((await call('POST', '/api/sent', 'u_alice', { data_source: 'ds_support', to: ['x'], body: 'b', sent_ref: 's', reply_expected_by: '明日' })).status).toBe(400);

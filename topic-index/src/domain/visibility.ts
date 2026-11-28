@@ -9,6 +9,7 @@ import {
   attentionOf,
   derivedBall,
   isAwaiting,
+  isAwaitingFor,
   isMyTurn,
   isTaskSource,
   isTriage,
@@ -36,7 +37,7 @@ import { canReadDataSource, type Viewer } from './viewer';
  * - my_turn: Viewer の担当か名指しが残っている（自分が担当・自分への名指し・リスト宛ての名指し。0038）、開いているもの
  * - mine: Viewer のタスク（個人リストのタスクのサービスのスレッド。閉じたものも。0039）
  * - open: 開いているもの（片付けていない・ソースで完了していない）
- * - awaiting: 相手待ち（読者でないアドレスへの名指しが残っている）で、開いているもの
+ * - awaiting: Viewer が持っている（個人リストか、担当に Viewer がいる）相手待ち（読者でないアドレスへの名指しが残っている）で、開いているもの（0053）
  * - overdue: 返事期待の期限を過ぎたもの
  * - triage: 仕分け待ち（共有リストで、開いていて、担当がいない）
  * - all: 全部
@@ -128,6 +129,8 @@ export interface ThreadSummary {
 
 /** 一覧と詳細で返すスレッド。投影の要約に、Viewer から見たもの（担当か名指しが残っているか・リンク先から導出した様子・結び候補）を足す */
 export interface ThreadItem extends ThreadSummary {
+  /** Viewer の返事待ち: Viewer が持っている（個人リストか、担当に Viewer がいる）相手待ち（0053） */
+  awaiting: boolean;
   /** 自分か、見える結んだ先のうち一番新しい更新（一覧の並び。0031 の 5） */
   lastActivityAt: string;
   /** Viewer に残っている理由（担当・名指し・リスト宛て）。空なら何も残っていない */
@@ -180,6 +183,7 @@ export function threadItem(dir: Directory, viewer: Viewer, p: Projections, t: Th
     ...summarizeThread(dir, p, t),
     links: visibleLinks(viewer, p, t),
     lastActivityAt: lastActivityAt(viewer, p, t),
+    awaiting: isAwaitingFor(dir, viewer, t),
     myTurn: myTurnOf(dir, viewer, t),
     derivedBall: derivedBall(dir, viewer, p, t),
     linkedActiveSinceDismissed: linkedActiveSinceDismissed(viewer, p, t),
@@ -203,7 +207,7 @@ export function listThreads(
     if (opts.dataSourceId && t.dataSourceId !== opts.dataSourceId) continue;
     if (filter === 'open' && (t.dismissed || t.closedAtSource)) continue;
     if (filter === 'triage' && !isTriage(dir, t)) continue;
-    if (filter === 'awaiting' && !isAwaiting(dir, t)) continue;
+    if (filter === 'awaiting' && !isAwaitingFor(dir, viewer, t)) continue;
     if (filter === 'overdue' && !replyStateOf(dir, t).overdue) continue;
     if (filter === 'my_turn' && !isMyTurn(dir, viewer, t)) continue;
     if (filter === 'mine' && !(isTaskSource(dir.dataSource(t.dataSourceId)) && listKindOf(dir, t.dataSourceId) === 'personal')) continue;
@@ -316,7 +320,7 @@ export function getThreadView(
       title: u.title,
       dataSourceId: u.dataSourceId,
       myTurn: myTurnOf(dir, viewer, u),
-      awaiting: isAwaiting(dir, u),
+      awaiting: isAwaitingFor(dir, viewer, u),
       dismissed: u.dismissed,
     };
   });
