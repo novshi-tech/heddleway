@@ -1,6 +1,7 @@
 import { publicUrl, splitList } from "../config";
 import { randomToken, s256 } from "../crypto";
 import { authorizationUrl, SignInError, signIn } from "../idp";
+import type { JWTPayload } from "jose";
 import { signToken, verifyToken } from "../tokens";
 import { html } from "./html";
 import { page } from "./layout";
@@ -8,7 +9,12 @@ import { page } from "./layout";
 export const LOGIN_CALLBACK_PATH = "/login/callback";
 export const SESSION_COOKIE = "__Host-gw-session";
 const LOGIN_COOKIE = "__Host-gw-login";
-const SESSION_TTL_SECONDS = 8 * 60 * 60;
+// A session slides: a page visit renews it, so it ends after a week or two of not opening the
+// pages, and in any case a month after signing in (then the IdP decides again).
+const SESSION_IDLE_SECONDS = 14 * 24 * 60 * 60;
+const SESSION_MAX_SECONDS = 30 * 24 * 60 * 60;
+// Renew at most this often, so most responses carry no Set-Cookie.
+const SESSION_RENEW_AFTER_SECONDS = 60 * 60;
 export const LOGIN_TTL_SECONDS = 10 * 60;
 
 export interface Session {
@@ -39,11 +45,44 @@ export function isAdmin(env: Env, user: Session): boolean {
   return splitList(env.ADMINS).includes(user.sub);
 }
 
-export async function session(request: Request, env: Env): Promise<Session | null> {
+interface SessionClaims extends JWTPayload {
+  name?: string;
+  // When the user signed in with the IdP (seconds). Missing on sessions issued before sliding.
+  auth?: number;
+}
+
+async function sessionClaims(request: Request, env: Env) {
   const token = readCookie(request, SESSION_COOKIE);
   if (!token) return null;
-  const claims = await verifyToken<{ name?: string }>(env.SIGNING_KEY, publicUrl(env), "session", token);
+  const claims = await verifyToken<SessionClaims>(env.SIGNING_KEY, publicUrl(env), "session", token);
+  if (!claims) return null;
+  const now = Math.floor(Date.now() / 1000);
+  if (typeof claims.auth === "number" && now - claims.auth >= SESSION_MAX_SECONDS) return null;
+  return claims;
+}
+
+export async function session(request: Request, env: Env): Promise<Session | null> {
+  const claims = await sessionClaims(request, env);
   return claims ? { sub: claims.sub, name: claims.name ?? claims.sub } : null;
+}
+
+async function sessionCookie(env: Env, sub: string, name: string, auth: number): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  const ttl = Math.min(SESSION_IDLE_SECONDS, auth + SESSION_MAX_SECONDS - now);
+  const { token } = await signToken(env.SIGNING_KEY, publicUrl(env), "session", sub, { name, auth }, ttl);
+  return cookie(SESSION_COOKIE, token, ttl);
+}
+
+// The Set-Cookie that extends a valid session the request carries, or null when it needs none.
+export async function renewedSessionCookie(request: Request, env: Env): Promise<string | null> {
+  const claims = await sessionClaims(request, env);
+  if (!claims) return null;
+  const now = Math.floor(Date.now() / 1000);
+  if (typeof claims.iat === "number" && now - claims.iat < SESSION_RENEW_AFTER_SECONDS) return null;
+  // A session from before sliding counts from when it was issued.
+  const auth = typeof claims.auth === "number" ? claims.auth : (claims.iat ?? now);
+  if (auth + SESSION_MAX_SECONDS - now <= SESSION_RENEW_AFTER_SECONDS) return null;
+  return sessionCookie(env, claims.sub, claims.name ?? claims.sub, auth);
 }
 
 // Forms post only to this origin; a cross-site post has another Origin.
@@ -88,9 +127,8 @@ export async function loginCallback(request: Request, env: Env): Promise<Respons
       nonce: pending.nonce,
       redirectUri: `${publicUrl(env)}${LOGIN_CALLBACK_PATH}`,
     });
-    const { token } = await signToken(env.SIGNING_KEY, publicUrl(env), "session", user.id, { name: user.name }, SESSION_TTL_SECONDS);
     const headers = new Headers();
-    headers.append("set-cookie", cookie(SESSION_COOKIE, token, SESSION_TTL_SECONDS));
+    headers.append("set-cookie", await sessionCookie(env, user.id, user.name, Math.floor(Date.now() / 1000)));
     headers.append("set-cookie", cookie(LOGIN_COOKIE, "", 0));
     return redirect(localPath(pending.next ?? null) ?? "/", headers);
   } catch (error) {
