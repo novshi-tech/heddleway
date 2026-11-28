@@ -243,6 +243,20 @@ export function isAwaiting(dir: Directory, t: Thread): boolean {
 }
 
 /**
+ * Viewer が持っているトピックか（0053）: 個人リストのもの（持ち主は本人）か、担当に Viewer がいるもの。
+ * 返事待ちを本人の目線で見るときの絞り込み。担当のいない共有のトピックは割当待ちで見る
+ */
+export function holdsThread(dir: Directory, viewer: Viewer, t: Thread): boolean {
+  if (listKindOf(dir, t.dataSourceId) === 'personal') return true;
+  return assigneeOf(dir, t)?.userIds.includes(viewer.userId) ?? false;
+}
+
+/** Viewer の返事待ち（0053）: Viewer が持っていて、相手待ちのもの */
+export function isAwaitingFor(dir: Directory, viewer: Viewer, t: Thread): boolean {
+  return holdsThread(dir, viewer, t) && isAwaiting(dir, t);
+}
+
+/**
  * リンク先のスレッドから導出した様子（名前の derivedBall は 0038 より前の名残。主にタスクのスレッドから見る。どのスレッドからでも同じ計算）。
  * 見えるリンク先だけを見る。片付けたリンク先は数えない
  * - my_turn: どれかに Viewer の担当か名指しが残っている
